@@ -1,0 +1,29 @@
+{
+  "app_name": "L.M.T",
+  "app_bar_title": "فريق الرسالة الأخيرة",
+
+  "splash_title": "فريق الرسالة الأخيرة",
+  "splash_tagline": "برنامج L.M.T",
+  "welcome": "أهلاً وسهلاً",
+  "get_started": "ابدأ الآن",
+  "next": "التالي",
+  "skip": "تخطي",
+  "done": "تم",
+  "home": "الرئيسية",
+  "settings": "الإعدادات",
+  "profile": "الملف الشخصي",
+  "logout": "تسجيل الخروج",
+
+  "login_title": "فريق الرسالة الأخيرة",
+  "login_subtitle": "The Last Message Team",
+  "username_label": "اسم المستخدم",
+  "username_hint": "أدخل اسم المستخدم",
+  "password_label": "كلمة المرور",
+  "password_hint": "أدخل كلمة المرور",
+  "remember_me": "تذكرني",
+  "login_button": "تسجيل الدخول",
+  "field_required": "هذا الحقل مطلوب",
+  "username_too_short": "اسم المستخدم قصير جدًا",
+  "password_too_short": "كلمة المرور قصيرة جدًا",
+  "login_header_desc": "إدارة حساب L.M.T الخاص بك"
+}

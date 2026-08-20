@@ -1,0 +1,28 @@
+{
+  "app_name": "L.M.T",
+  "app_bar_title": "The Last Message Team",
+  "splash_title": "The Last Message Team",
+  "splash_tagline": "L.M.T Application",
+  "welcome": "Welcome",
+  "get_started": "Get Started",
+  "next": "Next",
+  "skip": "Skip",
+  "done": "Done",
+  "home": "Home",
+  "settings": "Settings",
+  "profile": "Profile",
+  "logout": "Logout",
+
+  "login_title": "Last Message Team",
+  "login_subtitle": "فريق الرسالة الأخيرة",
+  "username_label": "Username",
+  "username_hint": "Enter your username",
+  "password_label": "Password",
+  "password_hint": "Enter your password",
+  "remember_me": "Remember me",
+  "login_button": "Login",
+  "field_required": "This field is required",
+  "username_too_short": "Username is too short",
+  "password_too_short": "Password is too short",
+  "login_header_desc": "Manage your L.M.T account"
+}
