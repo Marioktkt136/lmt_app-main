@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../theme/colors.dart';
 
 class CustomButton extends StatelessWidget {
@@ -48,7 +48,7 @@ class CustomButton extends StatelessWidget {
                   borderRadius: BorderRadius.circular(borderRadius),
                 ),
                 elevation: 4,
-                shadowColor: (color ?? AppColors.primary).withOpacity(0.4),
+                shadowColor: (color ?? AppColors.primary).withValues(alpha: 0.4),
               ),
               child: _buildChild(),
             ),

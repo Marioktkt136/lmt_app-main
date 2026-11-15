@@ -1,7 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 class NotificationScreen extends StatelessWidget {
-  const NotificationScreen({Key? key}) : super(key: key);
+  const NotificationScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -39,11 +39,11 @@ class NotificationScreen extends StatelessWidget {
               color: isUnread ? Colors.blue[50] : Colors.white,
               borderRadius: BorderRadius.circular(15),
               border: Border.all(
-                color: isUnread ? primaryColor.withOpacity(0.3) : Colors.transparent,
+                color: isUnread ? primaryColor.withValues(alpha: 0.3) : Colors.transparent,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
+                  color: Colors.black.withValues(alpha: 0.04),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),

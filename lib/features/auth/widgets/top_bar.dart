@@ -1,6 +1,6 @@
  import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:lmt/core/theme/colors.dart';
 import 'package:lmt/core/utils/app_assets.dart';
@@ -16,7 +16,7 @@ Widget buildTopBar(bool isDark, ui.VoidCallback? toggleTheme, ui.VoidCallback? t
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2), // Shadow color
+                color: Colors.black.withValues(alpha: 0.2), // Shadow color
                 offset: Offset(4, 6), // X,Y position
                 blurRadius: 10, // Softness
                 spreadRadius: 2, // Size spread
@@ -41,7 +41,7 @@ Widget buildTopBar(bool isDark, ui.VoidCallback? toggleTheme, ui.VoidCallback? t
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2), // Shadow color
+                color: Colors.black.withValues(alpha: 0.2), // Shadow color
                 offset: Offset(4, 6), // X,Y position
                 blurRadius: 10, // Softness
                 spreadRadius: 2, // Size spread

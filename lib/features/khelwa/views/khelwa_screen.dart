@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -170,7 +170,7 @@ class KhelwaScreenState extends State<KhelwaScreen> {
         color: const Color(0xFF4285F4),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.16),
+            color: Colors.black.withValues(alpha: 0.16),
             blurRadius: 16,
             spreadRadius: 1,
             offset: const Offset(0, 7),
@@ -254,7 +254,7 @@ class KhelwaScreenState extends State<KhelwaScreen> {
                 foregroundColor: Colors.white,
                 disabledForegroundColor: Colors.white,
                 elevation: 5,
-                shadowColor: Colors.black.withOpacity(0.20),
+                shadowColor: Colors.black.withValues(alpha: 0.20),
                 padding: EdgeInsets.zero,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30.r)),
               )

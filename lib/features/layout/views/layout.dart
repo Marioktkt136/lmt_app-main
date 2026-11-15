@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:lmt/core/theme/colors.dart';
 import 'package:lmt/core/widgets/app_bar.dart';
@@ -143,7 +143,7 @@ class _LayoutState extends State<Layout> {
                   borderRadius: BorderRadius.circular(40.r),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.40),
+                      color: Colors.black.withValues(alpha: 0.40),
                       blurRadius: 6,
                       offset: const Offset(2, 4),
                     ),
