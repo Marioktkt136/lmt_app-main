@@ -1,10 +1,10 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:lmt/core/utils/app_assets.dart';
+
+import '../../core/config/app_config.dart';
 import '../../core/routes/routes.dart';
 import '../../core/theme/colors.dart';
-import '../../core/config/app_config.dart';
-import '../../core/utils/app_preferences.dart';
+import '../../core/utils/app_assets.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -43,12 +43,10 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _navigateToNext() {
-    Future.delayed(const Duration(seconds: 3), () async {
+    Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
-      final isLoggedIn = await AppPreferences.isLoggedIn();
-      if (!mounted) return;
-      final nextRoute = isLoggedIn ? Routes.home : Routes.login;
-      Navigator.pushReplacementNamed(context, nextRoute);
+      // Always open on Login Screen to guarantee biometric verification of the user
+      Navigator.pushReplacementNamed(context, Routes.login);
     });
   }
 
@@ -80,7 +78,7 @@ class _SplashScreenState extends State<SplashScreen>
                       borderRadius: BorderRadius.circular(28),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.18),
+                          color: Colors.black.withValues(alpha: 0.25),
                           blurRadius: 30,
                           offset: const Offset(0, 18),
                         ),
@@ -116,7 +114,7 @@ class _SplashScreenState extends State<SplashScreen>
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 16,
-                        color: Colors.white.withValues(alpha: 0.82),
+                        color: Colors.white.withValues(alpha: 0.85),
                         height: 1.5,
                       ),
                     ),
@@ -128,15 +126,12 @@ class _SplashScreenState extends State<SplashScreen>
                 opacity: _fadeAnimation,
                 child: Column(
                   children: [
-                    
-                    const SizedBox(height: 6),
-                    
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 14),
                     Text(
                       'v${AppConfig.appVersion}',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.6),
+                        color: Colors.white.withValues(alpha: 0.7),
                       ),
                     ),
                     const SizedBox(height: 18),

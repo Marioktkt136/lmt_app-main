@@ -1,0 +1,128 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+import '../../features/auth/cubit/auth_cubit.dart';
+import '../../features/calendar/cubit/calendar_cubit.dart';
+import '../../features/chatting_room/cubit/chat_cubit.dart';
+import '../../features/dashboard/cubit/shared_files_cubit.dart';
+import '../../features/home/cubit/posts_cubit.dart';
+import '../../features/khelwa/cubit/khelwa_cubit.dart';
+import '../../features/layout/cubit/layout_cubit.dart';
+import '../../features/members/cubit/members_cubit.dart';
+import '../../features/notification_screen/cubit/notifications_cubit.dart';
+import '../../features/profile/cubit/profile_cubit.dart';
+import '../data/lmt_seed_data.dart';
+import '../models/lmt_models.dart';
+import '../repositories/lmt_repository.dart';
+import '../utils/app_assets.dart';
+
+export 'lmt_state.dart';
+
+/// Application Cubit composed of modular Feature Cubits (Clean Architecture + SOLID).
+///
+/// Each feature's business logic lives in its own dedicated module inside
+/// `lib/features/<feature>/cubit/<feature>_cubit.dart`:
+/// - [LayoutCubitMixin] (`lib/features/layout/cubit/layout_cubit.dart`)
+/// - [AuthCubitMixin] (`lib/features/auth/cubit/auth_cubit.dart`)
+/// - [ProfileCubitMixin] (`lib/features/profile/cubit/profile_cubit.dart`)
+/// - [MembersCubitMixin] (`lib/features/members/cubit/members_cubit.dart`)
+/// - [ChatCubitMixin] (`lib/features/chatting_room/cubit/chat_cubit.dart`)
+/// - [PostsCubitMixin] (`lib/features/home/cubit/posts_cubit.dart`)
+/// - [SharedFilesCubitMixin] (`lib/features/dashboard/cubit/shared_files_cubit.dart`)
+/// - [CalendarCubitMixin] (`lib/features/calendar/cubit/calendar_cubit.dart`)
+/// - [NotificationsCubitMixin] (`lib/features/notification_screen/cubit/notifications_cubit.dart`)
+/// - [KhelwaCubitMixin] (`lib/features/khelwa/cubit/khelwa_cubit.dart`)
+class LmtCubit extends LmtBaseCubit
+    with
+        LayoutCubitMixin,
+        AuthCubitMixin,
+        ProfileCubitMixin,
+        MembersCubitMixin,
+        ChatCubitMixin,
+        PostsCubitMixin,
+        SharedFilesCubitMixin,
+        CalendarCubitMixin,
+        NotificationsCubitMixin,
+        KhelwaCubitMixin {
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+
+  LmtCubit({LmtRepository? repository})
+      : super(repository: repository ?? const LmtLocalRepositoryImpl()) {
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    final snapshot = await repository.loadSnapshot();
+
+    // Ensure the dedicated Khelwa Group ('grp_khelwa') always exists
+    final groups = List<ChatGroupModel>.from(snapshot.chatGroups);
+    if (!groups.any((g) => g.id == 'grp_khelwa')) {
+      final seedKhelwaGroup = LmtSeedData.initialGroups
+          .where((g) => g.id == 'grp_khelwa')
+          .firstOrNull;
+      if (seedKhelwaGroup != null) {
+        groups.insert(0, seedKhelwaGroup);
+      } else {
+        groups.insert(
+          0,
+          ChatGroupModel(
+            id: 'grp_khelwa',
+            name: 'جروب الخلوة اليومية 🙏',
+            description:
+                'جروب مخصص لمتابعة الخلوة اليومية ونشر القائمة اليومية بأسماء من أخذوا الخلوة كل يوم',
+            imagePath: AppAssets.prayIcon,
+            memberIds: snapshot.members.map((m) => m.id).toList(),
+            adminId: snapshot.members.first.id,
+            adminName: snapshot.members.first.name,
+            isPinned: true,
+            createdAt: DateTime.now(),
+          ),
+        );
+      }
+    }
+
+    emit(
+      state.copyWith(
+        isInitialized: true,
+        biometricEnabled: snapshot.biometricEnabled,
+        sloganOfYear: snapshot.sloganOfYear,
+        verseOfYear: snapshot.verseOfYear,
+        currentUser: snapshot.currentUser,
+        members: snapshot.members,
+        chatGroups: groups,
+        chatMessages: snapshot.chatMessages,
+        posts: snapshot.posts,
+        sharedFiles: snapshot.sharedFiles,
+        calendarEvents: snapshot.calendarEvents,
+        notifications: snapshot.notifications,
+      ),
+    );
+
+    _startConnectivityListener();
+    scheduleEndOfDayKhelwaSummaryTimer();
+  }
+
+  void _startConnectivityListener() {
+    try {
+      _connectivitySubscription = Connectivity()
+          .onConnectivityChanged
+          .listen((List<ConnectivityResult> results) {
+        final connected = results.any((r) => r != ConnectivityResult.none);
+        emit(
+          state.copyWith(
+            isOnline: connected,
+            lastSyncedAt: connected ? DateTime.now() : state.lastSyncedAt,
+          ),
+        );
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> close() {
+    cancelKhelwaTimer();
+    _connectivitySubscription?.cancel();
+    return super.close();
+  }
+}

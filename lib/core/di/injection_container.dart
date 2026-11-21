@@ -1,52 +1,75 @@
-import 'package:get_it/get_it.dart';
 import 'package:dio/dio.dart';
+import 'package:get_it/get_it.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
-import '../network/network_info.dart';
+
 import '../api/api_interceptors.dart';
 import '../config/app_config.dart';
+import '../cubit/lmt_cubit.dart';
+import '../network/network_info.dart';
+import '../repositories/lmt_repository.dart';
+import '../utils/app_preferences.dart';
 
 final sl = GetIt.instance;
 
-/// Initialize Dependency Injection
+/// Initializes Dependency Injection following SOLID & Clean Architecture principles.
 Future<void> init() async {
+  //! Repositories
+  if (!sl.isRegistered<LmtRepository>()) {
+    sl.registerLazySingleton<LmtRepository>(
+      () => const LmtLocalRepositoryImpl(),
+    );
+  }
+
+  //! Application Cubit (Singleton State Management)
+  if (!sl.isRegistered<LmtCubit>()) {
+    sl.registerLazySingleton<LmtCubit>(
+      () => LmtCubit(repository: sl<LmtRepository>()),
+    );
+  }
+
   //! Core
-  sl.registerLazySingleton<NetworkInfo>(() => NetworkInfoImpl(sl()));
+  if (!sl.isRegistered<NetworkInfo>()) {
+    sl.registerLazySingleton<NetworkInfo>(() => NetworkInfoImpl(sl()));
+  }
 
   //! External
-  sl.registerLazySingleton(() => InternetConnectionChecker.createInstance());
-
-  sl.registerLazySingleton(() {
-    final dio = Dio(
-      BaseOptions(
-        baseUrl: AppConfig.baseUrl,
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 30),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ),
+  if (!sl.isRegistered<InternetConnectionChecker>()) {
+    sl.registerLazySingleton(
+      () => InternetConnectionChecker.createInstance(),
     );
+  }
 
-    dio.interceptors.add(ApiInterceptor());
-
-    // Add pretty logger in debug mode
-    if (AppConfig.enableLogging) {
-      dio.interceptors.add(
-        PrettyDioLogger(
-          requestHeader: true,
-          requestBody: true,
-          responseHeader: true,
+  if (!sl.isRegistered<Dio>()) {
+    sl.registerLazySingleton(() {
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: AppConfig.baseUrl,
+          connectTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 30),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
         ),
       );
-    }
 
-    return dio;
-  });
+      dio.interceptors.add(
+        AuthInterceptor(getToken: AppPreferences.getAccessToken),
+      );
+      dio.interceptors.add(ApiInterceptor());
 
-  // Register your dependencies here
-  // Example:
-  // sl.registerFactory(() => LoginUseCase(sl()));
-  // sl.registerFactory(() => AuthRepository(sl()));
+      if (AppConfig.enableLogging) {
+        dio.interceptors.add(
+          PrettyDioLogger(
+            requestHeader: true,
+            requestBody: true,
+            responseHeader: true,
+          ),
+        );
+      }
+
+      return dio;
+    });
+  }
 }

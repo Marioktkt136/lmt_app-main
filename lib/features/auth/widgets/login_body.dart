@@ -1,15 +1,15 @@
-
 import 'package:easy_localization/easy_localization.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:lmt/core/theme/colors.dart';
-import 'package:lmt/core/theme/typography.dart';
-import 'package:lmt/core/utils/app_assets.dart';
-import 'package:lmt/core/utils/constants.dart';
-import 'package:lmt/features/auth/widgets/login_submit_custom_button.dart';
-import 'package:lmt/features/auth/widgets/remember_me.dart';
-import 'package:lmt/features/auth/widgets/text_field.dart';
-import 'package:lmt/features/auth/widgets/top_bar.dart';
+import 'package:material_ui/material_ui.dart';
+
+import '../../../core/theme/colors.dart';
+import '../../../core/theme/typography.dart';
+import '../../../core/utils/app_assets.dart';
+import '../../../core/utils/constants.dart';
+import 'login_submit_custom_button.dart';
+import 'remember_me.dart';
+import 'text_field.dart';
+import 'top_bar.dart';
 
 class LoginBody extends StatelessWidget {
   final bool isDark;
@@ -23,6 +23,8 @@ class LoginBody extends StatelessWidget {
   final bool rememberMe;
   final ValueChanged<bool?> onRememberMeChanged;
   final VoidCallback submit;
+  final bool isBiometricEnabled;
+  final VoidCallback onBiometricLogin;
 
   const LoginBody({
     super.key,
@@ -37,35 +39,51 @@ class LoginBody extends StatelessWidget {
     required this.rememberMe,
     required this.onRememberMeChanged,
     required this.submit,
+    required this.isBiometricEnabled,
+    required this.onBiometricLogin,
   });
 
   @override
   Widget build(BuildContext context) {
+    final primary = AppColors.primaryOf(context);
+    final textPrimary = AppColors.textPrimaryOf(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         buildTopBar(isDark, toggleTheme, toggleLanguage),
         SizedBox(height: 10.h),
-        Center(child: Center(child: Image.asset(AppAssets.appLogo))),
         Expanded(
           child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
             child: Form(
               key: formKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  SizedBox(height: 8.h),
-                  Text(
-                    'login_title'.tr(),
-                    style: AppTypography.h1.copyWith(
-                      color: isDark
-                          ? AppColors.background
-                          : AppColors.textPrimary,
+                  SizedBox(
+                    height: 120.h,
+                    child: Image.asset(
+                      AppAssets.appLogo,
+                      fit: BoxFit.contain,
                     ),
                   ),
-                  SizedBox(height: 8.h),
-                  Text('login_subtitle'.tr(), style: AppTypography.h3),
-                  SizedBox(height: 32.h),
+                  SizedBox(height: 10.h),
+                  Text(
+                    'login_title'.tr(),
+                    textAlign: TextAlign.center,
+                    style: AppTypography.h2.copyWith(color: textPrimary),
+                  ),
+                  SizedBox(height: 4.h),
+                  Text(
+                    'login_subtitle'.tr(),
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: 28.h),
                   buildTextField(
                     context: context,
                     isDark: isDark,
@@ -108,14 +126,73 @@ class LoginBody extends StatelessWidget {
                       return null;
                     },
                   ),
-                  SizedBox(height: 16.h),
+                  SizedBox(height: 12.h),
                   RememberMe(
                     isDark: isDark,
                     rememberMe: rememberMe,
                     onRememberMeChanged: onRememberMeChanged,
                   ),
-                  SizedBox(height: 24.h),
+                  SizedBox(height: 18.h),
                   LoginSubmitCustomButtom(submit: submit, isDark: isDark),
+                  SizedBox(height: 14.h),
+
+                  // Biometric Login Button (Active only if the user has logged in before)
+                  Opacity(
+                    opacity: isBiometricEnabled ? 1.0 : 0.48,
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceOf(context),
+                        borderRadius: BorderRadius.circular(16.r),
+                        boxShadow: isBiometricEnabled
+                            ? AppColors.cardShadows(
+                                context,
+                                accent: primary,
+                                intensity: 0.65,
+                              )
+                            : const [],
+                      ),
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primary,
+                          side: BorderSide(
+                            color: isBiometricEnabled
+                                ? primary
+                                : AppColors.borderOf(context),
+                            width: 1.5,
+                          ),
+                          padding: EdgeInsets.symmetric(vertical: 14.h),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16.r),
+                          ),
+                        ),
+                        onPressed:
+                            isBiometricEnabled ? onBiometricLogin : null,
+                        icon: const Icon(Icons.fingerprint_rounded),
+                        label: Text(
+                          'biometric_login'.tr(),
+                          style: TextStyle(
+                            fontSize: 14.sp,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (!isBiometricEnabled) ...[
+                    SizedBox(height: 6.h),
+                    Text(
+                      Localizations.localeOf(context).languageCode == 'ar'
+                          ? '🔒 يتفعل الدخول بالبصمة / الوجه تلقائياً بعد تسجيل الدخول أول مرة باسم المستخدم وكلمة المرور'
+                          : '🔒 Biometric login activates automatically after your first login with username & password',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        color: AppColors.textSecondaryOf(context),
+                      ),
+                    ),
+                  ],
+                  SizedBox(height: 16.h),
                 ],
               ),
             ),

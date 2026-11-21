@@ -1,5 +1,9 @@
 class AppAssets {
+  AppAssets._();
+
   static const String appLogo = 'assets/images/app_logo.png';
+  static const String actIcon = 'assets/images/act.png';
+  static const String crossIcon = 'assets/images/cross.png';
   static const String darkLightModeIcon = 'assets/images/day-and-night.png';
   static const String darkModeIcon = 'assets/images/dark_mode.png';
   static const String lightModeIcon = 'assets/images/light_mode.png';
@@ -10,16 +14,33 @@ class AppAssets {
   static const String passowrdIcon = 'assets/images/password.png';
   static const String menuIcon = 'assets/images/menu.png';
   static const String notificationIcon = 'assets/images/notification.png';
-  static const String notificationIconAlert = 'assets/images/notfication_red.png';
+  static const String notificationIconAlert = 'assets/images/notification_red.png';
   static const String homeScreenIcon = 'assets/images/home.png';
   static const String chatScreenIcon = 'assets/images/chat.png';
   static const String dashboardScreenIcon = 'assets/images/dashboard.png';
+  static const String calendarIcon = 'assets/images/calendar.png';
+  static const String driveIcon = 'assets/images/drive.png';
+  static const String formIcon = 'assets/images/form.png';
+  static const String galleryIcon = 'assets/images/gallery.png';
+  static const String picturesIcon = 'assets/images/pictures.png';
+  static const String pollIcon = 'assets/images/poll.png';
+  static const String postIcon = 'assets/images/post.png';
+  static const String prayIcon = 'assets/images/pray.png';
+  static const String reviewIcon = 'assets/images/review.png';
+  static const String peopleIcon = 'assets/images/people.png';
+  static const String settingsIcon = 'assets/images/settings.png';
+  static const String videoIcon = 'assets/images/video.png';
+  static const String youtubeIcon = 'assets/images/youtube.png';
+  static const String doneIcon = 'assets/images/done.png';
+  static const String errorIcon = 'assets/images/error.png';
   static const String loveIcon = 'assets/images/love.png';
   static const String lovedIcon = 'assets/images/loved.png';
-  static const String commentDarkIcon= 'assets/images/comment_dark.png';
-  static const String commentLightIcon= 'assets/images/comment_light.png';
-  static const String moreIcon = 'assets/images/more.png';
+  static const String commentDarkIcon = 'assets/images/comment_dark.png';
+  static const String commentLightIcon = 'assets/images/comment_light.png';
+  static const String moreIcon = 'assets/images/more_light.png';
+  static const String moreDarkIcon = 'assets/images/more_dark.png';
   static const String hashtageIcon = 'assets/images/hashtag.png';
+  static const String hashtagDarkIcon = 'assets/images/hashtag_dark.png';
   static const String ktktProfileAvatar = 'assets/images/ktkt.png';
   static const String samyProfileAvatar = 'assets/images/samy.png';
 }

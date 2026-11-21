@@ -5,15 +5,15 @@ import '../errors/failure.dart';
 /// Implements the Single Responsibility Principle
 /// Each use case represents a single business operation
 ///
-/// [Type] - Return type of the use case
+/// [T] - Return type of the use case
 /// [Params] - Parameters required by the use case
-abstract class UseCase<Type, Params> {
+abstract class UseCase<T, Params> {
   /// Executes the use case
   ///
-  /// Returns [Either<Failure, Type>]
+  /// Returns [Either<Failure, T>]
   /// - Left: Failure if operation failed
-  /// - Right: Type if operation succeeded
-  Future<Either<Failure, Type>> call(Params params);
+  /// - Right: T if operation succeeded
+  Future<Either<Failure, T>> call(Params params);
 }
 
 /// No Parameters class

@@ -1,17 +1,22 @@
-import 'package:material_ui/material_ui.dart';
-import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
-import 'core/routes/app_router.dart';
-import 'core/routes/routes.dart';
-import 'core/theme/app_theme.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:material_ui/material_ui.dart';
+
+import 'core/cubit/lmt_cubit.dart';
 import 'core/di/injection_container.dart' as di;
 import 'core/localization/localization_manager.dart';
+import 'core/routes/app_router.dart';
+import 'core/routes/routes.dart';
+import 'core/services/local_notification_service.dart';
+import 'core/theme/app_theme.dart';
 import 'core/utils/app_preferences.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await EasyLocalization.ensureInitialized();
+  await LocalNotificationService.init();
 
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([
@@ -39,7 +44,7 @@ void main() async {
       supportedLocales: LocalizationManager.supportedLocales,
       path: LocalizationManager.translationsPath,
       fallbackLocale: LocalizationManager.fallbackLocale,
-      startLocale: savedLocale ?? LocalizationManager.fallbackLocale,
+      startLocale: savedLocale ?? const Locale('ar'),
       child: LMTApp(initialThemeMode: themeMode),
     ),
   );
@@ -50,15 +55,15 @@ class LMTApp extends StatefulWidget {
 
   final ThemeMode initialThemeMode;
 
-  static _LMTAppState of(BuildContext context) {
-    return context.findAncestorStateOfType<_LMTAppState>()!;
+  static LMTAppState of(BuildContext context) {
+    return context.findAncestorStateOfType<LMTAppState>()!;
   }
 
   @override
-  State<LMTApp> createState() => _LMTAppState();
+  State<LMTApp> createState() => LMTAppState();
 }
 
-class _LMTAppState extends State<LMTApp> {
+class LMTAppState extends State<LMTApp> {
   late ThemeMode _themeMode;
 
   @override
@@ -76,24 +81,30 @@ class _LMTAppState extends State<LMTApp> {
 
   @override
   Widget build(BuildContext context) {
-    return ScreenUtilInit(
-      designSize: const Size(375, 812),
-      minTextAdapt: true,
-      splitScreenMode: true,
-      builder: (context, child) {
-        return MaterialApp(
-          title: 'L.M.T App',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: _themeMode,
-          initialRoute: Routes.splash,
-          onGenerateRoute: AppRouter.generateRoute,
-          localizationsDelegates: context.localizationDelegates,
-          supportedLocales: context.supportedLocales,
-          locale: context.locale,
-        );
-      },
+    return BlocProvider<LmtCubit>.value(
+      value: di.sl<LmtCubit>(),
+      child: ScreenUtilInit(
+        designSize: const Size(375, 812),
+        minTextAdapt: true,
+        splitScreenMode: true,
+        builder: (context, child) {
+          return MaterialApp(
+            title: 'L.M.T - The Last Message Team',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.lightTheme,
+            darkTheme: AppTheme.darkTheme,
+            themeMode: _themeMode,
+            initialRoute: Routes.splash,
+            onGenerateRoute: AppRouter.generateRoute,
+            localizationsDelegates: [
+              ...GlobalMaterialLocalizations.delegates,
+              ...context.localizationDelegates,
+            ],
+            supportedLocales: context.supportedLocales,
+            locale: context.locale,
+          );
+        },
+      ),
     );
   }
 }
