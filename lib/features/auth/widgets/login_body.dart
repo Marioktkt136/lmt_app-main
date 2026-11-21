@@ -2,30 +2,61 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../../../core/theme/colors.dart';
-import '../../../core/theme/typography.dart';
 import '../../../core/utils/app_assets.dart';
-import '../../../core/utils/constants.dart';
-import 'login_submit_custom_button.dart';
-import 'remember_me.dart';
-import 'text_field.dart';
-import 'top_bar.dart';
+import '../helpers/login_validators.dart';
+import 'login_biometric_button.dart';
+import 'login_header.dart';
+import 'login_submit_button.dart';
+import 'login_text_field.dart';
+import 'login_top_bar.dart';
+import 'remember_me_tile.dart';
 
+/// Composes the login screen body: top bar, brand header, credentials form,
+/// remember-me toggle, submit button, and biometric login button.
 class LoginBody extends StatelessWidget {
+  /// Whether the dark theme is active.
   final bool isDark;
+
+  /// Toggles between Light and Dark themes.
   final VoidCallback toggleTheme;
+
+  /// Toggles between Arabic and English locales.
   final VoidCallback toggleLanguage;
+
+  /// Controller for the username input field.
   final TextEditingController usernameController;
+
+  /// Controller for the password input field.
   final TextEditingController passwordController;
+
+  /// Whether the password input is obscured.
   final bool obscurePassword;
+
+  /// Toggles password visibility.
   final VoidCallback toggleObscurePassword;
+
+  /// Form key used to validate credentials before submission.
   final GlobalKey<FormState> formKey;
+
+  /// Whether the "Remember me" option is checked.
   final bool rememberMe;
+
+  /// Callback invoked when "Remember me" changes.
   final ValueChanged<bool?> onRememberMeChanged;
+
+  /// Submits the login form.
   final VoidCallback submit;
+
+  /// Whether biometric authentication is enabled (true only after first login).
   final bool isBiometricEnabled;
+
+  /// Triggers the biometric authentication prompt.
   final VoidCallback onBiometricLogin;
 
+  /// Whether a login submission is currently in progress.
+  final bool isLoading;
+
+  /// Creates a [LoginBody].
   const LoginBody({
     super.key,
     required this.isDark,
@@ -41,17 +72,23 @@ class LoginBody extends StatelessWidget {
     required this.submit,
     required this.isBiometricEnabled,
     required this.onBiometricLogin,
+    this.isLoading = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final primary = AppColors.primaryOf(context);
-    final textPrimary = AppColors.textPrimaryOf(context);
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        buildTopBar(isDark, toggleTheme, toggleLanguage),
+        LoginTopBar(
+          isDark: isDark,
+          onToggleTheme: toggleTheme,
+          onToggleLanguage: toggleLanguage,
+          themeTooltip: isArabic ? 'تبديل المظهر' : 'Toggle Theme',
+          languageTooltip: isArabic ? 'تغيير اللغة' : 'Switch Language',
+        ),
         SizedBox(height: 10.h),
         Expanded(
           child: SingleChildScrollView(
@@ -61,52 +98,19 @@ class LoginBody extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  SizedBox(
-                    height: 120.h,
-                    child: Image.asset(
-                      AppAssets.appLogo,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  SizedBox(height: 10.h),
-                  Text(
-                    'login_title'.tr(),
-                    textAlign: TextAlign.center,
-                    style: AppTypography.h2.copyWith(color: textPrimary),
-                  ),
-                  SizedBox(height: 4.h),
-                  Text(
-                    'login_subtitle'.tr(),
-                    textAlign: TextAlign.center,
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  const LoginHeader(),
                   SizedBox(height: 28.h),
-                  buildTextField(
-                    context: context,
-                    isDark: isDark,
+                  LoginTextField(
                     label: 'username_label'.tr(),
                     hint: 'username_hint'.tr(),
                     controller: usernameController,
                     prefixIcon: AppAssets.accountIcon,
-                    keyboardType: TextInputType.text,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'field_required'.tr();
-                      }
-                      if (value.trim().length <
-                          AppConstants.minUsernameLength) {
-                        return 'username_too_short'.tr();
-                      }
-                      return null;
-                    },
+                    validator: LoginValidators.username,
+                    textInputAction: TextInputAction.next,
+                    autofillHints: const [AutofillHints.username],
                   ),
                   SizedBox(height: 16.h),
-                  buildTextField(
-                    context: context,
-                    isDark: isDark,
+                  LoginTextField(
                     label: 'password_label'.tr(),
                     hint: 'password_hint'.tr(),
                     controller: passwordController,
@@ -115,83 +119,32 @@ class LoginBody extends StatelessWidget {
                     suffixIcon: obscurePassword
                         ? AppAssets.viewPasswordIcon
                         : AppAssets.hidePasswordIcon,
+                    suffixTooltip: obscurePassword
+                        ? (isArabic ? 'إظهار كلمة المرور' : 'Show password')
+                        : (isArabic ? 'إخفاء كلمة المرور' : 'Hide password'),
                     onSuffixTap: toggleObscurePassword,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'field_required'.tr();
-                      }
-                      if (value.length < AppConstants.minPasswordLength) {
-                        return 'password_too_short'.tr();
-                      }
-                      return null;
-                    },
+                    validator: LoginValidators.password,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => submit(),
+                    autofillHints: const [AutofillHints.password],
                   ),
                   SizedBox(height: 12.h),
-                  RememberMe(
+                  RememberMeTile(
                     isDark: isDark,
-                    rememberMe: rememberMe,
-                    onRememberMeChanged: onRememberMeChanged,
+                    value: rememberMe,
+                    onChanged: onRememberMeChanged,
                   ),
                   SizedBox(height: 18.h),
-                  LoginSubmitCustomButtom(submit: submit, isDark: isDark),
-                  SizedBox(height: 14.h),
-
-                  // Biometric Login Button (Active only if the user has logged in before)
-                  Opacity(
-                    opacity: isBiometricEnabled ? 1.0 : 0.48,
-                    child: Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceOf(context),
-                        borderRadius: BorderRadius.circular(16.r),
-                        boxShadow: isBiometricEnabled
-                            ? AppColors.cardShadows(
-                                context,
-                                accent: primary,
-                                intensity: 0.65,
-                              )
-                            : const [],
-                      ),
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: primary,
-                          side: BorderSide(
-                            color: isBiometricEnabled
-                                ? primary
-                                : AppColors.borderOf(context),
-                            width: 1.5,
-                          ),
-                          padding: EdgeInsets.symmetric(vertical: 14.h),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16.r),
-                          ),
-                        ),
-                        onPressed:
-                            isBiometricEnabled ? onBiometricLogin : null,
-                        icon: const Icon(Icons.fingerprint_rounded),
-                        label: Text(
-                          'biometric_login'.tr(),
-                          style: TextStyle(
-                            fontSize: 14.sp,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
+                  LoginSubmitButton(
+                    onPressed: submit,
+                    isDark: isDark,
+                    isLoading: isLoading,
                   ),
-                  if (!isBiometricEnabled) ...[
-                    SizedBox(height: 6.h),
-                    Text(
-                      Localizations.localeOf(context).languageCode == 'ar'
-                          ? '🔒 يتفعل الدخول بالبصمة / الوجه تلقائياً بعد تسجيل الدخول أول مرة باسم المستخدم وكلمة المرور'
-                          : '🔒 Biometric login activates automatically after your first login with username & password',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 11.sp,
-                        color: AppColors.textSecondaryOf(context),
-                      ),
-                    ),
-                  ],
+                  SizedBox(height: 14.h),
+                  LoginBiometricButton(
+                    isEnabled: isBiometricEnabled,
+                    onPressed: onBiometricLogin,
+                  ),
                   SizedBox(height: 16.h),
                 ],
               ),

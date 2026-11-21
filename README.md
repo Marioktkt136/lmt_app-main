@@ -1,19 +1,20 @@
-# lmt
+# L.M.T – The Last Message Team (فريق الرسالة الاخيرة)
 
-A new Flutter project.
+Flutter app for team posts, chat, shared files, calendar with reminders, daily Khelwa tracking and member management.
 
-## Getting Started
+## Docs
+- [Architecture](docs/ARCHITECTURE.md)
+- [Coding Guidelines](docs/CODING_GUIDELINES.md)
+- [UI / UX Guidelines](docs/UI_UX_GUIDELINES.md)
+- Each feature folder has its own `README.md` (`lib/features/<feature>/README.md`), and `lib/core/README.md` covers shared code.
 
-This project is a starting point for a Flutter application.
+## Run
+```
+flutter pub get
+flutter analyze        # must report 0 issues
+flutter run -d <device>
+```
+Native Android changes (`MainActivity.kt`, `AndroidManifest.xml`) require `flutter build apk --debug` + install.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-# lmt_app
-# lmt_app
+## Demo accounts
+`admin`, `editor`, `member` (password `password123`).

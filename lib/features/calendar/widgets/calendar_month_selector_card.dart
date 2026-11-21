@@ -1,0 +1,175 @@
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
+import 'package:material_ui/material_ui.dart';
+
+import '../../../core/models/lmt_models.dart';
+import '../../../core/theme/colors.dart';
+import '../../../core/theme/typography.dart';
+import '../../../core/widgets/lmt_card.dart';
+
+/// Displays the Year & 12-Months selector strip inside [FullMonthsCalendarPage].
+class CalendarMonthSelectorCard extends StatelessWidget {
+  /// Currently focused month (`DateTime(year, month, 1)`).
+  final DateTime focusedMonth;
+
+  /// All calendar events used to compute per-month event count badges.
+  final List<CalendarEventModel> calendarEvents;
+
+  /// Moves the focused month by `+1` or `-1`.
+  final ValueChanged<int> onChangeMonthDelta;
+
+  /// Selects a specific month number (`1..12`).
+  final ValueChanged<int> onSelectMonth;
+
+  /// Creates a [CalendarMonthSelectorCard].
+  const CalendarMonthSelectorCard({
+    super.key,
+    required this.focusedMonth,
+    required this.calendarEvents,
+    required this.onChangeMonthDelta,
+    required this.onSelectMonth,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    final primary = AppColors.primaryOf(context);
+    final accentGreen = AppColors.accentGreenOf(context);
+    final textPrimary = AppColors.textPrimaryOf(context);
+    final textSecondary = AppColors.textSecondaryOf(context);
+
+    return LmtCard(
+      padding: EdgeInsets.all(12.w),
+      borderRadius: 20.r,
+      accentColor: primary,
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                onPressed: () => onChangeMonthDelta(-1),
+                icon: Icon(Icons.chevron_left_rounded, color: primary),
+              ),
+              Column(
+                children: [
+                  Text(
+                    DateFormat('MMMM yyyy').format(focusedMonth),
+                    style: AppTypography.h4.copyWith(
+                      color: textPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    isArabic
+                        ? 'تصفح كل شهور السنة لمعرفة الأحداث القادمة'
+                        : 'Browse all months of the year for upcoming events',
+                    style: TextStyle(
+                      fontSize: 10.5.sp,
+                      color: textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                onPressed: () => onChangeMonthDelta(1),
+                icon: Icon(Icons.chevron_right_rounded, color: primary),
+              ),
+            ],
+          ),
+          SizedBox(height: 8.h),
+          SizedBox(
+            height: 44.h,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              itemCount: 12,
+              separatorBuilder: (_, _) => SizedBox(width: 8.w),
+              itemBuilder: (context, idx) {
+                final m = idx + 1;
+                final monthDate = DateTime(focusedMonth.year, m, 1);
+                final isSelectedMonth = focusedMonth.month == m;
+                final countInMonth = calendarEvents
+                    .where((e) =>
+                        e.eventDateTime.year == focusedMonth.year &&
+                        e.eventDateTime.month == m)
+                    .length;
+
+                return InkWell(
+                  borderRadius: BorderRadius.circular(14.r),
+                  onTap: () => onSelectMonth(m),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 12.w,
+                      vertical: 6.h,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelectedMonth
+                          ? primary
+                          : AppColors.surfaceOf(context),
+                      borderRadius: BorderRadius.circular(14.r),
+                      border: Border.all(
+                        color: isSelectedMonth
+                            ? primary
+                            : (countInMonth > 0
+                                ? accentGreen
+                                : AppColors.borderOf(context)),
+                        width: countInMonth > 0 ? 1.5 : 1,
+                      ),
+                      boxShadow: AppColors.cardShadows(
+                        context,
+                        accent: isSelectedMonth ? primary : accentGreen,
+                        intensity: isSelectedMonth ? 0.8 : 0.4,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          DateFormat('MMM').format(monthDate),
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.bold,
+                            color: isSelectedMonth
+                                ? Colors.white
+                                : textPrimary,
+                          ),
+                        ),
+                        if (countInMonth > 0) ...[
+                          SizedBox(width: 5.w),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 5.w,
+                              vertical: 1.h,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isSelectedMonth
+                                  ? Colors.white
+                                  : accentGreen,
+                              borderRadius: BorderRadius.circular(10.r),
+                            ),
+                            child: Text(
+                              '$countInMonth',
+                              style: TextStyle(
+                                fontSize: 9.5.sp,
+                                fontWeight: FontWeight.bold,
+                                color: isSelectedMonth
+                                    ? primary
+                                    : Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
