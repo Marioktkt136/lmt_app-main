@@ -15,6 +15,8 @@ import '../../features/profile/cubit/profile_cubit.dart';
 import '../data/lmt_seed_data.dart';
 import '../models/lmt_models.dart';
 import '../repositories/lmt_repository.dart';
+import '../routes/app_router.dart';
+import '../services/local_notification_service.dart';
 import '../utils/app_assets.dart';
 
 export 'lmt_state.dart';
@@ -112,6 +114,21 @@ class LmtCubit extends LmtBaseCubit
 
     _startConnectivityListener();
     scheduleEndOfDayKhelwaSummaryTimer();
+    await scheduleAllCalendarNotifications();
+    await syncDueCalendarReminders();
+
+    LocalNotificationService.onNotificationTapped = (payload) {
+      syncDueCalendarReminders();
+      handleNotificationPayload(payload);
+      final nav = AppRouter.navigatorKey.currentState;
+      if (nav != null && nav.canPop()) {
+        nav.popUntil((route) => route.isFirst);
+      }
+    };
+    if (LocalNotificationService.pendingLaunchPayload != null) {
+      handleNotificationPayload(LocalNotificationService.pendingLaunchPayload);
+      LocalNotificationService.pendingLaunchPayload = null;
+    }
   }
 
   void _startConnectivityListener() {
@@ -133,6 +150,7 @@ class LmtCubit extends LmtBaseCubit
   @override
   Future<void> close() {
     cancelKhelwaTimer();
+    cancelCalendarTimers();
     _connectivitySubscription?.cancel();
     return super.close();
   }

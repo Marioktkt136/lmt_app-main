@@ -27,7 +27,7 @@ class Layout extends StatefulWidget {
   State<Layout> createState() => _LayoutState();
 }
 
-class _LayoutState extends State<Layout> {
+class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   final List<Widget> _pages = const [
     HomeScreen(), // Index 0: Posts Feed (Timeline)
     ChattingRoom(), // Index 1: Chatting Room (Groups & Messages)
@@ -42,17 +42,39 @@ class _LayoutState extends State<Layout> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _selectedIndex = widget.initialIndex.clamp(0, _pages.length - 1);
     _pageController = PageController(initialPage: _selectedIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        context.read<LmtCubit>().setActiveLayoutTab(_selectedIndex);
+        final cubit = context.read<LmtCubit>();
+        final pendingTab = cubit.state.selectedCalendarEventId != null
+            ? 3
+            : (cubit.state.selectedChatGroupId != null ? 1 : _selectedIndex);
+        if (pendingTab != _selectedIndex) {
+          setState(() => _selectedIndex = pendingTab);
+          _pageController?.jumpToPage(pendingTab);
+        }
+        cubit.setActiveLayoutTab(
+          pendingTab,
+          openGroupId: cubit.state.selectedChatGroupId,
+          openEventId: cubit.state.selectedCalendarEventId,
+        );
+        cubit.syncDueCalendarReminders();
       }
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<LmtCubit>().syncDueCalendarReminders();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageController?.dispose();
     _pageController = null;
     super.dispose();

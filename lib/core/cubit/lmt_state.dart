@@ -17,6 +17,7 @@ class LmtState extends Equatable {
   final String verseOfYear;
   final int activeLayoutTab;
   final String? selectedChatGroupId;
+  final String? selectedCalendarEventId;
 
   final MemberModel currentUser;
   final List<MemberModel> members;
@@ -37,6 +38,7 @@ class LmtState extends Equatable {
     this.verseOfYear = LmtSeedData.defaultVerseAr,
     this.activeLayoutTab = 0,
     this.selectedChatGroupId,
+    this.selectedCalendarEventId,
     required this.currentUser,
     required this.members,
     required this.chatGroups,
@@ -47,8 +49,12 @@ class LmtState extends Equatable {
     required this.notifications,
   });
 
+  /// Returns only notifications intended for the currently logged-in user.
+  List<AppNotificationModel> get visibleNotifications =>
+      notifications.where((n) => n.isVisibleTo(currentUser.id)).toList();
+
   int get unreadNotificationsCount =>
-      notifications.where((n) => !n.isRead).length;
+      visibleNotifications.where((n) => !n.isRead).length;
 
   /// Returns chat groups sorted with Pinned groups at the top, then by latest message.
   List<ChatGroupModel> get sortedChatGroups {
@@ -86,6 +92,8 @@ class LmtState extends Equatable {
     int? activeLayoutTab,
     String? selectedChatGroupId,
     bool clearSelectedChatGroup = false,
+    String? selectedCalendarEventId,
+    bool clearSelectedCalendarEvent = false,
     MemberModel? currentUser,
     List<MemberModel>? members,
     List<ChatGroupModel>? chatGroups,
@@ -107,6 +115,9 @@ class LmtState extends Equatable {
       selectedChatGroupId: clearSelectedChatGroup
           ? null
           : (selectedChatGroupId ?? this.selectedChatGroupId),
+      selectedCalendarEventId: clearSelectedCalendarEvent
+          ? null
+          : (selectedCalendarEventId ?? this.selectedCalendarEventId),
       currentUser: currentUser ?? this.currentUser,
       members: members ?? this.members,
       chatGroups: chatGroups ?? this.chatGroups,
@@ -140,6 +151,7 @@ class LmtState extends Equatable {
         verseOfYear,
         activeLayoutTab,
         selectedChatGroupId,
+        selectedCalendarEventId,
         currentUser,
         members,
         chatGroups,
@@ -179,17 +191,28 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     );
   }
 
-  /// Dispatches an in-app and OS-level notification.
+  /// Dispatches an in-app and OS-level notification with category-matched
+  /// custom tone (`Calendar_Notifications` vs `Normal_Notifications`) and
+  /// optional [targetMemberIds] audience scoping.
   void pushNotification({
+    String? id,
     required String title,
     required String description,
     required NotificationCategory category,
     int? targetTabIndex,
     String? targetGroupId,
+    String? targetEventId,
     String? targetRoute,
+    List<String> targetMemberIds = const [],
+    bool showOsBanner = true,
   }) {
+    final resolvedId = id ?? 'notif_${DateTime.now().millisecondsSinceEpoch}';
+    if (state.notifications.any((n) => n.id == resolvedId)) {
+      return;
+    }
+
     final notif = AppNotificationModel(
-      id: 'notif_${DateTime.now().millisecondsSinceEpoch}',
+      id: resolvedId,
       title: title,
       description: description,
       dateTime: DateTime.now(),
@@ -197,13 +220,30 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
       isRead: false,
       targetTabIndex: targetTabIndex,
       targetGroupId: targetGroupId,
+      targetEventId: targetEventId,
       targetRoute: targetRoute,
+      targetMemberIds: targetMemberIds,
     );
-    LocalNotificationService.showInstantNotification(
-      idKey: notif.id,
-      title: title,
-      body: description,
-    );
+
+    if (showOsBanner && notif.isVisibleTo(state.currentUser.id)) {
+      final tone = category == NotificationCategory.calendar
+          ? LmtNotificationTone.calendar
+          : LmtNotificationTone.normal;
+      LocalNotificationService.showInstantNotification(
+        idKey: notif.id,
+        title: title,
+        body: description,
+        tone: tone,
+        payloadData: {
+          'notifId': notif.id,
+          'tab': ?targetTabIndex,
+          'groupId': ?targetGroupId,
+          'eventId': ?targetEventId,
+          'route': ?targetRoute,
+        },
+      );
+    }
+
     emit(state.copyWith(notifications: [notif, ...state.notifications]));
   }
 }

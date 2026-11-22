@@ -89,6 +89,7 @@ class LMTAppState extends State<LMTApp> {
         splitScreenMode: true,
         builder: (context, child) {
           return MaterialApp(
+            navigatorKey: AppRouter.navigatorKey,
             title: 'L.M.T - The Last Message Team',
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,

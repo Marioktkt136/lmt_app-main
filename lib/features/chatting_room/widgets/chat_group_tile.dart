@@ -245,6 +245,8 @@ class ChatGroupTile extends StatelessWidget {
             : '🎤 Voice note (${msg.voiceDurationSeconds ?? 15}s)';
       case MessageType.image:
         return isArabic ? '📷 صورة: ${msg.content}' : '📷 Image: ${msg.content}';
+      case MessageType.video:
+        return isArabic ? '🎬 فيديو: ${msg.content}' : '🎬 Video: ${msg.content}';
       case MessageType.file:
         return isArabic
             ? '📎 ملف: ${msg.attachmentPath ?? msg.content}'

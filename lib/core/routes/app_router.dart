@@ -18,6 +18,10 @@ enum SlideDirection { fromLeft, fromRight }
 class AppRouter {
   AppRouter._();
 
+  /// Global navigator key used to handle OS notification deep-link taps.
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   static Route<dynamic> generateRoute(RouteSettings settings) {
     switch (settings.name) {
       case Routes.splash:

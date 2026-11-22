@@ -30,6 +30,41 @@ class DeviceFileHelper {
   /// Whether [path] refers to a bundled Flutter asset.
   static bool isAssetPath(String path) => path.startsWith('assets/');
 
+  /// Whether [path] refers to a video file based on its extension.
+  static bool isVideoPath(String? path) {
+    if (path == null || path.trim().isEmpty) return false;
+    final lower = path.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.mkv') ||
+        lower.endsWith('.webm') ||
+        lower.endsWith('.avi') ||
+        lower.endsWith('.3gp') ||
+        lower.endsWith('.m4v');
+  }
+
+  /// Launches the device camera directly to take a photo.
+  static Future<PlatformFile?> capturePhotoFromCamera(
+    BuildContext context,
+  ) async {
+    try {
+      final resultMap = await NativeMediaService.captureCameraPhoto();
+      if (resultMap != null) {
+        final path = resultMap['path'] as String?;
+        if (path != null && path.isNotEmpty) {
+          return PlatformFile(
+            name: (resultMap['name'] as String?) ?? 'camera_photo.jpg',
+            path: path,
+            size: (resultMap['size'] as int?) ?? 0,
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static File? _existingLocalFile(String path) {
     if (isAssetPath(path) || path.trim().isEmpty) return null;
     final file = File(path);

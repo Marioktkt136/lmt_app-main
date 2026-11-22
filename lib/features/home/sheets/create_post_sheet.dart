@@ -70,16 +70,17 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
     super.dispose();
   }
 
-  Future<void> _pickMediaFromGallery({required bool pickVideo}) async {
+  Future<void> _pickMediaFromGallery() async {
     final file = await DeviceFileHelper.pickFileSafely(
       context,
-      type: pickVideo ? FileType.video : FileType.image,
+      type: FileType.media,
     );
     if (file != null && file.path != null) {
-      final savedPath = await DeviceFileHelper.persistPickedFile(file.path!, file.name);
+      final savedPath =
+          await DeviceFileHelper.persistPickedFile(file.path!, file.name);
       if (!mounted) return;
-      final ext = (file.extension ?? '').toLowerCase();
-      final isVidFile = pickVideo || ['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp'].contains(ext);
+      final isVidFile = DeviceFileHelper.isVideoPath(savedPath) ||
+          DeviceFileHelper.isVideoPath(file.name);
       setState(() {
         _pickedMediaPath = savedPath;
         _pickedFileName = file.name;
@@ -214,8 +215,7 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                   pickedMediaPath: _pickedMediaPath,
                   pickedFileName: _pickedFileName,
                   isVideo: _isVideo,
-                  onPickImageFromGallery: () => _pickMediaFromGallery(pickVideo: false),
-                  onPickVideoFromGallery: () => _pickMediaFromGallery(pickVideo: true),
+                  onPickFromGallery: _pickMediaFromGallery,
                   onClearMedia: () => setState(() {
                     _pickedMediaPath = null;
                     _pickedFileName = null;

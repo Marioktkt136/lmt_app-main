@@ -175,6 +175,20 @@ $numberedList
     }
 
     emit(state.copyWith(chatMessages: updatedMessages));
+
+    final khelwaGroup =
+        state.chatGroups.where((g) => g.id == 'grp_khelwa').firstOrNull;
+    pushNotification(
+      id: 'notif_khelwa_summary_$dateKey',
+      title: 'جروب الخلوة اليومية 🙏',
+      description:
+          'تم نشر التقرير اليومي التلقائي لمن أخذوا الخلوة ($displayDate) - الإجمالي: ${attendeesNames.length}',
+      category: NotificationCategory.chat,
+      targetTabIndex: 1,
+      targetGroupId: 'grp_khelwa',
+      targetMemberIds: khelwaGroup?.memberIds ?? const [],
+    );
+
     await persistState();
   }
 }

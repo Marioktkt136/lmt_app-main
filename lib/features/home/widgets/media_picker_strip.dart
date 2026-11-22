@@ -4,8 +4,8 @@ import 'package:material_ui/material_ui.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/device_file_helper.dart';
 
-/// Gallery picker widget for attaching a real Image or Video from the user's
-/// phone storage when creating a media post.
+/// Unified Phone Gallery picker widget for attaching an Image OR Video directly
+/// from the device gallery when creating a media post.
 class MediaPickerStrip extends StatelessWidget {
   /// Persisted local path of the picked image or video (or `null` if none picked yet).
   final String? pickedMediaPath;
@@ -16,11 +16,8 @@ class MediaPickerStrip extends StatelessWidget {
   /// Whether the picked media is a video file.
   final bool isVideo;
 
-  /// Callback invoked when the user taps "Pick Image from Gallery".
-  final VoidCallback onPickImageFromGallery;
-
-  /// Callback invoked when the user taps "Pick Video from Gallery".
-  final VoidCallback onPickVideoFromGallery;
+  /// Callback invoked to open the device Gallery directly (photos & videos).
+  final VoidCallback onPickFromGallery;
 
   /// Callback invoked to clear the currently picked media.
   final VoidCallback onClearMedia;
@@ -31,8 +28,7 @@ class MediaPickerStrip extends StatelessWidget {
     required this.pickedMediaPath,
     required this.pickedFileName,
     required this.isVideo,
-    required this.onPickImageFromGallery,
-    required this.onPickVideoFromGallery,
+    required this.onPickFromGallery,
     required this.onClearMedia,
   });
 
@@ -45,213 +41,163 @@ class MediaPickerStrip extends StatelessWidget {
     final textSecondary = AppColors.textSecondaryOf(context);
     final hasPicked = pickedMediaPath != null && pickedMediaPath!.isNotEmpty;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Gallery Action Buttons (Pick Image OR Pick Video from Phone Gallery)
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: primary,
-                  side: BorderSide(color: primary, width: 1.4),
-                  padding: EdgeInsets.symmetric(vertical: 12.h),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14.r),
-                  ),
-                ),
-                onPressed: onPickImageFromGallery,
-                icon: const Icon(Icons.photo_library_rounded),
-                label: Text(
-                  isArabic ? 'رفع صورة من المعرض 📷' : 'Pick Image 📷',
-                  style: TextStyle(
-                    fontSize: 12.sp,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(width: 10.w),
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFF59E0B),
-                  side: const BorderSide(
-                    color: Color(0xFFF59E0B),
-                    width: 1.4,
-                  ),
-                  padding: EdgeInsets.symmetric(vertical: 12.h),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14.r),
-                  ),
-                ),
-                onPressed: onPickVideoFromGallery,
-                icon: const Icon(Icons.video_library_rounded),
-                label: Text(
-                  isArabic ? 'رفع فيديو من المعرض 🎬' : 'Pick Video 🎬',
-                  style: TextStyle(
-                    fontSize: 12.sp,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
+    if (hasPicked) {
+      return Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(12.w),
+        decoration: AppColors.cardDecoration(
+          context,
+          radius: 16.r,
+          accentColor: accentGreen,
+          isHighlighted: true,
         ),
-        SizedBox(height: 12.h),
-
-        // Preview Box or Empty Prompt
-        if (hasPicked)
-          Container(
-            width: double.infinity,
-            padding: EdgeInsets.all(12.w),
-            decoration: AppColors.cardDecoration(
-              context,
-              radius: 16.r,
-              accentColor: accentGreen,
-              isHighlighted: true,
-            ),
-            child: Column(
-              children: [
-                if (isVideo)
-                  Container(
-                    height: 120.h,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(12.r),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.play_circle_fill_rounded,
-                          color: Colors.white,
-                          size: 46.sp,
-                        ),
-                        SizedBox(height: 6.h),
-                        Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12.w),
-                          child: Text(
-                            pickedFileName ?? 'Video.mp4',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12.sp,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                else
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12.r),
-                    child: SizedBox(
-                      height: 150.h,
-                      width: double.infinity,
-                      child: DeviceFileHelper.buildImage(
-                        pickedMediaPath!,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                  ),
-                SizedBox(height: 8.h),
-                Row(
+        child: Column(
+          children: [
+            if (isVideo)
+              Container(
+                height: 130.h,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(12.r),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(
-                      Icons.check_circle_rounded,
-                      color: accentGreen,
-                      size: 18.sp,
+                      Icons.play_circle_fill_rounded,
+                      color: Colors.white,
+                      size: 46.sp,
                     ),
-                    SizedBox(width: 6.w),
-                    Expanded(
+                    SizedBox(height: 6.h),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12.w),
                       child: Text(
-                        pickedFileName ??
-                            (isVideo
-                                ? (isArabic ? 'فيديو مرفوع' : 'Uploaded video')
-                                : (isArabic ? 'صورة مرفوعة' : 'Uploaded image')),
+                        pickedFileName ?? 'Video.mp4',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
+                          color: Colors.white,
                           fontSize: 12.sp,
                           fontWeight: FontWeight.bold,
-                          color: textPrimary,
-                        ),
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: onClearMedia,
-                      icon: Icon(
-                        Icons.delete_outline_rounded,
-                        color: AppColors.error,
-                        size: 16.sp,
-                      ),
-                      label: Text(
-                        isArabic ? 'إزالة' : 'Remove',
-                        style: TextStyle(
-                          color: AppColors.error,
-                          fontSize: 11.5.sp,
                         ),
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          )
-        else
-          InkWell(
-            borderRadius: BorderRadius.circular(16.r),
-            onTap: onPickImageFromGallery,
-            child: Container(
-              width: double.infinity,
-              padding: EdgeInsets.symmetric(vertical: 20.h, horizontal: 14.w),
-              decoration: BoxDecoration(
-                color: primary.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(16.r),
-                border: Border.all(
-                  color: primary.withValues(alpha: 0.3),
+              )
+            else
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12.r),
+                child: SizedBox(
+                  height: 155.h,
+                  width: double.infinity,
+                  child: DeviceFileHelper.buildImage(
+                    pickedMediaPath!,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
-              child: Column(
-                children: [
-                  Icon(
-                    Icons.perm_media_rounded,
-                    size: 36.sp,
-                    color: primary,
-                  ),
-                  SizedBox(height: 8.h),
-                  Text(
-                    isArabic
-                        ? 'اضغط لاختيار صورة أو فيديو من معرض هاتفك 📱'
-                        : 'Tap to pick an image or video from your phone gallery 📱',
-                    textAlign: TextAlign.center,
+            SizedBox(height: 8.h),
+            Row(
+              children: [
+                Icon(
+                  Icons.check_circle_rounded,
+                  color: accentGreen,
+                  size: 18.sp,
+                ),
+                SizedBox(width: 6.w),
+                Expanded(
+                  child: Text(
+                    pickedFileName ??
+                        (isVideo
+                            ? (isArabic ? 'فيديو من المعرض' : 'Gallery video')
+                            : (isArabic ? 'صورة من المعرض' : 'Gallery image')),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 12.5.sp,
+                      fontSize: 12.sp,
                       fontWeight: FontWeight.bold,
                       color: textPrimary,
                     ),
                   ),
-                  SizedBox(height: 3.h),
-                  Text(
-                    isArabic
-                        ? 'يفتح الاستوديو / المعرض لرفع الصور والفيديوهات مباشرة'
-                        : 'Opens your device gallery to upload photos or videos directly',
-                    textAlign: TextAlign.center,
+                ),
+                TextButton.icon(
+                  onPressed: onPickFromGallery,
+                  icon: Icon(Icons.swap_horiz_rounded, size: 16.sp),
+                  label: Text(
+                    isArabic ? 'تغيير' : 'Change',
+                    style: TextStyle(fontSize: 11.5.sp),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: onClearMedia,
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    color: AppColors.error,
+                    size: 16.sp,
+                  ),
+                  label: Text(
+                    isArabic ? 'إزالة' : 'Remove',
                     style: TextStyle(
-                      fontSize: 11.sp,
-                      color: textSecondary,
+                      color: AppColors.error,
+                      fontSize: 11.5.sp,
                     ),
                   ),
-                ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16.r),
+      onTap: onPickFromGallery,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.symmetric(vertical: 22.h, horizontal: 14.w),
+        decoration: BoxDecoration(
+          color: primary.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(16.r),
+          border: Border.all(
+            color: primary.withValues(alpha: 0.35),
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              Icons.perm_media_rounded,
+              size: 40.sp,
+              color: primary,
+            ),
+            SizedBox(height: 8.h),
+            Text(
+              isArabic
+                  ? 'اضغط لاختيار صورة أو فيديو من المعرض (Gallery) 📱'
+                  : 'Tap to pick an image or video from your phone gallery 📱',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13.sp,
+                fontWeight: FontWeight.bold,
+                color: textPrimary,
               ),
             ),
-          ),
-      ],
+            SizedBox(height: 4.h),
+            Text(
+              isArabic
+                  ? 'يفتح معرض الصور والفيديوهات مباشرة لتختار صورة أو فيديو لرفعه'
+                  : 'Opens your device gallery directly to pick either a photo or video',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11.sp,
+                color: textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

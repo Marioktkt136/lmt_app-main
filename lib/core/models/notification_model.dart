@@ -17,7 +17,8 @@ enum NotificationCategory {
   }
 }
 
-/// Represents an in-app notification item with deep-link navigation targets.
+/// Represents an in-app notification item with deep-link navigation targets
+/// and optional audience scoping (`targetMemberIds`).
 class AppNotificationModel extends Equatable {
   /// The unique identifier of the notification.
   final String id;
@@ -43,8 +44,16 @@ class AppNotificationModel extends Equatable {
   /// Optional specific chat group ID to open when tapped.
   final String? targetGroupId;
 
+  /// Optional specific calendar event ID to open when tapped.
+  final String? targetEventId;
+
   /// Optional named route to push when tapped.
   final String? targetRoute;
+
+  /// Optional list of member IDs allowed to see this notification.
+  ///
+  /// When empty, the notification is visible to all team members.
+  final List<String> targetMemberIds;
 
   /// Creates an [AppNotificationModel].
   const AppNotificationModel({
@@ -56,8 +65,14 @@ class AppNotificationModel extends Equatable {
     this.isRead = false,
     this.targetTabIndex,
     this.targetGroupId,
+    this.targetEventId,
     this.targetRoute,
+    this.targetMemberIds = const [],
   });
+
+  /// Returns `true` if [memberId] is authorized to see this notification.
+  bool isVisibleTo(String memberId) =>
+      targetMemberIds.isEmpty || targetMemberIds.contains(memberId);
 
   /// Creates a copy of this notification with updated fields.
   AppNotificationModel copyWith({
@@ -69,7 +84,9 @@ class AppNotificationModel extends Equatable {
     bool? isRead,
     int? targetTabIndex,
     String? targetGroupId,
+    String? targetEventId,
     String? targetRoute,
+    List<String>? targetMemberIds,
   }) {
     return AppNotificationModel(
       id: id ?? this.id,
@@ -80,7 +97,9 @@ class AppNotificationModel extends Equatable {
       isRead: isRead ?? this.isRead,
       targetTabIndex: targetTabIndex ?? this.targetTabIndex,
       targetGroupId: targetGroupId ?? this.targetGroupId,
+      targetEventId: targetEventId ?? this.targetEventId,
       targetRoute: targetRoute ?? this.targetRoute,
+      targetMemberIds: targetMemberIds ?? this.targetMemberIds,
     );
   }
 
@@ -94,7 +113,9 @@ class AppNotificationModel extends Equatable {
         'isRead': isRead,
         'targetTabIndex': targetTabIndex,
         'targetGroupId': targetGroupId,
+        'targetEventId': targetEventId,
         'targetRoute': targetRoute,
+        'targetMemberIds': targetMemberIds,
       };
 
   /// Deserializes an [AppNotificationModel] from a JSON map.
@@ -110,7 +131,12 @@ class AppNotificationModel extends Equatable {
         isRead: json['isRead'] as bool? ?? false,
         targetTabIndex: json['targetTabIndex'] as int?,
         targetGroupId: json['targetGroupId'] as String?,
+        targetEventId: json['targetEventId'] as String?,
         targetRoute: json['targetRoute'] as String?,
+        targetMemberIds: (json['targetMemberIds'] as List<dynamic>?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
       );
 
   @override
@@ -123,6 +149,8 @@ class AppNotificationModel extends Equatable {
         isRead,
         targetTabIndex,
         targetGroupId,
+        targetEventId,
         targetRoute,
+        targetMemberIds,
       ];
 }

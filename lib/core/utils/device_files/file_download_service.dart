@@ -13,6 +13,16 @@ import 'mime_type_util.dart';
 class FileDownloadService {
   FileDownloadService._();
 
+  static Future<Directory> _resolveBaseDirectory() async {
+    if (Platform.isAndroid) {
+      try {
+        final ext = await getExternalStorageDirectory();
+        if (ext != null) return ext;
+      } catch (_) {}
+    }
+    return getApplicationDocumentsDirectory();
+  }
+
   /// Downloads [file] and returns the public download path.
   ///
   /// Staging order: user-uploaded local file, bundled image asset, then a
@@ -22,8 +32,7 @@ class FileDownloadService {
     SharedFileModel file, {
     bool openAfterSave = true,
   }) async {
-    final baseDir = await getExternalStorageDirectory() ??
-        await getApplicationDocumentsDirectory();
+    final baseDir = await _resolveBaseDirectory();
     final downloadsDir = Directory('${baseDir.path}/LMT_Downloads');
     if (!downloadsDir.existsSync()) {
       await downloadsDir.create(recursive: true);
@@ -100,6 +109,9 @@ ${file.documentContent ?? file.description}
       mimeType: staged.mimeType,
     );
     if (viaNative != null) return viaNative;
+    if (!Platform.isAndroid) {
+      return staged.file.path;
+    }
     try {
       final publicDir = Directory('/storage/emulated/0/Download/LMT');
       if (!publicDir.existsSync()) await publicDir.create(recursive: true);

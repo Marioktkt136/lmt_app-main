@@ -2,18 +2,22 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../cubit/shared_files_cubit.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
 import '../../../core/utils/app_assets.dart';
 import '../../../core/utils/device_file_helper.dart';
+import '../cubit/shared_files_cubit.dart';
 
-/// Displays a modal bottom sheet for uploading a real file from the phone's
-/// storage via [FilePicker] or adding an external hyperlink card.
+enum _SharedUploadMode { file, hyperlink }
+
+/// Displays a clean modal bottom sheet with **two options**:
+/// 1. Upload ANY file format from the phone's file storage (`FileType.any`).
+/// 2. Add an External Hyperlink URL (`SharedFileType.card`).
 void showUploadSharedFileSheet(BuildContext context) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-  SharedFileType selectedCategory = SharedFileType.pdf;
+  _SharedUploadMode mode = _SharedUploadMode.file;
+
   final titleCtrl = TextEditingController();
   final descCtrl = TextEditingController();
   final urlCtrl = TextEditingController();
@@ -21,7 +25,8 @@ void showUploadSharedFileSheet(BuildContext context) {
   String? pickedLocalPath;
   String? pickedFileName;
   String pickedFileSize = '1.2 MB';
-  String pickedExtension = 'PDF';
+  String pickedExtension = 'FILE';
+  SharedFileType resolvedFileCategory = SharedFileType.paperwork;
 
   showModalBottomSheet<void>(
     context: context,
@@ -38,43 +43,40 @@ void showUploadSharedFileSheet(BuildContext context) {
           final textPrimary = AppColors.textPrimaryOf(ctx);
           final textSecondary = AppColors.textSecondaryOf(ctx);
 
-          Future<void> pickFileFromPhone() async {
-            FileType pickerType = FileType.any;
-            List<String>? allowedExtensions;
-
-            if (selectedCategory == SharedFileType.image) {
-              pickerType = FileType.image;
-            } else if (selectedCategory == SharedFileType.pdf) {
-              pickerType = FileType.custom;
-              allowedExtensions = ['pdf'];
-            } else if (selectedCategory == SharedFileType.wordExcel) {
-              pickerType = FileType.custom;
-              allowedExtensions = ['doc', 'docx', 'xls', 'xlsx', 'csv'];
-            }
-
+          Future<void> pickAnyFileFromPhone() async {
             final f = await DeviceFileHelper.pickFileSafely(
               ctx,
-              type: pickerType,
-              allowedExtensions: allowedExtensions,
+              type: FileType.any,
             );
-
             if (f != null && f.path != null) {
               final persistedPath = await DeviceFileHelper.persistPickedFile(
                 f.path!,
                 f.name,
               );
+              final ext = (f.extension ?? 'FILE').toLowerCase();
+              final inferredCategory = switch (ext) {
+                'pdf' => SharedFileType.pdf,
+                'png' || 'jpg' || 'jpeg' || 'webp' || 'gif' =>
+                  SharedFileType.image,
+                'doc' || 'docx' || 'xls' || 'xlsx' || 'csv' || 'ppt' || 'pptx' =>
+                  SharedFileType.wordExcel,
+                _ => SharedFileType.paperwork,
+              };
+
               setModalState(() {
                 pickedLocalPath = persistedPath;
                 pickedFileName = f.name;
                 pickedFileSize = DeviceFileHelper.formatBytes(f.size);
-                pickedExtension =
-                    (f.extension ?? selectedCategory.name).toUpperCase();
+                pickedExtension = ext.toUpperCase();
+                resolvedFileCategory = inferredCategory;
                 if (titleCtrl.text.trim().isEmpty) {
                   titleCtrl.text = f.name;
                 }
               });
             }
           }
+
+          final isFileMode = mode == _SharedUploadMode.file;
 
           return Padding(
             padding: EdgeInsets.only(
@@ -90,30 +92,56 @@ void showUploadSharedFileSheet(BuildContext context) {
                 children: [
                   Text(
                     isArabic
-                        ? 'رفع ملف مشترك من الهاتف أو بطاقة رابط 📁'
-                        : 'Upload Shared File from Phone or Add Link 📁',
+                        ? 'رفع ملف من الهاتف أو إضافة رابط خارجي 📁'
+                        : 'Upload Shared File or External Link 📁',
                     style: AppTypography.h4.copyWith(color: textPrimary),
                   ),
                   SizedBox(height: 12.h),
-                  Wrap(
-                    spacing: 6.w,
-                    runSpacing: 6.h,
-                    children: SharedFileType.values.map((cat) {
-                      return ChoiceChip(
-                        selected: selectedCategory == cat,
-                        onSelected: (_) =>
-                            setModalState(() => selectedCategory = cat),
-                        label: Text(cat.label(isArabic)),
-                      );
-                    }).toList(),
+
+                  // Clean Two-Option Switch: Phone File (All Formats) vs External Hyperlink URL
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          selected: isFileMode,
+                          onSelected: (_) => setModalState(
+                            () => mode = _SharedUploadMode.file,
+                          ),
+                          avatar: Icon(
+                            Icons.upload_file_rounded,
+                            size: 17.sp,
+                            color: isFileMode ? primary : textSecondary,
+                          ),
+                          label: Text(
+                            isArabic ? 'رفع ملف (كل الصيغ)' : 'Upload File',
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 10.w),
+                      Expanded(
+                        child: ChoiceChip(
+                          selected: !isFileMode,
+                          onSelected: (_) => setModalState(
+                            () => mode = _SharedUploadMode.hyperlink,
+                          ),
+                          avatar: Icon(
+                            Icons.link_rounded,
+                            size: 17.sp,
+                            color: !isFileMode ? primary : textSecondary,
+                          ),
+                          label: Text(
+                            isArabic ? 'رابط خارجي 🔗' : 'External URL 🔗',
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   SizedBox(height: 14.h),
 
-                  // Native File Picker Zone (for all file types except Hyperlink Card)
-                  if (selectedCategory != SharedFileType.card) ...[
+                  if (isFileMode) ...[
                     InkWell(
                       borderRadius: BorderRadius.circular(18.r),
-                      onTap: pickFileFromPhone,
+                      onTap: pickAnyFileFromPhone,
                       child: Container(
                         width: double.infinity,
                         padding: EdgeInsets.symmetric(
@@ -130,7 +158,7 @@ void showUploadSharedFileSheet(BuildContext context) {
                         child: Column(
                           children: [
                             if (pickedLocalPath != null &&
-                                selectedCategory == SharedFileType.image)
+                                resolvedFileCategory == SharedFileType.image)
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(12.r),
                                 child: SizedBox(
@@ -155,8 +183,8 @@ void showUploadSharedFileSheet(BuildContext context) {
                             Text(
                               pickedFileName ??
                                   (isArabic
-                                      ? 'اضغط هنا لاختيار ورفع ملف من هاتفك 📱'
-                                      : 'Tap here to choose a file from your phone 📱'),
+                                      ? 'اضغط لاختيار أي ملف من هاتفك 📱'
+                                      : 'Tap here to choose any file from your phone 📱'),
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 13.5.sp,
@@ -171,8 +199,8 @@ void showUploadSharedFileSheet(BuildContext context) {
                               pickedLocalPath != null
                                   ? '$pickedExtension • $pickedFileSize • ${isArabic ? 'اضغط لتغيير الملف' : 'Tap to change file'}'
                                   : (isArabic
-                                      ? 'يدعم ملفات PDF، Word، Excel، الصور، والمستندات من الموبايل'
-                                      : 'Supports PDF, Word, Excel, Images & Documents from device'),
+                                      ? 'يدعم رفع جميع الصيغ المتاحة من الموبايل (PDF, Word, Excel, Images, Videos, Audio...)'
+                                      : 'Supports all file formats from your device'),
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 11.sp,
@@ -189,8 +217,9 @@ void showUploadSharedFileSheet(BuildContext context) {
                   TextField(
                     controller: titleCtrl,
                     decoration: InputDecoration(
-                      labelText:
-                          isArabic ? 'عنوان الملف أو البطاقة' : 'Title',
+                      labelText: isFileMode
+                          ? (isArabic ? 'عنوان الملف' : 'File Title')
+                          : (isArabic ? 'عنوان الرابط' : 'Link Title'),
                       prefixIcon: const Icon(Icons.title_rounded),
                     ),
                   ),
@@ -202,13 +231,14 @@ void showUploadSharedFileSheet(BuildContext context) {
                       prefixIcon: const Icon(Icons.description_outlined),
                     ),
                   ),
-                  if (selectedCategory == SharedFileType.card) ...[
+                  if (!isFileMode) ...[
                     SizedBox(height: 10.h),
                     TextField(
                       controller: urlCtrl,
+                      keyboardType: TextInputType.url,
                       decoration: InputDecoration(
                         labelText: isArabic
-                            ? 'الرابط الخارجي (Hyperlink URL 🔗)'
+                            ? 'الرابط الخارجي (External Hyperlink URL 🔗)'
                             : 'External Hyperlink URL 🔗',
                         hintText: 'https://...',
                         prefixIcon: const Icon(Icons.link_rounded),
@@ -220,9 +250,7 @@ void showUploadSharedFileSheet(BuildContext context) {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        if (selectedCategory != SharedFileType.card &&
-                            pickedLocalPath == null &&
-                            titleCtrl.text.trim().isEmpty) {
+                        if (isFileMode && pickedLocalPath == null) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text(
@@ -236,22 +264,31 @@ void showUploadSharedFileSheet(BuildContext context) {
                           );
                           return;
                         }
+                        if (!isFileMode && urlCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                isArabic
+                                    ? 'يرجى إدخال الرابط الخارجي (URL) أولاً 🔗'
+                                    : 'Please enter an external URL first 🔗',
+                              ),
+                              backgroundColor: AppColors.warning,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+
                         if (titleCtrl.text.trim().isEmpty &&
                             pickedFileName != null) {
                           titleCtrl.text = pickedFileName!;
                         }
                         if (titleCtrl.text.trim().isEmpty) return;
 
-                        final ext = pickedLocalPath != null
-                            ? pickedExtension
-                            : switch (selectedCategory) {
-                                SharedFileType.pdf => 'PDF',
-                                SharedFileType.wordExcel => 'DOCX/XLSX',
-                                SharedFileType.paperwork => 'PAPERWORK',
-                                SharedFileType.image => 'PNG',
-                                SharedFileType.card => 'LINK 🔗',
-                              };
-                        final iconAsset = switch (selectedCategory) {
+                        final finalCategory = isFileMode
+                            ? resolvedFileCategory
+                            : SharedFileType.card;
+                        final iconAsset = switch (finalCategory) {
                           SharedFileType.pdf => AppAssets.reviewIcon,
                           SharedFileType.wordExcel => AppAssets.formIcon,
                           SharedFileType.paperwork => AppAssets.postIcon,
@@ -259,25 +296,24 @@ void showUploadSharedFileSheet(BuildContext context) {
                             pickedLocalPath ?? AppAssets.picturesIcon,
                           SharedFileType.card => AppAssets.driveIcon,
                         };
+
                         context.read<LmtCubit>().addSharedFile(
                               title: titleCtrl.text,
                               description: descCtrl.text.trim().isEmpty
                                   ? 'ملف مرفوع لفريق الرسالة الاخيرة'
                                   : descCtrl.text,
-                              category: selectedCategory,
+                              category: finalCategory,
                               imagePath: iconAsset,
-                              fileExtension: ext,
-                              fileSize: pickedLocalPath != null
-                                  ? pickedFileSize
-                                  : '1.5 MB',
-                              externalUrl: urlCtrl.text,
-                              localFilePath: pickedLocalPath,
+                              fileExtension: isFileMode ? pickedExtension : 'LINK 🔗',
+                              fileSize: isFileMode ? pickedFileSize : 'Link',
+                              externalUrl: isFileMode ? null : urlCtrl.text.trim(),
+                              localFilePath: isFileMode ? pickedLocalPath : null,
                             );
                         Navigator.pop(ctx);
                       },
                       icon: const Icon(Icons.cloud_upload_outlined),
                       label: Text(
-                        isArabic ? 'رفع وحفظ الملف' : 'Upload & Save',
+                        isArabic ? 'حفظ ونشر' : 'Upload & Save',
                       ),
                     ),
                   ),

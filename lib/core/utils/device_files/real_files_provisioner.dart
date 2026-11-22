@@ -15,14 +15,23 @@ class RealFilesProvisioner {
   static const _imageExts = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
   static const _videoExts = ['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp'];
 
+  static Future<Directory> _resolveBaseDirectory() async {
+    if (Platform.isAndroid) {
+      try {
+        final ext = await getExternalStorageDirectory();
+        if (ext != null) return ext;
+      } catch (_) {}
+    }
+    return getApplicationDocumentsDirectory();
+  }
+
   /// Provisions sample files, then lists files from known storage folders,
   /// filtered by [type] and [allowedExtensions].
   static Future<List<PlatformFile>> scanAndProvision({
     required FileType type,
     List<String>? allowedExtensions,
   }) async {
-    final baseDir = await getExternalStorageDirectory() ??
-        await getApplicationDocumentsDirectory();
+    final baseDir = await _resolveBaseDirectory();
     final deviceBoxDir = Directory('${baseDir.path}/LMT_Phone_Storage');
     if (!deviceBoxDir.existsSync()) {
       await deviceBoxDir.create(recursive: true);
@@ -32,11 +41,13 @@ class RealFilesProvisioner {
     final candidateDirs = <Directory>[
       deviceBoxDir,
       Directory('${baseDir.path}/LMT_Downloads'),
-      Directory('/storage/emulated/0/Download'),
-      Directory('/storage/emulated/0/Documents'),
-      Directory('/storage/emulated/0/Pictures'),
-      Directory('/storage/emulated/0/Movies'),
-      Directory('/storage/emulated/0/DCIM/Camera'),
+      if (Platform.isAndroid) ...[
+        Directory('/storage/emulated/0/Download'),
+        Directory('/storage/emulated/0/Documents'),
+        Directory('/storage/emulated/0/Pictures'),
+        Directory('/storage/emulated/0/Movies'),
+        Directory('/storage/emulated/0/DCIM/Camera'),
+      ],
     ];
 
     final results = <PlatformFile>[];

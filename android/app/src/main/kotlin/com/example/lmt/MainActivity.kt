@@ -15,6 +15,7 @@ import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -27,6 +28,8 @@ class MainActivity : FlutterFragmentActivity() {
     private val CHANNEL = "com.example.lmt/native_media"
     private val MIC_PERMISSION_REQUEST_CODE = 2026
     private val FILE_PICKER_REQUEST_CODE = 2027
+    private val CAMERA_PERMISSION_REQUEST_CODE = 2028
+    private val CAMERA_CAPTURE_REQUEST_CODE = 2029
 
     private var mediaRecorder: MediaRecorder? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -34,6 +37,8 @@ class MainActivity : FlutterFragmentActivity() {
     private var currentPlayingPath: String? = null
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingFilePickerResult: MethodChannel.Result? = null
+    private var pendingCameraResult: MethodChannel.Result? = null
+    private var pendingCameraFile: File? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         GeneratedPluginRegistrant.registerWith(flutterEngine)
@@ -45,6 +50,10 @@ class MainActivity : FlutterFragmentActivity() {
                         val pickerType = call.argument<String>("type") ?: "any"
                         val allowedExtensions = call.argument<List<String>>("allowedExtensions")
                         launchSystemFilePicker(pickerType, allowedExtensions, result)
+                    }
+
+                    "captureCameraPhoto" -> {
+                        launchCameraWithPermission(result)
                     }
 
                     "requestMicPermission" -> {
@@ -153,16 +162,41 @@ class MainActivity : FlutterFragmentActivity() {
     ) {
         try {
             pendingFilePickerResult = result
+
+            // Open the phone's Gallery / Photo Picker directly for image, video, and media picks.
+            if (pickerType == "image" || pickerType == "video" || pickerType == "media") {
+                val galleryIntent = if (Build.VERSION.SDK_INT >= 33) {
+                    Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+                        when (pickerType) {
+                            "image" -> type = "image/*"
+                            "video" -> type = "video/*"
+                            // Leaving type unset on API 33+ shows BOTH images & videos in Photo Picker.
+                        }
+                    }
+                } else {
+                    when (pickerType) {
+                        "video" -> Intent(Intent.ACTION_PICK, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).apply {
+                            type = "video/*"
+                        }
+                        "media" -> Intent(Intent.ACTION_PICK).apply {
+                            type = "image/* video/*"
+                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                        }
+                        else -> Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+                            type = "image/*"
+                        }
+                    }
+                }
+                @Suppress("DEPRECATION")
+                startActivityForResult(galleryIntent, FILE_PICKER_REQUEST_CODE)
+                return
+            }
+
+            // Open the Files / Document browser for general files or custom extensions.
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
-                type = when (pickerType) {
-                    "image" -> "image/*"
-                    "video" -> "video/*"
-                    else -> "*/*"
-                }
-                if (pickerType == "media") {
-                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
-                } else if (pickerType == "custom" && !allowedExtensions.isNullOrEmpty()) {
+                type = "*/*"
+                if (pickerType == "custom" && !allowedExtensions.isNullOrEmpty()) {
                     val mimeTypes = allowedExtensions.mapNotNull { ext ->
                         MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
                     }.distinct().toTypedArray()
@@ -176,6 +210,54 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (e: Exception) {
             pendingFilePickerResult = null
             result.error("PICKER_ERROR", e.message, null)
+        }
+    }
+
+    private fun hasCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun launchCameraWithPermission(result: MethodChannel.Result) {
+        if (hasCameraPermission()) {
+            launchCameraCapture(result)
+        } else {
+            pendingCameraResult = result
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.CAMERA),
+                CAMERA_PERMISSION_REQUEST_CODE
+            )
+        }
+    }
+
+    private fun launchCameraCapture(result: MethodChannel.Result) {
+        try {
+            val dir = File(cacheDir, "camera_photos")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            val photoFile = File(dir, "lmt_cam_${System.currentTimeMillis()}.jpg")
+            pendingCameraFile = photoFile
+            pendingCameraResult = result
+            val photoUri = FileProvider.getUriForFile(
+                this,
+                "$packageName.lmt_camera_provider",
+                photoFile
+            )
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, CAMERA_CAPTURE_REQUEST_CODE)
+        } catch (e: Exception) {
+            pendingCameraFile = null
+            pendingCameraResult = null
+            result.error("CAMERA_ERROR", e.message, null)
         }
     }
 
@@ -195,6 +277,23 @@ class MainActivity : FlutterFragmentActivity() {
                     callback?.error("COPY_ERROR", e.message, null)
                 }
             } else {
+                callback?.success(null)
+            }
+        } else if (requestCode == CAMERA_CAPTURE_REQUEST_CODE) {
+            val callback = pendingCameraResult
+            val file = pendingCameraFile
+            pendingCameraResult = null
+            pendingCameraFile = null
+            if (resultCode == Activity.RESULT_OK && file != null && file.exists() && file.length() > 0) {
+                callback?.success(
+                    mapOf(
+                        "name" to file.name,
+                        "path" to file.absolutePath,
+                        "size" to file.length().toInt()
+                    )
+                )
+            } else {
+                file?.delete()
                 callback?.success(null)
             }
         }
@@ -252,6 +351,16 @@ class MainActivity : FlutterFragmentActivity() {
                     grantResults[0] == PackageManager.PERMISSION_GRANTED
             pendingMicResult?.success(granted)
             pendingMicResult = null
+        } else if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {
+            val granted = grantResults.isNotEmpty() &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+            val callback = pendingCameraResult
+            pendingCameraResult = null
+            if (granted && callback != null) {
+                launchCameraCapture(callback)
+            } else {
+                callback?.error("PERMISSION_DENIED", "Camera permission denied", null)
+            }
         }
     }
 

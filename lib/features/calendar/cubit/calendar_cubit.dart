@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/services/local_notification_service.dart';
@@ -8,9 +10,163 @@ export '../../../core/cubit/lmt_cubit.dart';
 typedef CalendarCubit = LmtCubit;
 
 /// Encapsulates Calendar Events CRUD (including multi-day events and nullable
-/// Google Maps locations) and Exact Lock-Screen Reminder scheduling.
+/// Google Maps locations), automatic 1-day-before reminders for all members,
+/// foreground/background Calendar reminder timers, and In-App notification sync.
 mixin CalendarCubitMixin on LmtBaseCubit {
-  /// Adds a new calendar event and schedules its OS reminder notification.
+  final Map<String, Timer> _calendarReminderTimers = {};
+
+  /// Cancels all active foreground calendar timers on Cubit disposal.
+  void cancelCalendarTimers() {
+    for (final timer in _calendarReminderTimers.values) {
+      timer.cancel();
+    }
+    _calendarReminderTimers.clear();
+  }
+
+  /// Schedules OS reminders and foreground timers for all upcoming events
+  /// (both custom reminders and automatic 1-day-before reminders).
+  Future<void> scheduleAllCalendarNotifications() async {
+    cancelCalendarTimers();
+    for (final evt in state.calendarEvents) {
+      await _scheduleBothEventReminders(evt);
+    }
+  }
+
+  Future<void> _scheduleBothEventReminders(CalendarEventModel evt) async {
+    final now = DateTime.now();
+
+    // 1. Automatic 1-day-before reminder for ALL members (Calendar_Notifications)
+    final oneDayBefore = evt.eventDateTime.subtract(const Duration(days: 1));
+    if (oneDayBefore.isAfter(now)) {
+      await LocalNotificationService.scheduleOneDayBeforeEventReminder(
+        eventId: evt.id,
+        title: evt.title,
+        description: evt.description,
+        location: evt.location,
+        eventDateTime: evt.eventDateTime,
+      );
+      _scheduleForegroundTimer(
+        key: '1day_${evt.id}',
+        triggerAt: oneDayBefore,
+        onFire: () => _emitDueOneDayBeforeNotification(evt, showOsBanner: false),
+      );
+    }
+
+    // 2. Event custom reminder when active (Calendar_Notifications)
+    if (evt.isReminderActive && evt.reminderDateTime != null) {
+      final remAt = evt.reminderDateTime!;
+      if (remAt.isAfter(now)) {
+        await LocalNotificationService.scheduleEventReminder(
+          eventId: evt.id,
+          title: evt.title,
+          description: evt.description,
+          location: evt.location,
+          reminderDateTime: remAt,
+        );
+        _scheduleForegroundTimer(
+          key: 'rem_${evt.id}',
+          triggerAt: remAt,
+          onFire: () => _emitDueCustomReminderNotification(evt, showOsBanner: false),
+        );
+      }
+    }
+  }
+
+  void _scheduleForegroundTimer({
+    required String key,
+    required DateTime triggerAt,
+    required Future<void> Function() onFire,
+  }) {
+    _calendarReminderTimers[key]?.cancel();
+    final delay = triggerAt.difference(DateTime.now());
+    if (delay.isNegative || delay.inDays > 30) return;
+
+    _calendarReminderTimers[key] = Timer(delay, () async {
+      await onFire();
+    });
+  }
+
+  /// Ensures any Calendar Reminder (custom or automatic 1-day-before) whose
+  /// time has arrived is added into the in-app Notification screen (`NotificationScreen`)
+  /// with deep-link navigation to the event.
+  Future<void> syncDueCalendarReminders() async {
+    final now = DateTime.now();
+    bool changed = false;
+
+    for (final evt in state.calendarEvents) {
+      // Check automatic 1-day-before reminder (within [eventDateTime - 1d, eventDateTime + 2h])
+      final oneDayBefore = evt.eventDateTime.subtract(const Duration(days: 1));
+      final eventWindowEnd = evt.eventDateTime.add(const Duration(hours: 2));
+      if (!oneDayBefore.isAfter(now) && now.isBefore(eventWindowEnd)) {
+        final notifId = 'notif_1day_${evt.id}';
+        if (!state.notifications.any((n) => n.id == notifId)) {
+          await _emitDueOneDayBeforeNotification(
+            evt,
+            showOsBanner: true,
+          );
+          changed = true;
+        }
+      }
+
+      // Check custom reminder
+      if (evt.isReminderActive && evt.reminderDateTime != null) {
+        final remAt = evt.reminderDateTime!;
+        if (!remAt.isAfter(now) && now.isBefore(eventWindowEnd)) {
+          final notifId = 'notif_rem_${evt.id}';
+          if (!state.notifications.any((n) => n.id == notifId)) {
+            await _emitDueCustomReminderNotification(
+              evt,
+              showOsBanner: true,
+            );
+            changed = true;
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      await persistState();
+    }
+  }
+
+  Future<void> _emitDueOneDayBeforeNotification(
+    CalendarEventModel evt, {
+    required bool showOsBanner,
+  }) async {
+    final hasLoc = evt.location != null && evt.location!.trim().isNotEmpty;
+    pushNotification(
+      id: 'notif_1day_${evt.id}',
+      title: 'تذكير تلقائي قبل الموعد بيوم 🗓️🔔: ${evt.title}',
+      description: hasLoc
+          ? 'موعدنا غداً: ${evt.description} • المكان: ${evt.location!.trim()}'
+          : 'موعدنا غداً: ${evt.description}',
+      category: NotificationCategory.calendar,
+      targetTabIndex: 3,
+      targetEventId: evt.id,
+      showOsBanner: showOsBanner,
+    );
+  }
+
+  Future<void> _emitDueCustomReminderNotification(
+    CalendarEventModel evt, {
+    required bool showOsBanner,
+  }) async {
+    final hasLoc = evt.location != null && evt.location!.trim().isNotEmpty;
+    pushNotification(
+      id: 'notif_rem_${evt.id}',
+      title: 'تذكير فعالية L.M.T 🗓️🔔: ${evt.title}',
+      description: hasLoc
+          ? '${evt.description} • المكان: ${evt.location!.trim()}'
+          : evt.description,
+      category: NotificationCategory.calendar,
+      targetTabIndex: 3,
+      targetEventId: evt.id,
+      showOsBanner: showOsBanner,
+    );
+  }
+
+  /// Adds a new calendar event and schedules both its custom reminder and
+  /// automatic 1-day-before reminder for everyone.
   Future<void> addCalendarEvent({
     required String title,
     required String description,
@@ -49,23 +205,16 @@ mixin CalendarCubitMixin on LmtBaseCubit {
           : newEvent.title,
       category: NotificationCategory.calendar,
       targetTabIndex: 3,
+      targetEventId: newEvent.id,
     );
 
-    if (newEvent.isReminderActive && newEvent.reminderDateTime != null) {
-      await LocalNotificationService.scheduleEventReminder(
-        eventId: newEvent.id,
-        title: newEvent.title,
-        description: newEvent.description,
-        location: newEvent.location,
-        reminderDateTime: newEvent.reminderDateTime!,
-      );
-    }
-
     emit(state.copyWith(calendarEvents: updatedEvents));
+    await _scheduleBothEventReminders(newEvent);
+    await syncDueCalendarReminders();
     await persistState();
   }
 
-  /// Updates an existing calendar event and reschedules its reminder.
+  /// Updates an existing calendar event and reschedules its reminders.
   Future<void> updateCalendarEvent(CalendarEventModel updatedEvent) async {
     if (!state.currentUser.role.canManageCalendar) return;
     final updatedEvents = state.calendarEvents
@@ -73,26 +222,23 @@ mixin CalendarCubitMixin on LmtBaseCubit {
         .toList()
       ..sort((a, b) => a.eventDateTime.compareTo(b.eventDateTime));
 
-    if (updatedEvent.isReminderActive && updatedEvent.reminderDateTime != null) {
-      await LocalNotificationService.scheduleEventReminder(
-        eventId: updatedEvent.id,
-        title: updatedEvent.title,
-        description: updatedEvent.description,
-        location: updatedEvent.location,
-        reminderDateTime: updatedEvent.reminderDateTime!,
-      );
-    } else {
-      await LocalNotificationService.cancelEventReminder(updatedEvent.id);
-    }
+    await LocalNotificationService.cancelEventReminder(updatedEvent.id);
+    _calendarReminderTimers.remove('rem_${updatedEvent.id}')?.cancel();
+    _calendarReminderTimers.remove('1day_${updatedEvent.id}')?.cancel();
 
     emit(state.copyWith(calendarEvents: updatedEvents));
+    await _scheduleBothEventReminders(updatedEvent);
+    await syncDueCalendarReminders();
     await persistState();
   }
 
-  /// Deletes a calendar event and cancels its scheduled reminder.
+  /// Deletes a calendar event and cancels all scheduled reminders for it.
   Future<void> deleteCalendarEvent(String eventId) async {
     if (!state.currentUser.role.canManageCalendar) return;
     await LocalNotificationService.cancelEventReminder(eventId);
+    _calendarReminderTimers.remove('rem_$eventId')?.cancel();
+    _calendarReminderTimers.remove('1day_$eventId')?.cancel();
+
     emit(
       state.copyWith(
         calendarEvents:
@@ -102,7 +248,8 @@ mixin CalendarCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Toggles or updates a custom reminder time for an event.
+  /// Toggles or updates a custom reminder time for an event, ensuring both OS
+  /// and in-app notifications reflect it using `Calendar_Notifications`.
   Future<void> toggleEventReminder(
     String eventId, {
     DateTime? customReminderTime,
@@ -122,29 +269,38 @@ mixin CalendarCubitMixin on LmtBaseCubit {
       return updated;
     }).toList();
 
+    emit(state.copyWith(calendarEvents: updatedEvents));
+
     if (targetUpdated != null) {
-      if (targetUpdated!.isReminderActive &&
-          targetUpdated!.reminderDateTime != null) {
-        await LocalNotificationService.scheduleEventReminder(
-          eventId: targetUpdated!.id,
-          title: targetUpdated!.title,
-          description: targetUpdated!.description,
-          location: targetUpdated!.location,
-          reminderDateTime: targetUpdated!.reminderDateTime!,
-        );
-        await LocalNotificationService.showInstantNotification(
-          idKey:
-              'confirm_${targetUpdated!.id}_${DateTime.now().millisecondsSinceEpoch}',
-          title: 'تم تفعيل تذكير الفعالية 🔔',
-          body:
-              'سيتم تذكيرك بـ "${targetUpdated!.title}" حتى لو كان الهاتف مغلقاً.',
-        );
+      final evt = targetUpdated!;
+      if (evt.isReminderActive && evt.reminderDateTime != null) {
+        await _scheduleBothEventReminders(evt);
+        final remAt = evt.reminderDateTime!;
+        if (!remAt.isAfter(DateTime.now())) {
+          await _emitDueCustomReminderNotification(evt, showOsBanner: true);
+        } else {
+          pushNotification(
+            title: 'تم تفعيل تذكير الفعالية 🗓️🔔',
+            description:
+                'سيتم تذكيرك بـ "${evt.title}" تلقائياً في الموعد المحدد.',
+            category: NotificationCategory.calendar,
+            targetTabIndex: 3,
+            targetEventId: evt.id,
+          );
+        }
       } else {
-        await LocalNotificationService.cancelEventReminder(targetUpdated!.id);
+        _calendarReminderTimers.remove('rem_${evt.id}')?.cancel();
+        await LocalNotificationService.cancelEventReminder(evt.id);
+        await LocalNotificationService.scheduleOneDayBeforeEventReminder(
+          eventId: evt.id,
+          title: evt.title,
+          description: evt.description,
+          location: evt.location,
+          eventDateTime: evt.eventDateTime,
+        );
       }
     }
 
-    emit(state.copyWith(calendarEvents: updatedEvents));
     await persistState();
   }
 }

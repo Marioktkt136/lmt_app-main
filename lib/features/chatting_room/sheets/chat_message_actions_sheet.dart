@@ -34,6 +34,7 @@ void showChatMessageActionsSheet({
   required ChatMessageModel message,
   required ValueChanged<ChatMessageModel> onReply,
   required ValueChanged<ChatMessageModel> onEdit,
+  ValueChanged<ChatMessageModel>? onSaveSticker,
 }) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
   final isSender = message.senderId == state.currentUser.id;
@@ -116,6 +117,27 @@ void showChatMessageActionsSheet({
                 ],
               ),
               const Divider(height: 20),
+              if (message.type == MessageType.sticker &&
+                  message.attachmentPath != null &&
+                  message.attachmentPath!.trim().isNotEmpty &&
+                  onSaveSticker != null)
+                ListTile(
+                  dense: true,
+                  leading: Icon(Icons.bookmark_add_rounded, color: primary),
+                  title: Text(
+                    isArabic
+                        ? 'حفظ الملصق في ملصقاتي (Save Sticker) ⭐'
+                        : 'Save to My Stickers ⭐',
+                    style: TextStyle(
+                      color: textPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onSaveSticker(message);
+                  },
+                ),
               ListTile(
                 dense: true,
                 leading: Icon(Icons.reply_rounded, color: primary),

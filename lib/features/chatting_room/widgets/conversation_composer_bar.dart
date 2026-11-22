@@ -137,7 +137,7 @@ class VoiceRecordingBar extends StatelessWidget {
 }
 
 /// Bottom chat composer bar that ALWAYS preserves a Left-to-Right arrangement:
-/// `(+) Attachment`, `(😊) Stickers`, `[TextField]`, `(🎤) Mic`, `(➤) Send`.
+/// `(+) Attachment`, `(😊) Stickers`, `(📷) Camera`, `[TextField]`, `(🎤) Mic`, `(➤) Send`.
 class ConversationComposerBar extends StatelessWidget {
   /// Controller for the message input field.
   final TextEditingController messageController;
@@ -147,6 +147,9 @@ class ConversationComposerBar extends StatelessWidget {
 
   /// Opens the WhatsApp-style saved stickers sheet.
   final VoidCallback onOpenStickers;
+
+  /// Opens the device Camera immediately to snap & send a photo.
+  final VoidCallback onCaptureCamera;
 
   /// Starts recording a voice note.
   final VoidCallback onStartVoiceRecording;
@@ -163,6 +166,7 @@ class ConversationComposerBar extends StatelessWidget {
     required this.messageController,
     required this.onOpenAttachments,
     required this.onOpenStickers,
+    required this.onCaptureCamera,
     required this.onStartVoiceRecording,
     required this.onSendText,
     this.onChanged,
@@ -190,19 +194,39 @@ class ConversationComposerBar extends StatelessWidget {
         child: Row(
           children: [
             IconButton(
-              tooltip: isArabic ? 'مرفقات وملصقات' : 'Attachments',
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 36),
+              padding: EdgeInsets.zero,
+              tooltip: isArabic ? 'مرفقات وملفات' : 'Attachments',
               onPressed: onOpenAttachments,
               icon: Icon(
                 Icons.add_circle_outline_rounded,
                 color: primary,
+                size: 22.sp,
               ),
             ),
             IconButton(
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 36),
+              padding: EdgeInsets.zero,
               tooltip: isArabic ? 'ملصقات' : 'Stickers',
               onPressed: onOpenStickers,
               icon: Icon(
                 Icons.emoji_emotions_outlined,
                 color: primary,
+                size: 22.sp,
+              ),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 36),
+              padding: EdgeInsets.zero,
+              tooltip: isArabic ? 'فتح الكاميرا' : 'Open Camera',
+              onPressed: onCaptureCamera,
+              icon: Icon(
+                Icons.camera_alt_outlined,
+                color: primary,
+                size: 22.sp,
               ),
             ),
             Expanded(

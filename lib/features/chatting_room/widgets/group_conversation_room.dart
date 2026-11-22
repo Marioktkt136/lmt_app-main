@@ -8,6 +8,7 @@ import '../../../core/models/lmt_models.dart';
 import '../../../core/services/native_media_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_preferences.dart';
+import '../../../core/utils/device_file_helper.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
 import '../cubit/chat_cubit.dart';
 import '../sheets/chat_attachment_menu_sheet.dart';
@@ -241,6 +242,64 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     );
   }
 
+  Future<void> _captureCameraAndSend() async {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    final picked = await DeviceFileHelper.capturePhotoFromCamera(context);
+    if (!mounted || picked == null || picked.path == null) return;
+
+    final cubit = context.read<LmtCubit>();
+    final savedPath = await DeviceFileHelper.persistPickedFile(
+      picked.path!,
+      picked.name,
+    );
+    await cubit.sendChatMessage(
+      groupId: widget.group.id,
+      type: MessageType.image,
+      content: '',
+      attachmentPath: savedPath,
+      fileSize: DeviceFileHelper.formatBytes(picked.size),
+      replyTo: _replyingTo,
+    );
+    if (!mounted) return;
+    setState(() => _replyingTo = null);
+    _scrollToLatest();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isArabic ? 'تم التقاط وإرسال الصورة 📷✅' : 'Photo captured & sent 📷✅',
+        ),
+        backgroundColor: AppColors.accentGreenOf(context),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _saveStickerMessage(ChatMessageModel msg) async {
+    final path = msg.attachmentPath?.trim();
+    if (path == null || path.isEmpty) return;
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+
+    if (!_savedStickers.contains(path)) {
+      final updated = [path, ..._savedStickers];
+      await AppPreferences.setSavedStickers(updated);
+      if (mounted) {
+        setState(() => _savedStickers = updated);
+      }
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          isArabic
+              ? 'تم حفظ الملصق في ملصقاتك المحفوظة ⭐'
+              : 'Sticker saved to your Saved Stickers ⭐',
+        ),
+        backgroundColor: AppColors.accentGreenOf(context),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<LmtCubit, LmtState>(
@@ -284,6 +343,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                             state: state,
                             group: widget.group,
                             message: msg,
+                            onSaveSticker: _saveStickerMessage,
                             onReply: (target) => setState(() {
                               _replyingTo = target;
                               _editingMessage = null;
@@ -302,6 +362,11 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                                 emoji: emoji,
                               ),
                           onToggleVoicePlay: () => _togglePlayVoiceNote(msg),
+                          onReply: (target) => setState(() {
+                            _replyingTo = target;
+                            _editingMessage = null;
+                          }),
+                          onSaveSticker: _saveStickerMessage,
                         );
                       },
                     ),
@@ -341,6 +406,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                   },
                 ),
                 onOpenStickers: _openStickersSheet,
+                onCaptureCamera: _captureCameraAndSend,
                 onStartVoiceRecording: _startVoiceNoteRecording,
                 onSendText: _handleSendText,
               ),

@@ -44,24 +44,47 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
     final updatedGroups = [newGroup, ...state.chatGroups];
     pushNotification(
-      title: 'مجموعة محادثة جديدة 💬',
+      title: 'تمت إضافتك لمجموعة جديدة 💬',
       description:
-          'قام ${state.currentUser.name} بإنشاء مجموعة "${newGroup.name}".',
+          'قام ${state.currentUser.name} بإنشاء مجموعة "${newGroup.name}" وإضافتك إليها.',
       category: NotificationCategory.chat,
       targetTabIndex: 1,
       targetGroupId: newGroup.id,
+      targetMemberIds: newGroup.memberIds,
     );
 
     emit(state.copyWith(chatGroups: updatedGroups));
     await persistState();
   }
 
-  /// Updates an existing chat group's details.
+  /// Updates an existing chat group's details and notifies ONLY newly added
+  /// members (not existing members).
   Future<void> updateChatGroup(ChatGroupModel updatedGroup) async {
     if (!state.currentUser.role.canManageGroups) return;
+    final previousGroup =
+        state.chatGroups.where((g) => g.id == updatedGroup.id).firstOrNull;
+
     final updatedGroups = state.chatGroups
         .map((g) => g.id == updatedGroup.id ? updatedGroup : g)
         .toList();
+
+    if (previousGroup != null) {
+      final newlyAddedIds = updatedGroup.memberIds
+          .where((id) => !previousGroup.memberIds.contains(id))
+          .toList();
+      if (newlyAddedIds.isNotEmpty) {
+        pushNotification(
+          title: 'تمت إضافتك لمجموعة "${updatedGroup.name}" 💬',
+          description:
+              'قام ${state.currentUser.name} بإضافتك إلى مجموعة "${updatedGroup.name}".',
+          category: NotificationCategory.chat,
+          targetTabIndex: 1,
+          targetGroupId: updatedGroup.id,
+          targetMemberIds: newlyAddedIds,
+        );
+      }
+    }
+
     emit(state.copyWith(chatGroups: updatedGroups));
     await persistState();
   }
@@ -149,7 +172,38 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
     final updatedMessages = [...state.chatMessages, message];
     emit(state.copyWith(chatMessages: updatedMessages));
+
+    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    if (group != null) {
+      final preview = _messagePreviewText(type, content);
+      pushNotification(
+        title: '${group.name} 💬',
+        description: '${state.currentUser.name}: $preview',
+        category: NotificationCategory.chat,
+        targetTabIndex: 1,
+        targetGroupId: groupId,
+        targetMemberIds: group.memberIds,
+      );
+    }
+
     await persistState();
+  }
+
+  String _messagePreviewText(MessageType type, String content) {
+    switch (type) {
+      case MessageType.voiceNote:
+        return 'أرسل رسالة صوتية 🎤';
+      case MessageType.image:
+        return content.trim().isNotEmpty ? content : 'أرسل صورة 🖼️';
+      case MessageType.video:
+        return content.trim().isNotEmpty ? content : 'أرسل فيديو 🎬';
+      case MessageType.file:
+        return content.trim().isNotEmpty ? content : 'أرسل ملفاً 📄';
+      case MessageType.sticker:
+        return content.trim().isNotEmpty ? content : 'أرسل ملصقاً 😊';
+      case MessageType.text:
+        return content;
+    }
   }
 
   /// Toggles an emoji reaction on a chat message.
@@ -223,6 +277,21 @@ mixin ChatCubitMixin on LmtBaseCubit {
     );
 
     emit(state.copyWith(chatMessages: [...state.chatMessages, forwarded]));
+
+    final targetGroup =
+        state.chatGroups.where((g) => g.id == targetGroupId).firstOrNull;
+    if (targetGroup != null) {
+      pushNotification(
+        title: '${targetGroup.name} 💬',
+        description:
+            'قام ${state.currentUser.name} بإعادة توجيه رسالة: ${_messagePreviewText(message.type, message.content)}',
+        category: NotificationCategory.chat,
+        targetTabIndex: 1,
+        targetGroupId: targetGroupId,
+        targetMemberIds: targetGroup.memberIds,
+      );
+    }
+
     await persistState();
   }
 

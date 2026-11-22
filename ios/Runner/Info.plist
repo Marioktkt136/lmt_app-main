@@ -26,6 +26,22 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>يحتاج تطبيق L.M.T App إلى إذن الكاميرا لالتقاط الصور والفيديوهات وإرسالها في المحادثات والمنشورات.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>يحتاج تطبيق L.M.T App إلى إذن الوصول إلى معرض الصور لاختيار الصور والفيديوهات وإرسالها في المحادثات والمنشورات وتعيين صور المجموعات.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>يحتاج تطبيق L.M.T App إلى إذن حفظ الصور والميديا التي تقوم بتنزيلها على جهازك.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>يحتاج تطبيق L.M.T App إلى إذن الميكروفون لتسجيل وإرسال الرسائل الصوتية (Voice Notes) في المحادثات.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>يستخدم تطبيق L.M.T App بصمة الوجه (Face ID) لتسجيل الدخول السريع والآمن لحسابك.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

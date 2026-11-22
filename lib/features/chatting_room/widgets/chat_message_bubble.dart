@@ -30,6 +30,12 @@ class ChatMessageBubble extends StatelessWidget {
   /// Callback invoked when the voice note play/pause button is tapped.
   final VoidCallback onToggleVoicePlay;
 
+  /// Callback invoked when Reply is triggered from a fullscreen media viewer.
+  final ValueChanged<ChatMessageModel> onReply;
+
+  /// Optional callback invoked to save a sticker message to user's stickers.
+  final ValueChanged<ChatMessageModel>? onSaveSticker;
+
   /// Creates a [ChatMessageBubble].
   const ChatMessageBubble({
     super.key,
@@ -40,6 +46,8 @@ class ChatMessageBubble extends StatelessWidget {
     required this.onShowSeenBy,
     required this.onToggleReaction,
     required this.onToggleVoicePlay,
+    required this.onReply,
+    this.onSaveSticker,
   });
 
   @override
@@ -188,6 +196,8 @@ class ChatMessageBubble extends StatelessWidget {
                 msg: msg,
                 isPlayingVoice: isPlayingVoice,
                 onToggleVoicePlay: onToggleVoicePlay,
+                onReply: onReply,
+                onSaveSticker: onSaveSticker,
               ),
 
               SizedBox(height: 6.h),

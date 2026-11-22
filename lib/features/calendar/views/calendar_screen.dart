@@ -9,6 +9,7 @@ import '../../../core/widgets/lmt_empty_state.dart';
 import '../cubit/calendar_cubit.dart';
 import '../widgets/calendar_days_strip.dart';
 import '../widgets/calendar_event_card.dart';
+import '../widgets/calendar_event_details_sheet.dart';
 import '../widgets/calendar_event_form_sheet.dart';
 import '../widgets/full_calendar_launcher_card.dart';
 import 'full_months_calendar_page.dart';
@@ -26,6 +27,32 @@ class CalendarScreen extends StatefulWidget {
 class _CalendarScreenState extends State<CalendarScreen> {
   DateTime? _selectedDateFilter;
   DateTime? _selectedMonthFilter;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final cubit = context.read<LmtCubit>();
+      final targetEventId = cubit.state.selectedCalendarEventId;
+      if (targetEventId != null) {
+        _openTargetedEvent(cubit.state, targetEventId);
+      }
+    });
+  }
+
+  void _openTargetedEvent(LmtState state, String eventId) {
+    final evt =
+        state.calendarEvents.where((e) => e.id == eventId).firstOrNull;
+    context.read<LmtCubit>().clearSelectedCalendarEvent();
+    if (evt != null && mounted) {
+      setState(() {
+        _selectedDateFilter = null;
+        _selectedMonthFilter = null;
+      });
+      showCalendarEventDetailsSheet(context, evt);
+    }
+  }
 
   Future<void> _openFullCalendarPage(BuildContext context) async {
     final result = await Navigator.push<Map<String, DateTime?>>(
@@ -48,7 +75,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<LmtCubit, LmtState>(
+    return BlocConsumer<LmtCubit, LmtState>(
+      listenWhen: (prev, curr) =>
+          curr.selectedCalendarEventId != null &&
+          prev.selectedCalendarEventId != curr.selectedCalendarEventId,
+      listener: (context, state) {
+        final targetId = state.selectedCalendarEventId;
+        if (targetId != null) {
+          _openTargetedEvent(state, targetId);
+        }
+      },
       builder: (context, state) {
         final isArabic = Localizations.localeOf(context).languageCode == 'ar';
         final primary = AppColors.primaryOf(context);

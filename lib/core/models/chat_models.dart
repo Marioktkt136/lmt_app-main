@@ -8,6 +8,7 @@ enum MessageType {
   text,
   voiceNote,
   image,
+  video,
   file,
   sticker;
 

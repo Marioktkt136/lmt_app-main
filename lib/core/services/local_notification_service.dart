@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
@@ -5,9 +6,17 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
-/// Real Mobile Notification & Background Lock-Screen Reminder Service
-/// Uses flutter_local_notifications with exactAllowWhileIdle alarms
-/// so reminders & notifications fire even when the phone screen is locked or app is closed.
+/// Custom audio channels for L.M.T OS notifications.
+enum LmtNotificationTone {
+  /// Standard chime for chat messages, posts, shared files, and general alerts.
+  normal,
+
+  /// Distinct chime for calendar events and scheduled event reminders.
+  calendar,
+}
+
+/// Real Mobile Notification & Background Lock-Screen Reminder Service for
+/// both Android and iOS (`flutter_local_notifications`).
 class LocalNotificationService {
   LocalNotificationService._();
 
@@ -15,39 +24,93 @@ class LocalNotificationService {
       FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
 
-  static const AndroidNotificationDetails _androidChannelDetails =
+  /// Optional callback invoked when the user taps any OS notification banner.
+  static void Function(String? payload)? onNotificationTapped;
+
+  /// Stores a cold-start notification payload until the UI/Cubit listener attaches.
+  static String? pendingLaunchPayload;
+
+  static const String _normalChannelId = 'lmt_normal_notifications_v2';
+  static const String _calendarChannelId = 'lmt_calendar_notifications_v2';
+
+  static const AndroidNotificationDetails _normalAndroidDetails =
       AndroidNotificationDetails(
-    'lmt_custom_tone_channel_v1',
-    'L.M.T App Notifications & Reminders',
+    _normalChannelId,
+    'L.M.T Normal Notifications',
     channelDescription:
-        'تنبيهات وإشعارات وتذكيرات تقويم فريق الرسالة الاخيرة (L.M.T App)',
+        'إشعارات المحادثات والمنشورات والملفات لفريق الرسالة الاخيرة (L.M.T App)',
     importance: Importance.max,
     priority: Priority.high,
     visibility: NotificationVisibility.public,
     playSound: true,
-    sound: RawResourceAndroidNotificationSound('lmt_tone'),
+    sound: RawResourceAndroidNotificationSound('normal_notifications'),
     enableVibration: true,
     enableLights: true,
-    fullScreenIntent: true,
+    fullScreenIntent: false,
     ticker: 'L.M.T App Notification',
     icon: '@drawable/ic_notification',
     largeIcon: DrawableResourceAndroidBitmap('ic_notification_large'),
     color: Color(0xFF1E88E5),
   );
 
-  static const DarwinNotificationDetails _iosDetails =
+  static const AndroidNotificationDetails _calendarAndroidDetails =
+      AndroidNotificationDetails(
+    _calendarChannelId,
+    'L.M.T Calendar & Reminders',
+    channelDescription:
+        'تذكيرات وإشعارات فعاليات التقويم التلقائية لفريق الرسالة الاخيرة (L.M.T App)',
+    importance: Importance.max,
+    priority: Priority.high,
+    visibility: NotificationVisibility.public,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound('calendar_notifications'),
+    enableVibration: true,
+    enableLights: true,
+    fullScreenIntent: true,
+    ticker: 'L.M.T Calendar Reminder',
+    icon: '@drawable/ic_notification',
+    largeIcon: DrawableResourceAndroidBitmap('ic_notification_large'),
+    color: Color(0xFF1E88E5),
+  );
+
+  static const DarwinNotificationDetails _normalIosDetails =
       DarwinNotificationDetails(
     presentAlert: true,
+    presentBanner: true,
+    presentList: true,
     presentBadge: true,
     presentSound: true,
-    sound: 'lmt_tone.wav',
+    sound: 'normal_notifications.wav',
   );
 
-  static const NotificationDetails _notificationDetails = NotificationDetails(
-    android: _androidChannelDetails,
-    iOS: _iosDetails,
+  static const DarwinNotificationDetails _calendarIosDetails =
+      DarwinNotificationDetails(
+    presentAlert: true,
+    presentBanner: true,
+    presentList: true,
+    presentBadge: true,
+    presentSound: true,
+    sound: 'calendar_notifications.wav',
+    interruptionLevel: InterruptionLevel.timeSensitive,
   );
 
+  static NotificationDetails _detailsFor(LmtNotificationTone tone) {
+    switch (tone) {
+      case LmtNotificationTone.calendar:
+        return const NotificationDetails(
+          android: _calendarAndroidDetails,
+          iOS: _calendarIosDetails,
+        );
+      case LmtNotificationTone.normal:
+        return const NotificationDetails(
+          android: _normalAndroidDetails,
+          iOS: _normalIosDetails,
+        );
+    }
+  }
+
+  /// Initializes notification channels on Android, permissions on iOS, and
+  /// deep-link tap handlers for both foreground and cold-start launches.
   static Future<void> init() async {
     if (_initialized) return;
     try {
@@ -65,14 +128,72 @@ class LocalNotificationService {
         iOS: iosInit,
       );
 
-      await _plugin.initialize(initSettings);
+      await _plugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          final payload = response.payload;
+          if (payload != null && payload.isNotEmpty) {
+            pendingLaunchPayload = payload;
+            onNotificationTapped?.call(payload);
+          }
+        },
+      );
+
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        final payload = launchDetails?.notificationResponse?.payload;
+        if (payload != null && payload.isNotEmpty) {
+          pendingLaunchPayload = payload;
+        }
+      }
 
       final androidImpl = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       if (androidImpl != null) {
         await androidImpl.requestNotificationsPermission();
         await androidImpl.requestExactAlarmsPermission();
+
+        // Remove legacy cached channels so Android picks up the new dual channels
+        await androidImpl.deleteNotificationChannel('lmt_high_importance_channel');
+        await androidImpl.deleteNotificationChannel('lmt_custom_tone_channel_v1');
+
+        await androidImpl.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _normalChannelId,
+            'L.M.T Normal Notifications',
+            description:
+                'إشعارات المحادثات والمنشورات والملفات لفريق الرسالة الاخيرة (L.M.T App)',
+            importance: Importance.max,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('normal_notifications'),
+            enableVibration: true,
+          ),
+        );
+
+        await androidImpl.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _calendarChannelId,
+            'L.M.T Calendar & Reminders',
+            description:
+                'تذكيرات وإشعارات فعاليات التقويم التلقائية لفريق الرسالة الاخيرة (L.M.T App)',
+            importance: Importance.max,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('calendar_notifications'),
+            enableVibration: true,
+          ),
+        );
       }
+
+      final iosImpl = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      if (iosImpl != null) {
+        await iosImpl.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+      }
+
       _initialized = true;
     } catch (e) {
       debugPrint('LocalNotificationService init error: $e');
@@ -83,11 +204,14 @@ class LocalNotificationService {
     return key.hashCode.abs() % 2147483647;
   }
 
-  /// Displays a real mobile status-bar and lock-screen notification immediately
+  /// Displays a real mobile status-bar / lock-screen notification immediately
+  /// using either [LmtNotificationTone.normal] or [LmtNotificationTone.calendar].
   static Future<void> showInstantNotification({
     required String idKey,
     required String title,
     required String body,
+    LmtNotificationTone tone = LmtNotificationTone.normal,
+    Map<String, dynamic>? payloadData,
   }) async {
     try {
       await init();
@@ -95,14 +219,16 @@ class LocalNotificationService {
         _stableIdFromString(idKey),
         title,
         body,
-        _notificationDetails,
+        _detailsFor(tone),
+        payload: payloadData != null ? jsonEncode(payloadData) : null,
       );
     } catch (e) {
       debugPrint('showInstantNotification error: $e');
     }
   }
 
-  /// Schedules a real OS alarm reminder that triggers even when the phone is locked or app is closed
+  /// Schedules the custom reminder alarm for a Calendar event using the
+  /// `Calendar_Notifications` tone and deep-link event payload.
   static Future<void> scheduleEventReminder({
     required String eventId,
     required String title,
@@ -120,6 +246,11 @@ class LocalNotificationService {
       final bodyText = hasLoc
           ? '$description • المكان: ${location.trim()}'
           : description;
+      final payload = <String, dynamic>{
+        'tab': 3,
+        'eventId': eventId,
+        'notifId': 'notif_rem_$eventId',
+      };
 
       if (reminderDateTime.isAfter(now)) {
         final scheduledTz = tz.TZDateTime.from(reminderDateTime, tz.local);
@@ -128,15 +259,9 @@ class LocalNotificationService {
           'تذكير فعالية L.M.T 🗓️: $title',
           bodyText,
           scheduledTz,
-          _notificationDetails,
+          _detailsFor(LmtNotificationTone.calendar),
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        );
-      } else {
-        // If reminder time is now or already reached, trigger immediately
-        await showInstantNotification(
-          idKey: 'evt_rem_$eventId',
-          title: 'تذكير فعالية L.M.T 🗓️: $title',
-          body: bodyText,
+          payload: jsonEncode(payload),
         );
       }
     } catch (e) {
@@ -144,11 +269,55 @@ class LocalNotificationService {
     }
   }
 
+  /// Schedules the automatic 1-day-before reminder for ALL members of any event
+  /// using the `Calendar_Notifications` tone and deep-link event payload.
+  static Future<void> scheduleOneDayBeforeEventReminder({
+    required String eventId,
+    required String title,
+    required String description,
+    String? location,
+    required DateTime eventDateTime,
+  }) async {
+    try {
+      await init();
+      final notifId = _stableIdFromString('evt_1day_$eventId');
+      await _plugin.cancel(notifId);
+
+      final oneDayBefore = eventDateTime.subtract(const Duration(days: 1));
+      if (!oneDayBefore.isAfter(DateTime.now())) return;
+
+      final hasLoc = location != null && location.trim().isNotEmpty;
+      final bodyText = hasLoc
+          ? 'موعدنا غداً: $description • المكان: ${location.trim()}'
+          : 'موعدنا غداً: $description';
+      final payload = <String, dynamic>{
+        'tab': 3,
+        'eventId': eventId,
+        'notifId': 'notif_1day_$eventId',
+      };
+
+      final scheduledTz = tz.TZDateTime.from(oneDayBefore, tz.local);
+      await _plugin.zonedSchedule(
+        notifId,
+        'تذكير تلقائي قبل الموعد بيوم 🗓️🔔: $title',
+        bodyText,
+        scheduledTz,
+        _detailsFor(LmtNotificationTone.calendar),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        payload: jsonEncode(payload),
+      );
+    } catch (e) {
+      debugPrint('scheduleOneDayBeforeEventReminder error: $e');
+    }
+  }
+
+  /// Cancels both the custom reminder and the automatic 1-day-before reminder
+  /// for [eventId].
   static Future<void> cancelEventReminder(String eventId) async {
     try {
       await init();
-      final notifId = _stableIdFromString('evt_rem_$eventId');
-      await _plugin.cancel(notifId);
+      await _plugin.cancel(_stableIdFromString('evt_rem_$eventId'));
+      await _plugin.cancel(_stableIdFromString('evt_1day_$eventId'));
     } catch (e) {
       debugPrint('cancelEventReminder error: $e');
     }

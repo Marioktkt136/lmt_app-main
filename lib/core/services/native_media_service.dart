@@ -8,8 +8,8 @@ class NativeMediaService {
   static const MethodChannel _channel =
       MethodChannel('com.example.lmt/native_media');
 
-  /// Opens the native Android system file & image browser (`Intent.ACTION_OPEN_DOCUMENT`)
-  /// and returns a map containing `{name, path, size}`, or `null` if cancelled.
+  /// Opens the native Android/iOS Gallery (for image/video/media) or system file
+  /// browser (for any/custom files) and returns `{name, path, size}`, or `null`.
   static Future<Map<dynamic, dynamic>?> pickDeviceFile({
     String type = 'any',
     List<String>? allowedExtensions,
@@ -21,6 +21,12 @@ class NativeMediaService {
         'allowedExtensions': allowedExtensions,
       },
     );
+  }
+
+  /// Launches the device Camera immediately to capture a photo and returns
+  /// `{name, path, size}`, or `null` if cancelled.
+  static Future<Map<dynamic, dynamic>?> captureCameraPhoto() async {
+    return _channel.invokeMethod<Map<dynamic, dynamic>>('captureCameraPhoto');
   }
 
   /// Requests microphone recording permission (`RECORD_AUDIO`) from the OS.

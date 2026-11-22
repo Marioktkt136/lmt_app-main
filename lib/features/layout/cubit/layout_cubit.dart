@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/data/lmt_seed_data.dart';
 import '../../../core/utils/app_preferences.dart';
@@ -7,17 +9,61 @@ export '../../../core/cubit/lmt_cubit.dart';
 /// Feature Cubit alias for the Layout & Navigation feature module.
 typedef LayoutCubit = LmtCubit;
 
-/// Encapsulates Layout Navigation, Online/Offline Sync, and Demo Data Reset logic.
+/// Encapsulates Layout Navigation, Online/Offline Sync, Notification Deep-Links,
+/// and Demo Data Reset logic.
 mixin LayoutCubitMixin on LmtBaseCubit {
-  /// Switches the active bottom navigation / drawer layout tab index (`0..4`).
-  void setActiveLayoutTab(int index, {String? openGroupId}) {
+  /// Switches the active bottom navigation / drawer layout tab index (`0..4`),
+  /// optionally selecting a chat group or calendar event to open.
+  void setActiveLayoutTab(
+    int index, {
+    String? openGroupId,
+    String? openEventId,
+  }) {
     emit(
       state.copyWith(
         activeLayoutTab: index.clamp(0, 4),
         selectedChatGroupId: openGroupId,
         clearSelectedChatGroup: openGroupId == null,
+        selectedCalendarEventId: openEventId,
+        clearSelectedCalendarEvent: openEventId == null,
       ),
     );
+  }
+
+  /// Clears any pending selected calendar event after its details sheet opens.
+  void clearSelectedCalendarEvent() {
+    if (state.selectedCalendarEventId != null) {
+      emit(state.copyWith(clearSelectedCalendarEvent: true));
+    }
+  }
+
+  /// Handles tapping an OS notification payload and routes to the target
+  /// tab, chat group, or calendar event.
+  void handleNotificationPayload(String? rawPayload) {
+    if (rawPayload == null || rawPayload.trim().isEmpty) return;
+    try {
+      final decoded = jsonDecode(rawPayload);
+      if (decoded is! Map<String, dynamic>) return;
+      final notifId = decoded['notifId'] as String?;
+      final tab = decoded['tab'] as int?;
+      final groupId = decoded['groupId'] as String?;
+      final eventId = decoded['eventId'] as String?;
+
+      if (notifId != null) {
+        final updatedNotifs = state.notifications
+            .map((n) => n.id == notifId ? n.copyWith(isRead: true) : n)
+            .toList();
+        emit(state.copyWith(notifications: updatedNotifs));
+      }
+
+      if (eventId != null) {
+        setActiveLayoutTab(tab ?? 3, openEventId: eventId);
+      } else if (groupId != null) {
+        setActiveLayoutTab(tab ?? 1, openGroupId: groupId);
+      } else if (tab != null) {
+        setActiveLayoutTab(tab);
+      }
+    } catch (_) {}
   }
 
   /// Triggers a manual state sync and persists the snapshot to local storage.

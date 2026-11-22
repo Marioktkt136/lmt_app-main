@@ -28,6 +28,7 @@ class NotificationScreen extends StatelessWidget {
         final textPrimary = AppColors.textPrimaryOf(context);
         final textSecondary = AppColors.textSecondaryOf(context);
         final border = AppColors.borderOf(context);
+        final visibleNotifications = state.visibleNotifications;
 
         return Scaffold(
           backgroundColor: AppColors.backgroundOf(context),
@@ -78,7 +79,7 @@ class NotificationScreen extends StatelessWidget {
               ),
             ],
           ),
-          body: state.notifications.isEmpty
+          body: visibleNotifications.isEmpty
               ? Center(
                   child: Text(
                     isArabic
@@ -90,9 +91,9 @@ class NotificationScreen extends StatelessWidget {
               : ListView.builder(
                   padding: EdgeInsets.all(14.w),
                   physics: const BouncingScrollPhysics(),
-                  itemCount: state.notifications.length,
+                  itemCount: visibleNotifications.length,
                   itemBuilder: (context, index) {
-                    final notif = state.notifications[index];
+                    final notif = visibleNotifications[index];
                     final isUnread = !notif.isRead;
 
                     return Container(
@@ -210,6 +211,7 @@ class NotificationScreen extends StatelessWidget {
                             cubit.setActiveLayoutTab(
                               notif.targetTabIndex!,
                               openGroupId: notif.targetGroupId,
+                              openEventId: notif.targetEventId,
                             );
                           }
                           Navigator.pop(context);
