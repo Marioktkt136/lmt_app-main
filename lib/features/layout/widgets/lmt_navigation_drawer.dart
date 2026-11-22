@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
@@ -57,7 +58,6 @@ class LmtNavigationDrawer extends StatelessWidget {
         final user = state.currentUser;
         final accentGreen = AppColors.accentGreenOf(context);
         final textPrimary = AppColors.textPrimaryOf(context);
-        final textSecondary = AppColors.textSecondaryOf(context);
 
         return Drawer(
           backgroundColor: AppColors.surfaceOf(context),
@@ -103,10 +103,7 @@ class LmtNavigationDrawer extends StatelessWidget {
                               user.committee,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10.5.sp,
-                                color: Colors.white70,
-                              ),
+                              style: TextStyle(fontSize: 10.5.sp, color: Colors.white70),
                             ),
                           ],
                         ),
@@ -122,9 +119,7 @@ class LmtNavigationDrawer extends StatelessWidget {
                     children: [
                       _DrawerNavItem(
                         icon: Icons.self_improvement_rounded,
-                        title: isArabic
-                            ? 'الخلوة اليومية (Spiritual Khelwa)'
-                            : 'Spiritual Khelwa Counter',
+                        title: isArabic ? 'الخلوة اليومية' : 'Daily Khelwa',
                         color: accentGreen,
                         onTap: () {
                           Navigator.pop(context);
@@ -133,9 +128,7 @@ class LmtNavigationDrawer extends StatelessWidget {
                       ),
                       _DrawerNavItem(
                         icon: Icons.ondemand_video_rounded,
-                        title: isArabic
-                            ? 'عروض المسرح على يوتيوب (YouTube)'
-                            : 'Theater YouTube Gallery',
+                        title: isArabic ? 'عروض المسرح على يوتيوب (YouTube)' : 'YouTube Gallery',
                         color: AppColors.error,
                         onTap: () {
                           Navigator.pop(context);
@@ -145,9 +138,7 @@ class LmtNavigationDrawer extends StatelessWidget {
                       const Divider(),
                       _DrawerNavItem(
                         icon: Icons.settings_rounded,
-                        title: isArabic
-                            ? 'الإعدادات (Settings View)'
-                            : 'Settings View',
+                        title: isArabic ? 'الإعدادات' : 'Settings',
                         color: textPrimary,
                         onTap: () {
                           Navigator.pop(context);
@@ -158,10 +149,33 @@ class LmtNavigationDrawer extends StatelessWidget {
                   ),
                 ),
 
+                Padding(
+                  padding: EdgeInsets.only(bottom: 12.h, left: 16.w, right: 16.w),
+                  child: Text(
+                    'Developed by\n Mario Naiem Ktkt \n Version : $appBuildName',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 10.5.sp,
+                      color: const Color.fromARGB(82, 43, 94, 153),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(bottom: 3.h, left: 16.w, right: 16.w),
+                  child: Text(
+                    'The Last Message Team (L.M.T)',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 10.5.sp,
+                      color: AppColors.textSecondaryDark,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+
                 // Log-out Button at the Bottom
                 Padding(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+                  padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
                   child: Container(
                     width: double.infinity,
                     decoration: BoxDecoration(
@@ -177,29 +191,15 @@ class LmtNavigationDrawer extends StatelessWidget {
                         backgroundColor: AppColors.error,
                         foregroundColor: Colors.white,
                         padding: EdgeInsets.symmetric(vertical: 13.h),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14.r),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14.r)),
                       ),
                       onPressed: () => _handleDrawerLogout(context),
                       icon: const Icon(Icons.logout_rounded),
                       label: Text(
                         isArabic ? 'تسجيل الخروج (Log-out)' : 'Log-out',
-                        style: TextStyle(
-                          fontSize: 14.sp,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.bold),
                       ),
                     ),
-                  ),
-                ),
-                Padding(
-                  padding:
-                      EdgeInsets.only(bottom: 12.h, left: 16.w, right: 16.w),
-                  child: Text(
-                    'The Last Message Team (L.M.T)\nفريق الرسالة الاخيرة • #تغيروا_2026',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 10.5.sp, color: textSecondary),
                   ),
                 ),
               ],

@@ -1,4 +1,4 @@
-import 'package:easy_localization/easy_localization.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
@@ -22,12 +22,17 @@ class CustomAppBar extends StatelessWidget {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     return BlocBuilder<LmtCubit, LmtState>(
       builder: (context, state) {
+        final sloganText = state.sloganOfYear.trim().startsWith('#')
+            ? state.sloganOfYear.trim()
+            : '#${state.sloganOfYear.trim()}';
+
         return Padding(
-          padding: EdgeInsets.symmetric(vertical: 4.h, horizontal: 4.w),
+          padding: EdgeInsets.symmetric(vertical: 2.h, horizontal: 4.w),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
+                visualDensity: VisualDensity.compact,
                 tooltip: isArabic ? 'القائمة الجانبية' : 'Navigation Menu',
                 onPressed: () {
                   final scaffold = Scaffold.maybeOf(context);
@@ -37,11 +42,7 @@ class CustomAppBar extends StatelessWidget {
                     AppRouter.navigateTo(context, Routes.settings);
                   }
                 },
-                icon: Image.asset(
-                  AppAssets.menuIcon,
-                  width: 26.w,
-                  height: 26.w,
-                ),
+                icon: Image.asset(AppAssets.menuIcon, width: 24.w, height: 24.w),
               ),
               Expanded(
                 child: Column(
@@ -52,32 +53,26 @@ class CustomAppBar extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
-                      style: AppTypography.h4.copyWith(
+                      style: AppTypography.h5.copyWith(
                         color: AppColors.textOnPrimary,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     SizedBox(height: 2.h),
-                    InkWell(
-                      borderRadius: BorderRadius.circular(12.r),
-                      onTap: () =>
-                          AppRouter.navigateTo(context, Routes.profile),
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 10.w,
-                          vertical: 2.h,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(12.r),
-                        ),
-                        child: Text(
-                          '${state.currentUser.name} ${state.currentUser.role.badgeEmoji}',
-                          style: TextStyle(
-                            fontSize: 10.5.sp,
-                            color: Colors.white.withValues(alpha: 0.95),
-                            fontWeight: FontWeight.w600,
-                          ),
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 1.5.h),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(12.r),
+                      ),
+                      child: Text(
+                        sloganText,
+                        textDirection: TextDirection.rtl,
+                        style: TextStyle(
+                          fontSize: 11.sp,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.3,
                         ),
                       ),
                     ),
@@ -90,16 +85,14 @@ class CustomAppBar extends StatelessWidget {
                   Tooltip(
                     message: isArabic ? 'الملف الشخصي' : 'Profile',
                     child: GestureDetector(
-                      onTap: () =>
-                          AppRouter.navigateTo(context, Routes.profile),
+                      onTap: () => AppRouter.navigateTo(context, Routes.profile),
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
                           CircleAvatar(
                             radius: 16.r,
                             backgroundColor: Colors.white24,
-                            backgroundImage:
-                                AssetImage(state.currentUser.avatarPath),
+                            backgroundImage: AssetImage(state.currentUser.avatarPath),
                           ),
                           Positioned(
                             bottom: 0,
@@ -108,14 +101,9 @@ class CustomAppBar extends StatelessWidget {
                               width: 9.w,
                               height: 9.w,
                               decoration: BoxDecoration(
-                                color: state.isOnline
-                                    ? const Color(0xFF00E676)
-                                    : AppColors.warning,
+                                color: state.isOnline ? const Color(0xFF00E676) : AppColors.warning,
                                 shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 1.5,
-                                ),
+                                border: Border.all(color: Colors.white, width: 1.5),
                               ),
                             ),
                           ),
@@ -124,9 +112,7 @@ class CustomAppBar extends StatelessWidget {
                     ),
                   ),
                   SizedBox(width: 4.w),
-                  NotificationIcon(
-                    unreadCount: state.unreadNotificationsCount,
-                  ),
+                  NotificationIcon(unreadCount: state.unreadNotificationsCount),
                 ],
               ),
             ],
@@ -143,10 +129,7 @@ class NotificationIcon extends StatelessWidget {
   final int unreadCount;
 
   /// Creates a [NotificationIcon].
-  const NotificationIcon({
-    super.key,
-    required this.unreadCount,
-  });
+  const NotificationIcon({super.key, required this.unreadCount});
 
   @override
   Widget build(BuildContext context) {
@@ -158,11 +141,7 @@ class NotificationIcon extends StatelessWidget {
           onPressed: () {
             AppRouter.navigateTo(context, Routes.notification);
           },
-          icon: Image.asset(
-            AppAssets.notificationIcon,
-            width: 24.w,
-            height: 24.w,
-          ),
+          icon: Image.asset(AppAssets.notificationIcon, width: 24.w, height: 24.w),
         ),
         if (unreadCount > 0)
           Positioned(
@@ -171,10 +150,7 @@ class NotificationIcon extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
               constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-              decoration: const BoxDecoration(
-                color: Colors.red,
-                shape: BoxShape.circle,
-              ),
+              decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
               child: Center(
                 child: Text(
                   '$unreadCount',

@@ -4,49 +4,50 @@ import 'package:material_ui/material_ui.dart';
 
 import '../cubit/lmt_cubit.dart';
 import '../theme/colors.dart';
-import '../theme/typography.dart';
 import '../utils/app_assets.dart';
 
+/// Compact top header displaying the L.M.T logo alongside the annual Bible
+/// verse (`آية السنة`) as plain text.
 class HeaderBanner extends StatelessWidget {
+  /// Creates a [HeaderBanner].
   const HeaderBanner({super.key});
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<LmtCubit, LmtState>(
       builder: (context, state) {
-        final isDark = AppColors.isDark(context);
         final primary = AppColors.primaryOf(context);
+        final textPrimary = AppColors.textPrimaryOf(context);
 
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            SizedBox(
-              width: 65.w,
-              height: 65.h,
-              child: Image.asset(AppAssets.appLogo, fit: BoxFit.contain),
-            ),
-            Expanded(
-              child: Text(
-                state.sloganOfYear.replaceAll('#', ''),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: AppTypography.h1Finger.copyWith(
-                  color: primary,
+        return Padding(
+          padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 2.h),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 46.w,
+                height: 46.w,
+                child: Image.asset(AppAssets.appLogo, fit: BoxFit.contain),
+              ),
+              SizedBox(width: 10.w),
+              Expanded(
+                child: Text(
+                  state.verseOfYear,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11.5.sp,
+                    height: 1.35,
+                    fontWeight: FontWeight.w800,
+                    fontFamily: 'Cairo',
+                    color: textPrimary,
+                    shadows: [Shadow(color: primary.withValues(alpha: 0.12), blurRadius: 4)],
+                  ),
                 ),
               ),
-            ),
-            SizedBox(
-              width: 42.w,
-              height: 42.h,
-              child: Image.asset(
-                isDark ? AppAssets.hashtagDarkIcon : AppAssets.hashtageIcon,
-                fit: BoxFit.contain,
-                errorBuilder: (_, _, _) =>
-                    Icon(Icons.tag_rounded, color: primary, size: 28.sp),
-              ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );

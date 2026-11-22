@@ -18,7 +18,7 @@ class LmtSeedData {
 
   /// Default annual Bible verse (Arabic).
   static const String defaultVerseAr =
-      '«وَلاَ تُشَاكِلُوا هذَا الدَّهْرَ، بَلْ تَغَيَّرُوا عَنْ شَكْلِكُمْ بِتَجْدِيدِ أَذْهَانِكُمْ» (رو 12: 2)';
+      '«وَلاَ تُشَاكِلُوا هذَا الدَّهْرَ، بَلْ تَغَيَّرُوا عَنْ شَكْلِكُمْ بِتَجْدِيدِ أَذْهَانِكُمْ»/n(رو 12: 2)';
 
   /// Default annual Bible verse (English).
   static const String defaultVerseEn =
@@ -37,12 +37,10 @@ class LmtSeedData {
   static List<PostModel> get initialPosts => PostsSeed.initialPosts;
 
   /// Seeded shared files, documents, and cards.
-  static List<SharedFileModel> get initialSharedFiles =>
-      SharedFilesSeed.initialSharedFiles;
+  static List<SharedFileModel> get initialSharedFiles => SharedFilesSeed.initialSharedFiles;
 
   /// Seeded calendar events.
-  static List<CalendarEventModel> get initialEvents =>
-      EventsNotificationsSeed.initialEvents;
+  static List<CalendarEventModel> get initialEvents => EventsNotificationsSeed.initialEvents;
 
   /// Seeded notifications.
   static List<AppNotificationModel> get initialNotifications =>

@@ -37,18 +37,9 @@ class PostsSeed {
             text: 'هحاول ألحق البروفة النهائية',
             voterIds: ['LMT-2026-005'],
           ),
-          PollOptionModel(
-            id: 'opt_3',
-            text: 'مش جاي للأسف (عندي عذر)',
-            voterIds: [],
-          ),
+          PollOptionModel(id: 'opt_3', text: 'مش جاي للأسف (عندي عذر)', voterIds: []),
         ],
-        likedByIds: const [
-          'LMT-2026-001',
-          'LMT-2026-002',
-          'LMT-2026-004',
-          'LMT-2026-006',
-        ],
+        likedByIds: const ['LMT-2026-001', 'LMT-2026-002', 'LMT-2026-004', 'LMT-2026-006'],
         comments: [
           PostCommentModel(
             id: 'cmt_1',
@@ -56,8 +47,7 @@ class PostsSeed {
             authorName: 'Samy Farouk',
             authorAvatar: AppAssets.samyProfileAvatar,
             authorRole: UserRole.editor,
-            content:
-                'التجمع هيكون الساعة ٢:٣٠ ظهرًا علشان نراجع الإضاءة والديكور قبل العرض!',
+            content: 'التجمع هيكون الساعة ٢:٣٠ ظهرًا علشان نراجع الإضاءة والديكور قبل العرض!',
             createdAt: now.subtract(const Duration(days: 1, hours: 1)),
           ),
           PostCommentModel(
@@ -74,20 +64,15 @@ class PostsSeed {
       PostModel(
         id: 'post_2',
         creatorId: 'LMT-2026-002',
-        creatorName: 'Samy Farouk',
-        creatorAvatar: AppAssets.samyProfileAvatar,
+        creatorName: 'Hema Nady',
+        creatorAvatar: AppAssets.accountIcon,
         creatorRole: UserRole.editor,
         creatorCommittee: 'اللجنة الفنية',
         publishTime: now.subtract(const Duration(days: 2, hours: 5)),
         type: PostCategoryType.simple,
         content:
             'مستنينكم يوم الأثنين الجاي الساعة ٦ ونص مساءً 🎬\nهيكون عندنا قاعدة فنية وقراءة كاملة لاسكريبت العرض الجديد وتوزيع المشاهد.. ما تتأخروش!',
-        likedByIds: const [
-          'LMT-2026-001',
-          'LMT-2026-003',
-          'LMT-2026-004',
-          'LMT-2026-005',
-        ],
+        likedByIds: const ['LMT-2026-001', 'LMT-2026-003', 'LMT-2026-004', 'LMT-2026-005'],
         comments: [
           PostCommentModel(
             id: 'cmt_3',

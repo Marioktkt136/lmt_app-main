@@ -8,7 +8,6 @@ import '../cubit/posts_cubit.dart';
 import 'post_comments_sheet.dart';
 import 'post_composer_card.dart';
 import 'timeline_post_card.dart';
-import 'year_verse_banner.dart';
 
 /// Displays the scrollable Posts Feed (Timeline) with pull-to-refresh support.
 class PostsList extends StatelessWidget {
@@ -36,13 +35,7 @@ class PostsList extends StatelessWidget {
               parent: BouncingScrollPhysics(),
             ),
             children: [
-              // 1. Year Slogan & Verse Banner
-              YearVerseBanner(
-                sloganOfYear: state.sloganOfYear,
-                verseOfYear: state.verseOfYear,
-              ),
-
-              // 2. Create Post Composer Card
+              // 1. Create Post Composer Card
               PostComposerCard(currentUser: state.currentUser),
 
               // 3. Posts Feed Cards (or friendly empty state)

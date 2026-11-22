@@ -13,19 +13,14 @@ import '../widgets/post_type_selector.dart';
 
 /// Opens the modal bottom sheet for creating a Simple, Poll, or Media post,
 /// preselecting [initialType]. Publishing calls `LmtCubit.createPost`.
-void showCreatePostModal(
-  BuildContext context, {
-  required PostCategoryType initialType,
-}) {
+void showCreatePostModal(BuildContext context, {required PostCategoryType initialType}) {
   final cubit = context.read<LmtCubit>();
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
     backgroundColor: AppColors.surfaceOf(context),
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
     builder: (_) => CreatePostSheet(cubit: cubit, initialType: initialType),
   );
 }
@@ -40,11 +35,7 @@ class CreatePostSheet extends StatefulWidget {
   final PostCategoryType initialType;
 
   /// Creates a [CreatePostSheet].
-  const CreatePostSheet({
-    super.key,
-    required this.cubit,
-    required this.initialType,
-  });
+  const CreatePostSheet({super.key, required this.cubit, required this.initialType});
 
   @override
   State<CreatePostSheet> createState() => _CreatePostSheetState();
@@ -61,11 +52,10 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
   @override
   void initState() {
     super.initState();
-    final isArabic =
-        WidgetsBinding.instance.platformDispatcher.locale.languageCode == 'ar';
+    // final isArabic = WidgetsBinding.instance.platformDispatcher.locale.languageCode == 'ar';
     _optionCtrls = [
-      TextEditingController(text: isArabic ? 'جاي أكيد 🎭' : 'Attending 🎭'),
-      TextEditingController(text: isArabic ? 'مش جاي للأسف' : 'Cannot attend'),
+      TextEditingController(text: ''),
+      TextEditingController(text: ''),
       TextEditingController(),
     ];
   }
@@ -85,14 +75,10 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
       type: pickVideo ? FileType.video : FileType.image,
     );
     if (file != null && file.path != null) {
-      final savedPath = await DeviceFileHelper.persistPickedFile(
-        file.path!,
-        file.name,
-      );
+      final savedPath = await DeviceFileHelper.persistPickedFile(file.path!, file.name);
       if (!mounted) return;
       final ext = (file.extension ?? '').toLowerCase();
-      final isVidFile = pickVideo ||
-          ['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp'].contains(ext);
+      final isVidFile = pickVideo || ['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp'].contains(ext);
       setState(() {
         _pickedMediaPath = savedPath;
         _pickedFileName = file.name;
@@ -105,11 +91,7 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
     if (_contentCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            isArabic
-                ? 'اكتب محتوى المنشور أولاً'
-                : 'Please write some content first',
-          ),
+          content: Text(isArabic ? 'اكتب محتوى المنشور أولاً' : 'Please write some content first'),
           backgroundColor: AppColors.warning,
           behavior: SnackBarBehavior.floating,
         ),
@@ -163,18 +145,11 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                isArabic
-                    ? 'إنشاء منشور جديد في التايم لاين 📢'
-                    : 'Create New Timeline Post 📢',
-                style: AppTypography.h4.copyWith(
-                  color: AppColors.textPrimaryOf(context),
-                ),
+                isArabic ? 'إنشاء منشور جديد في التايم لاين 📢' : 'Create New Timeline Post 📢',
+                style: AppTypography.h4.copyWith(color: AppColors.textPrimaryOf(context)),
               ),
               SizedBox(height: 12.h),
-              PostTypeSelector(
-                selected: _type,
-                onChanged: (t) => setState(() => _type = t),
-              ),
+              PostTypeSelector(selected: _type, onChanged: (t) => setState(() => _type = t)),
               SizedBox(height: 12.h),
               TextField(
                 controller: _contentCtrl,
@@ -187,17 +162,14 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 ),
               ),
               SizedBox(height: 12.h),
-              if (_type == PostCategoryType.poll)
-                PollOptionsEditor(controllers: _optionCtrls),
+              if (_type == PostCategoryType.poll) PollOptionsEditor(controllers: _optionCtrls),
               if (_type == PostCategoryType.media)
                 MediaPickerStrip(
                   pickedMediaPath: _pickedMediaPath,
                   pickedFileName: _pickedFileName,
                   isVideo: _isVideo,
-                  onPickImageFromGallery: () =>
-                      _pickMediaFromGallery(pickVideo: false),
-                  onPickVideoFromGallery: () =>
-                      _pickMediaFromGallery(pickVideo: true),
+                  onPickImageFromGallery: () => _pickMediaFromGallery(pickVideo: false),
+                  onPickVideoFromGallery: () => _pickMediaFromGallery(pickVideo: true),
                   onClearMedia: () => setState(() {
                     _pickedMediaPath = null;
                     _pickedFileName = null;
@@ -211,8 +183,7 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 child: ElevatedButton.icon(
                   onPressed: () => _publish(isArabic),
                   icon: const Icon(Icons.publish_rounded),
-                  label:
-                      Text(isArabic ? 'نشر في التايم لاين' : 'Publish Post'),
+                  label: Text(isArabic ? 'نشر في التايم لاين' : 'Publish Post'),
                 ),
               ),
             ],

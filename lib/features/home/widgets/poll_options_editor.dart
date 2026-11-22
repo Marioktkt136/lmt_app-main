@@ -12,8 +12,7 @@ class PollOptionsEditor extends StatelessWidget {
   final List<TextEditingController> controllers;
 
   /// Creates a [PollOptionsEditor].
-  const PollOptionsEditor({super.key, required this.controllers})
-      : assert(controllers.length == 3);
+  const PollOptionsEditor({super.key, required this.controllers}) : assert(controllers.length == 3);
 
   @override
   Widget build(BuildContext context) {
@@ -23,31 +22,21 @@ class PollOptionsEditor extends StatelessWidget {
       isArabic ? 'الخيار الثاني' : 'Option 2',
       isArabic ? 'الخيار الثالث (اختياري)' : 'Option 3 (Optional)',
     ];
-    const icons = [
-      Icons.looks_one_outlined,
-      Icons.looks_two_outlined,
-      Icons.looks_3_outlined,
-    ];
+    const icons = [Icons.looks_one_outlined, Icons.looks_two_outlined, Icons.looks_3_outlined];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           isArabic ? 'خيارات التصويت:' : 'Poll Options:',
-          style: AppTypography.labelLarge.copyWith(
-            color: AppColors.textPrimaryOf(context),
-          ),
+          style: AppTypography.labelLarge.copyWith(color: AppColors.textPrimaryOf(context)),
         ),
         SizedBox(height: 8.h),
         for (var i = 0; i < 3; i++) ...[
           if (i > 0) SizedBox(height: 8.h),
           TextField(
             controller: controllers[i],
-            textInputAction:
-                i == 2 ? TextInputAction.done : TextInputAction.next,
-            decoration: InputDecoration(
-              labelText: labels[i],
-              prefixIcon: Icon(icons[i]),
-            ),
+            textInputAction: i == 2 ? TextInputAction.done : TextInputAction.next,
+            decoration: InputDecoration(labelText: labels[i], prefixIcon: Icon(icons[i])),
           ),
         ],
       ],

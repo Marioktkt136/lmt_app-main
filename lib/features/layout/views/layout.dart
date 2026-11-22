@@ -113,24 +113,18 @@ class _LayoutState extends State<Layout> {
           child: Column(
             children: [
               // Custom App Bar
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6.0),
-                child: CustomAppBar(),
-              ),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 6.0), child: CustomAppBar()),
 
               // Offline / Online Connection Detector Banner
               BlocBuilder<LmtCubit, LmtState>(
                 buildWhen: (p, c) => p.isOnline != c.isOnline,
                 builder: (context, state) {
                   if (state.isOnline) return const SizedBox.shrink();
-                  final isArabic =
-                      Localizations.localeOf(context).languageCode == 'ar';
+                  final isArabic = Localizations.localeOf(context).languageCode == 'ar';
                   return Container(
                     width: double.infinity,
-                    margin:
-                        EdgeInsets.symmetric(horizontal: 16.w, vertical: 4.h),
-                    padding:
-                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
+                    margin: EdgeInsets.symmetric(horizontal: 16.w, vertical: 4.h),
+                    padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
                     decoration: BoxDecoration(
                       color: AppColors.warning,
                       borderRadius: BorderRadius.circular(10.r),
@@ -138,11 +132,7 @@ class _LayoutState extends State<Layout> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(
-                          Icons.wifi_off_rounded,
-                          size: 16,
-                          color: Colors.white,
-                        ),
+                        const Icon(Icons.wifi_off_rounded, size: 16, color: Colors.white),
                         SizedBox(width: 6.w),
                         Text(
                           isArabic
@@ -167,9 +157,7 @@ class _LayoutState extends State<Layout> {
                     color: AppColors.backgroundOf(context),
                     borderRadius: BorderRadius.circular(34.r),
                     border: Border.all(
-                      color: isDark
-                          ? primary.withValues(alpha: 0.25)
-                          : Colors.transparent,
+                      color: isDark ? primary.withValues(alpha: 0.25) : Colors.transparent,
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -182,15 +170,12 @@ class _LayoutState extends State<Layout> {
                   child: Material(
                     color: Colors.transparent,
                     child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 14.w,
-                        vertical: 8.h,
-                      ),
+                      padding: EdgeInsets.only(left: 14.w, right: 14.w, top: 5.h, bottom: 6.h),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           const HeaderBanner(),
-                          SizedBox(height: 6.h),
+                          SizedBox(height: 4.h),
                           Expanded(
                             child: controller == null
                                 ? const SizedBox.shrink()
@@ -210,10 +195,7 @@ class _LayoutState extends State<Layout> {
               ),
 
               // Bottom Navigation Bar (5 Tabs)
-              BottomNavBar(
-                selectedIndex: _selectedIndex,
-                onTap: _onTabChanged,
-              ),
+              BottomNavBar(selectedIndex: _selectedIndex, onTap: _onTabChanged),
             ],
           ),
         ),
