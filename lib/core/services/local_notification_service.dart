@@ -1,3 +1,5 @@
+import 'dart:ui' show Color;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
@@ -15,19 +17,22 @@ class LocalNotificationService {
 
   static const AndroidNotificationDetails _androidChannelDetails =
       AndroidNotificationDetails(
-    'lmt_high_importance_channel',
-    'L.M.T Notifications & Calendar Reminders',
+    'lmt_custom_tone_channel_v1',
+    'L.M.T App Notifications & Reminders',
     channelDescription:
-        'تنبيهات وإشعارات وتذكيرات تقويم فريق الرسالة الاخيرة (L.M.T)',
+        'تنبيهات وإشعارات وتذكيرات تقويم فريق الرسالة الاخيرة (L.M.T App)',
     importance: Importance.max,
     priority: Priority.high,
     visibility: NotificationVisibility.public,
     playSound: true,
+    sound: RawResourceAndroidNotificationSound('lmt_tone'),
     enableVibration: true,
     enableLights: true,
     fullScreenIntent: true,
-    ticker: 'L.M.T Notification',
-    icon: '@mipmap/ic_launcher',
+    ticker: 'L.M.T App Notification',
+    icon: '@drawable/ic_notification',
+    largeIcon: DrawableResourceAndroidBitmap('ic_notification_large'),
+    color: Color(0xFF1E88E5),
   );
 
   static const DarwinNotificationDetails _iosDetails =
@@ -35,6 +40,7 @@ class LocalNotificationService {
     presentAlert: true,
     presentBadge: true,
     presentSound: true,
+    sound: 'lmt_tone.wav',
   );
 
   static const NotificationDetails _notificationDetails = NotificationDetails(
@@ -48,7 +54,7 @@ class LocalNotificationService {
       tz.initializeTimeZones();
 
       const androidInit =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
+          AndroidInitializationSettings('@drawable/ic_notification');
       const iosInit = DarwinInitializationSettings(
         requestAlertPermission: true,
         requestBadgePermission: true,
