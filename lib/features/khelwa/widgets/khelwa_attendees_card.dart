@@ -8,15 +8,24 @@ import 'khelwa_attendee_chip.dart';
 /// Card listing today's Khelwa attendees only.
 ///
 /// The daily summary message is sent automatically at 12:00 AM midnight to the
-/// Khelwa group without any manual user trigger.
+/// Khelwa group without any manual user trigger. Only Administrators can reset
+/// today's list via [onResetToday].
 class KhelwaAttendeesCard extends StatelessWidget {
   /// Names of attendees who took Khelwa today.
   final List<String> attendees;
+
+  /// Whether the active user is an Administrator (`UserRole.admin`).
+  final bool isAdmin;
+
+  /// Callback invoked when the Administrator taps Reset Today's List.
+  final VoidCallback? onResetToday;
 
   /// Creates a [KhelwaAttendeesCard].
   const KhelwaAttendeesCard({
     super.key,
     required this.attendees,
+    this.isAdmin = false,
+    this.onResetToday,
   });
 
   @override
@@ -70,6 +79,19 @@ class KhelwaAttendeesCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (isAdmin && onResetToday != null && attendees.isNotEmpty) ...[
+                  SizedBox(width: 6.w),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'تصفير قائمة اليوم (للمسؤول فقط)',
+                    onPressed: onResetToday,
+                    icon: Icon(
+                      Icons.restart_alt_rounded,
+                      size: 20.sp,
+                      color: AppColors.error,
+                    ),
+                  ),
+                ],
               ],
             ),
             SizedBox(height: 6.h),

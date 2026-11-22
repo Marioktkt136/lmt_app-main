@@ -107,4 +107,29 @@ class KhelwaRepository {
       todayAttendees: attendees,
     );
   }
+
+  /// Resets today's Khelwa attendees list and resets any today user check-ins
+  /// back to yesterday (Administrator only).
+  Future<void> resetTodayAttendees() async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterdayIso = today.subtract(const Duration(days: 1)).toIso8601String();
+    final attendeesKey = '$attendeesKeyPrefix${todayDateKey(now)}';
+
+    await prefs.remove(attendeesKey);
+
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(khelwaKeyPrefix)) continue;
+      final val = prefs.getString(key);
+      if (val == null) continue;
+      final parsed = DateTime.tryParse(val);
+      if (parsed != null) {
+        final d = DateTime(parsed.year, parsed.month, parsed.day);
+        if (!d.isBefore(today)) {
+          await prefs.setString(key, yesterdayIso);
+        }
+      }
+    }
+  }
 }

@@ -48,6 +48,7 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
   String? _pickedMediaPath;
   String? _pickedFileName;
   bool _isVideo = false;
+  bool _allowMultiplePollChoices = false;
 
   @override
   void initState() {
@@ -124,6 +125,8 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
       pollOptionsText: _type == PostCategoryType.poll
           ? _optionCtrls.map((c) => c.text).toList()
           : const [],
+      allowMultiplePollChoices:
+          _type == PostCategoryType.poll && _allowMultiplePollChoices,
     );
     Navigator.pop(context);
   }
@@ -162,7 +165,50 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 ),
               ),
               SizedBox(height: 12.h),
-              if (_type == PostCategoryType.poll) PollOptionsEditor(controllers: _optionCtrls),
+              if (_type == PostCategoryType.poll) ...[
+                PollOptionsEditor(controllers: _optionCtrls),
+                SizedBox(height: 10.h),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryOf(context).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14.r),
+                    border: Border.all(
+                      color:
+                          AppColors.primaryOf(context).withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12.w),
+                    value: _allowMultiplePollChoices,
+                    onChanged: (v) =>
+                        setState(() => _allowMultiplePollChoices = v),
+                    activeThumbColor: AppColors.primaryOf(context),
+                    title: Text(
+                      isArabic
+                          ? 'السماح بأكثر من اختيار في الاستطلاع'
+                          : 'Allow multiple poll choices',
+                      style: TextStyle(
+                        fontSize: 12.5.sp,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimaryOf(context),
+                      ),
+                    ),
+                    subtitle: Text(
+                      isArabic
+                          ? (_allowMultiplePollChoices
+                              ? 'يمكن للأعضاء اختيار أكثر من إجابة ✓'
+                              : 'اختيار إجابة واحدة فقط لكل عضو')
+                          : (_allowMultiplePollChoices
+                              ? 'Members can select multiple options ✓'
+                              : 'Single choice only per member'),
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        color: AppColors.textSecondaryOf(context),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               if (_type == PostCategoryType.media)
                 MediaPickerStrip(
                   pickedMediaPath: _pickedMediaPath,

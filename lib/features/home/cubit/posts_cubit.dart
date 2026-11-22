@@ -27,6 +27,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
     bool isVideo = false,
     String? videoUrl,
     List<String> pollOptionsText = const [],
+    bool allowMultiplePollChoices = false,
   }) async {
     final now = DateTime.now();
     final pollOptions = pollOptionsText
@@ -57,6 +58,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
       isVideo: isVideo,
       videoUrl: videoUrl,
       pollOptions: pollOptions,
+      allowMultiplePollChoices: allowMultiplePollChoices,
       likedByIds: const [],
       comments: const [],
     );
@@ -108,7 +110,8 @@ mixin PostsCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Casts or removes a user's vote on a poll option.
+  /// Casts, toggles, or removes a user's vote on a poll option, respecting
+  /// [PostModel.allowMultiplePollChoices] (single-choice vs multi-choice).
   Future<void> voteOnPoll({
     required String postId,
     required String optionId,
@@ -116,6 +119,20 @@ mixin PostsCubitMixin on LmtBaseCubit {
     final userId = state.currentUser.id;
     final updatedPosts = state.posts.map((post) {
       if (post.id != postId) return post;
+
+      if (post.allowMultiplePollChoices) {
+        final updatedOptions = post.pollOptions.map((opt) {
+          if (opt.id != optionId) return opt;
+          final voters = List<String>.from(opt.voterIds);
+          if (voters.contains(userId)) {
+            voters.remove(userId);
+          } else {
+            voters.add(userId);
+          }
+          return opt.copyWith(voterIds: voters);
+        }).toList();
+        return post.copyWith(pollOptions: updatedOptions);
+      }
 
       final targetOption =
           post.pollOptions.where((o) => o.id == optionId).firstOrNull;

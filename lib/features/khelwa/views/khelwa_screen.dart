@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../../core/models/user_role.dart';
 import '../../../core/theme/colors.dart';
 import '../cubit/khelwa_cubit.dart';
 import '../data/khelwa_repository.dart';
@@ -82,6 +83,46 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
     Navigator.pop(context);
   }
 
+  Future<void> _confirmAndResetToday() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تصفير قائمة اليوم 🔄'),
+        content: const Text(
+          'هل أنت متأكد من رغبتك في مسح وإعادة ضبط قائمة من أخذوا الخلوة اليوم؟',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('تصفير القائمة'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+    await _repo.resetTodayAttendees();
+    if (!mounted) return;
+    setState(() {
+      _attendees = const [];
+      _daysDifference = 1;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم تصفير قائمة الخلوة اليومية بنجاح ✅'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = AppColors.isDark(context);
@@ -144,7 +185,12 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
                       onPressed: _record,
                     ),
                     SizedBox(height: 32.h),
-                    KhelwaAttendeesCard(attendees: _attendees),
+                    KhelwaAttendeesCard(
+                      attendees: _attendees,
+                      isAdmin: context.watch<LmtCubit>().state.currentUser.role ==
+                          UserRole.admin,
+                      onResetToday: _confirmAndResetToday,
+                    ),
                     SizedBox(height: 20.h),
                   ],
                 ),

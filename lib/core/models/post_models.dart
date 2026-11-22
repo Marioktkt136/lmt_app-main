@@ -176,6 +176,10 @@ class PostModel extends Equatable {
   /// List of poll options if [type] is [PostCategoryType.poll].
   final List<PollOptionModel> pollOptions;
 
+  /// Whether voters can select multiple options in this poll (`true`) or only
+  /// a single option (`false`).
+  final bool allowMultiplePollChoices;
+
   /// List of member IDs who liked the post.
   final List<String> likedByIds;
 
@@ -197,6 +201,7 @@ class PostModel extends Equatable {
     this.isVideo = false,
     this.videoUrl,
     this.pollOptions = const [],
+    this.allowMultiplePollChoices = false,
     this.likedByIds = const [],
     this.comments = const [],
   });
@@ -220,6 +225,7 @@ class PostModel extends Equatable {
     bool? isVideo,
     String? videoUrl,
     List<PollOptionModel>? pollOptions,
+    bool? allowMultiplePollChoices,
     List<String>? likedByIds,
     List<PostCommentModel>? comments,
   }) {
@@ -237,6 +243,8 @@ class PostModel extends Equatable {
       isVideo: isVideo ?? this.isVideo,
       videoUrl: videoUrl ?? this.videoUrl,
       pollOptions: pollOptions ?? this.pollOptions,
+      allowMultiplePollChoices:
+          allowMultiplePollChoices ?? this.allowMultiplePollChoices,
       likedByIds: likedByIds ?? this.likedByIds,
       comments: comments ?? this.comments,
     );
@@ -257,6 +265,7 @@ class PostModel extends Equatable {
         'isVideo': isVideo,
         'videoUrl': videoUrl,
         'pollOptions': pollOptions.map((e) => e.toJson()).toList(),
+        'allowMultiplePollChoices': allowMultiplePollChoices,
         'likedByIds': likedByIds,
         'comments': comments.map((e) => e.toJson()).toList(),
       };
@@ -284,6 +293,8 @@ class PostModel extends Equatable {
                     (e) => PollOptionModel.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [],
+        allowMultiplePollChoices:
+            json['allowMultiplePollChoices'] as bool? ?? false,
         likedByIds: (json['likedByIds'] as List<dynamic>?)
                 ?.map((e) => e.toString())
                 .toList() ??
@@ -307,6 +318,7 @@ class PostModel extends Equatable {
         isVideo,
         videoUrl,
         pollOptions,
+        allowMultiplePollChoices,
         likedByIds,
         comments,
       ];

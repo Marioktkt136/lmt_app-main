@@ -46,6 +46,13 @@ mixin MembersCubitMixin on LmtBaseCubit {
     );
 
     final updatedMembers = [...state.members, newMember];
+    final updatedGroups = state.chatGroups.map((g) {
+      if (g.id == 'grp_khelwa' && !g.memberIds.contains(newMember.id)) {
+        return g.copyWith(memberIds: [...g.memberIds, newMember.id]);
+      }
+      return g;
+    }).toList();
+
     pushNotification(
       title: 'عضو جديد في الفريق 👤',
       description:
@@ -54,7 +61,7 @@ mixin MembersCubitMixin on LmtBaseCubit {
       targetTabIndex: 4,
     );
 
-    emit(state.copyWith(members: updatedMembers));
+    emit(state.copyWith(members: updatedMembers, chatGroups: updatedGroups));
     await persistState();
   }
 

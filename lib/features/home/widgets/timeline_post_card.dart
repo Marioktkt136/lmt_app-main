@@ -14,6 +14,7 @@ import '../../../core/widgets/lmt_avatar.dart';
 import '../../../core/widgets/lmt_card.dart';
 import '../cubit/posts_cubit.dart';
 import '../sheets/post_interactions_sheet.dart';
+import '../views/post_image_viewer_page.dart';
 
 /// Displays an individual timeline post card supporting Simple text, Poll voting
 /// (with toggle-to-unvote and "Who Voted" inspection), Image/Video media
@@ -199,10 +200,25 @@ class TimelinePostCard extends StatelessWidget {
             ),
           ),
 
-          // Poll Section (Supports voting, unvoting, and seeing WHO VOTED)
+          // Poll Section (Single-choice or Multi-choice based on post setting)
           if (post.type == PostCategoryType.poll &&
               post.pollOptions.isNotEmpty) ...[
-            SizedBox(height: 12.h),
+            SizedBox(height: 8.h),
+            Text(
+              post.allowMultiplePollChoices
+                  ? (isArabic
+                      ? 'يمكنك اختيار أكثر من إجابة في هذا الاستطلاع ✓'
+                      : 'Multi-choice poll • You can select multiple options ✓')
+                  : (isArabic
+                      ? 'اختر إجابة واحدة فقط'
+                      : 'Single-choice poll'),
+              style: TextStyle(
+                fontSize: 10.5.sp,
+                color: post.allowMultiplePollChoices ? primary : textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(height: 8.h),
             ...post.pollOptions.map((option) {
               final totalVotes = post.totalPollVotes;
               final optionVotes = option.voterIds.length;
@@ -230,9 +246,13 @@ class TimelinePostCard extends StatelessWidget {
                       Row(
                         children: [
                           Icon(
-                            isSelectedByMe
-                                ? Icons.check_circle_rounded
-                                : Icons.radio_button_unchecked_rounded,
+                            post.allowMultiplePollChoices
+                                ? (isSelectedByMe
+                                    ? Icons.check_box_rounded
+                                    : Icons.check_box_outline_blank_rounded)
+                                : (isSelectedByMe
+                                    ? Icons.check_circle_rounded
+                                    : Icons.radio_button_unchecked_rounded),
                             size: 18.sp,
                             color:
                                 isSelectedByMe ? accentGreen : textSecondary,
@@ -423,13 +443,59 @@ class TimelinePostCard extends StatelessWidget {
                           ),
                         ),
                       )
-                    : Container(
-                        height: 185.h,
-                        width: double.infinity,
-                        color: primary.withValues(alpha: 0.08),
-                        child: DeviceFileHelper.buildImage(
-                          post.mediaPath ?? AppAssets.actIcon,
-                          fit: BoxFit.contain,
+                    : InkWell(
+                        onTap: () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => PostImageViewerPage(post: post),
+                            ),
+                          );
+                        },
+                        child: Stack(
+                          children: [
+                            Container(
+                              height: 185.h,
+                              width: double.infinity,
+                              color: primary.withValues(alpha: 0.08),
+                              child: DeviceFileHelper.buildImage(
+                                post.mediaPath ?? AppAssets.actIcon,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                            Positioned(
+                              bottom: 8.h,
+                              right: 8.w,
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 8.w,
+                                  vertical: 4.h,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.62),
+                                  borderRadius: BorderRadius.circular(10.r),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.fullscreen_rounded,
+                                      size: 15.sp,
+                                      color: Colors.white,
+                                    ),
+                                    SizedBox(width: 3.w),
+                                    Text(
+                                      isArabic ? 'تكبير' : 'Fullscreen',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10.sp,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
               ),

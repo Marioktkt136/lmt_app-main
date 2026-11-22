@@ -55,30 +55,41 @@ class LmtCubit extends LmtBaseCubit
   Future<void> _initialize() async {
     final snapshot = await repository.loadSnapshot();
 
-    // Ensure the dedicated Khelwa Group ('grp_khelwa') always exists
+    // Ensure the dedicated Khelwa Group ('grp_khelwa') always exists and
+    // includes all team members (so every member sees it in their Chats list).
     final groups = List<ChatGroupModel>.from(snapshot.chatGroups);
-    if (!groups.any((g) => g.id == 'grp_khelwa')) {
+    final allMemberIds = <String>{
+      ...snapshot.members.map((m) => m.id),
+      snapshot.currentUser.id,
+    }.toList();
+
+    final khelwaIdx = groups.indexWhere((g) => g.id == 'grp_khelwa');
+    if (khelwaIdx == -1) {
       final seedKhelwaGroup = LmtSeedData.initialGroups
           .where((g) => g.id == 'grp_khelwa')
           .firstOrNull;
-      if (seedKhelwaGroup != null) {
-        groups.insert(0, seedKhelwaGroup);
-      } else {
-        groups.insert(
-          0,
-          ChatGroupModel(
-            id: 'grp_khelwa',
-            name: 'جروب الخلوة اليومية 🙏',
-            description:
-                'جروب مخصص لمتابعة الخلوة اليومية ونشر القائمة اليومية بأسماء من أخذوا الخلوة كل يوم',
-            imagePath: AppAssets.prayIcon,
-            memberIds: snapshot.members.map((m) => m.id).toList(),
-            adminId: snapshot.members.first.id,
-            adminName: snapshot.members.first.name,
-            isPinned: true,
-            createdAt: DateTime.now(),
-          ),
-        );
+      groups.insert(
+        0,
+        (seedKhelwaGroup ??
+                ChatGroupModel(
+                  id: 'grp_khelwa',
+                  name: 'جروب الخلوة اليومية 🙏',
+                  description:
+                      'جروب مخصص لمتابعة الخلوة اليومية ونشر القائمة اليومية بأسماء من أخذوا الخلوة كل يوم',
+                  imagePath: AppAssets.prayIcon,
+                  memberIds: allMemberIds,
+                  adminId: snapshot.members.first.id,
+                  adminName: snapshot.members.first.name,
+                  isPinned: true,
+                  createdAt: DateTime.now(),
+                ))
+            .copyWith(memberIds: allMemberIds),
+      );
+    } else {
+      final existing = groups[khelwaIdx];
+      final mergedIds = <String>{...existing.memberIds, ...allMemberIds}.toList();
+      if (mergedIds.length != existing.memberIds.length) {
+        groups[khelwaIdx] = existing.copyWith(memberIds: mergedIds);
       }
     }
 
