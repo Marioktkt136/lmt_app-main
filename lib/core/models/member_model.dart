@@ -5,6 +5,23 @@ import 'user_role.dart';
 
 /// Represents a team member account in the L.M.T application.
 class MemberModel extends Equatable {
+  /// Official list of team departments (`القسم`).
+  static const List<String> availableDepartments = [
+    'ديكور',
+    'إضاءة',
+    'ملابس وإكسسوار',
+    'مزيكا وميكسر',
+    'ميك اب',
+  ];
+
+  /// Official list of team committees (`اللجنة`).
+  static const List<String> availableCommittees = [
+    'اللجنة الفنية',
+    'اللجنة الإدارية',
+    'اللجنة الروحية',
+    'اللجنة العامة',
+  ];
+
   /// The unique identifier of the member (e.g., `LMT-2026-001`).
   final String id;
 
@@ -26,11 +43,25 @@ class MemberModel extends Equatable {
   /// The list of chatting group names the member belongs to.
   final List<String> groups;
 
-  /// The artistic or technical specialty of the member.
-  final String specialistAt;
+  /// The list of team departments (`القسم`) assigned to the member.
+  ///
+  /// Each member can be assigned to one or more departments from
+  /// [availableDepartments].
+  final List<String> departments;
 
-  /// The team committee the member belongs to.
-  final String committee;
+  /// The list of team committees (`اللجنة`) assigned to the member.
+  ///
+  /// Each member can be assigned to one or more committees from
+  /// [availableCommittees].
+  final List<String> committees;
+
+  /// Formatted display string of all assigned departments (`القسم`).
+  String get specialistAt =>
+      departments.isEmpty ? availableDepartments.first : departments.join(' • ');
+
+  /// Formatted display string of all assigned committees (`اللجنة`).
+  String get committee =>
+      committees.isEmpty ? availableCommittees.first : committees.join(' • ');
 
   /// Creates a [MemberModel] instance.
   const MemberModel({
@@ -41,8 +72,8 @@ class MemberModel extends Equatable {
     required this.role,
     this.avatarPath = AppAssets.accountIcon,
     required this.groups,
-    required this.specialistAt,
-    required this.committee,
+    this.departments = const ['ديكور'],
+    this.committees = const ['اللجنة الفنية'],
   });
 
   /// Creates a copy of this member with the given fields replaced.
@@ -54,8 +85,8 @@ class MemberModel extends Equatable {
     UserRole? role,
     String? avatarPath,
     List<String>? groups,
-    String? specialistAt,
-    String? committee,
+    List<String>? departments,
+    List<String>? committees,
   }) {
     return MemberModel(
       id: id ?? this.id,
@@ -65,8 +96,8 @@ class MemberModel extends Equatable {
       role: role ?? this.role,
       avatarPath: avatarPath ?? this.avatarPath,
       groups: groups ?? this.groups,
-      specialistAt: specialistAt ?? this.specialistAt,
-      committee: committee ?? this.committee,
+      departments: departments ?? this.departments,
+      committees: committees ?? this.committees,
     );
   }
 
@@ -79,25 +110,106 @@ class MemberModel extends Equatable {
         'role': role.name,
         'avatarPath': avatarPath,
         'groups': groups,
+        'departments': departments,
+        'committees': committees,
         'specialistAt': specialistAt,
         'committee': committee,
       };
 
+  static List<String> _parseDepartments(
+    Map<String, dynamic> json,
+    String memberId,
+  ) {
+    final rawList = (json['departments'] as List<dynamic>?)
+        ?.map((e) => e.toString().trim())
+        .where((e) => availableDepartments.contains(e))
+        .toList();
+    if (rawList != null && rawList.isNotEmpty) {
+      return rawList;
+    }
+
+    final rawSingle = (json['specialistAt'] as String? ?? '').trim();
+    final matchedFromSingle = availableDepartments
+        .where((dept) => rawSingle.contains(dept))
+        .toList();
+    if (matchedFromSingle.isNotEmpty) {
+      return matchedFromSingle;
+    }
+
+    switch (memberId) {
+      case 'LMT-2026-001':
+        return const ['إضاءة', 'مزيكا وميكسر'];
+      case 'LMT-2026-002':
+        return const ['ديكور', 'ملابس وإكسسوار'];
+      case 'LMT-2026-003':
+        return const ['إضاءة', 'مزيكا وميكسر'];
+      case 'LMT-2026-004':
+        return const ['ملابس وإكسسوار', 'ميك اب'];
+      case 'LMT-2026-005':
+        return const ['ديكور', 'إضاءة'];
+      case 'LMT-2026-006':
+        return const ['ميك اب', 'ملابس وإكسسوار'];
+      default:
+        return const ['ديكور'];
+    }
+  }
+
+  static List<String> _parseCommittees(
+    Map<String, dynamic> json,
+    String memberId,
+  ) {
+    final rawList = (json['committees'] as List<dynamic>?)
+        ?.map((e) => e.toString().trim())
+        .where((e) => availableCommittees.contains(e))
+        .toList();
+    if (rawList != null && rawList.isNotEmpty) {
+      return rawList;
+    }
+
+    final rawSingle = (json['committee'] as String? ?? '').trim();
+    final matchedFromSingle = availableCommittees
+        .where((comm) => rawSingle.contains(comm))
+        .toList();
+    if (matchedFromSingle.isNotEmpty) {
+      return matchedFromSingle;
+    }
+
+    switch (memberId) {
+      case 'LMT-2026-001':
+        return const ['اللجنة الفنية', 'اللجنة الإدارية'];
+      case 'LMT-2026-002':
+        return const ['اللجنة الفنية', 'اللجنة العامة'];
+      case 'LMT-2026-003':
+        return const ['اللجنة الفنية'];
+      case 'LMT-2026-004':
+        return const ['اللجنة الفنية', 'اللجنة الروحية'];
+      case 'LMT-2026-005':
+        return const ['اللجنة الإدارية', 'اللجنة العامة'];
+      case 'LMT-2026-006':
+        return const ['اللجنة الروحية', 'اللجنة العامة'];
+      default:
+        return const ['اللجنة الفنية'];
+    }
+  }
+
   /// Deserializes a [MemberModel] from a JSON map.
-  factory MemberModel.fromJson(Map<String, dynamic> json) => MemberModel(
-        id: json['id'] as String? ?? 'LMT-001',
-        username: json['username'] as String? ?? 'member',
-        password: json['password'] as String? ?? '12345678',
-        name: json['name'] as String? ?? 'Member',
-        role: UserRole.fromString(json['role'] as String? ?? 'member'),
-        avatarPath: json['avatarPath'] as String? ?? AppAssets.accountIcon,
-        groups: (json['groups'] as List<dynamic>?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            const [],
-        specialistAt: json['specialistAt'] as String? ?? 'Acting & Drama',
-        committee: json['committee'] as String? ?? 'Artistic Committee',
-      );
+  factory MemberModel.fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as String? ?? 'LMT-001';
+    return MemberModel(
+      id: id,
+      username: json['username'] as String? ?? 'member',
+      password: json['password'] as String? ?? '12345678',
+      name: json['name'] as String? ?? 'Member',
+      role: UserRole.fromString(json['role'] as String? ?? 'member'),
+      avatarPath: json['avatarPath'] as String? ?? AppAssets.accountIcon,
+      groups: (json['groups'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      departments: _parseDepartments(json, id),
+      committees: _parseCommittees(json, id),
+    );
+  }
 
   @override
   List<Object?> get props => [
@@ -108,7 +220,7 @@ class MemberModel extends Equatable {
         role,
         avatarPath,
         groups,
-        specialistAt,
-        committee,
+        departments,
+        committees,
       ];
 }

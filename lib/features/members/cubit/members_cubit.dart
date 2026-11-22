@@ -14,8 +14,8 @@ mixin MembersCubitMixin on LmtBaseCubit {
     required String username,
     required String password,
     required UserRole role,
-    required String specialistAt,
-    required String committee,
+    required List<String> departments,
+    required List<String> committees,
     required List<String> groups,
   }) async {
     if (!state.currentUser.role.canManageMembers) return;
@@ -37,8 +37,12 @@ mixin MembersCubitMixin on LmtBaseCubit {
       groups: groups.isEmpty
           ? const ['فريق الرسالة الاخيرة - العام']
           : groups,
-      specialistAt: specialistAt.trim(),
-      committee: committee.trim(),
+      departments: departments.isEmpty
+          ? [MemberModel.availableDepartments.first]
+          : departments,
+      committees: committees.isEmpty
+          ? [MemberModel.availableCommittees.first]
+          : committees,
     );
 
     final updatedMembers = [...state.members, newMember];
@@ -93,13 +97,30 @@ mixin MembersCubitMixin on LmtBaseCubit {
   }
 
   /// Updates an existing member's profile details.
+  ///
+  /// Only [UserRole.admin] (`canEditDepartmentsAndCommittees`) is allowed to
+  /// modify a member's [MemberModel.departments] (`القسم`) and
+  /// [MemberModel.committees] (`اللجنة`).
   Future<void> updateMemberDetails(MemberModel updated) async {
     if (!state.currentUser.role.canManageMembers) return;
-    final updatedMembers = state.members
-        .map((m) => m.id == updated.id ? updated : m)
-        .toList();
-    final updatedCurrentUser =
-        state.currentUser.id == updated.id ? updated : state.currentUser;
+    final canEditDeptsAndComms =
+        state.currentUser.role.canEditDepartmentsAndCommittees;
+
+    final updatedMembers = state.members.map((m) {
+      if (m.id != updated.id) return m;
+      return canEditDeptsAndComms
+          ? updated
+          : updated.copyWith(
+              departments: m.departments,
+              committees: m.committees,
+            );
+    }).toList();
+
+    final resolvedUpdated =
+        updatedMembers.firstWhere((m) => m.id == updated.id);
+    final updatedCurrentUser = state.currentUser.id == updated.id
+        ? resolvedUpdated
+        : state.currentUser;
 
     emit(
       state.copyWith(

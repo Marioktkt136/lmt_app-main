@@ -10,11 +10,16 @@ import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../utils/app_assets.dart';
 
+/// Top application bar displaying the drawer menu button, app title,
+/// tappable active-user role pill, profile avatar with online status dot,
+/// and notification bell with unread count badge.
 class CustomAppBar extends StatelessWidget {
+  /// Creates a [CustomAppBar].
   const CustomAppBar({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     return BlocBuilder<LmtCubit, LmtState>(
       builder: (context, state) {
         return Padding(
@@ -22,9 +27,8 @@ class CustomAppBar extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Drawer / Menu Button
               IconButton(
-                tooltip: 'Menu',
+                tooltip: isArabic ? 'القائمة الجانبية' : 'Navigation Menu',
                 onPressed: () {
                   final scaffold = Scaffold.maybeOf(context);
                   if (scaffold != null && scaffold.hasDrawer) {
@@ -39,8 +43,6 @@ class CustomAppBar extends StatelessWidget {
                   height: 26.w,
                 ),
               ),
-
-              // Title & Active Role Pill
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -55,29 +57,70 @@ class CustomAppBar extends StatelessWidget {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(
-                      '${state.currentUser.name} ${state.currentUser.role.badgeEmoji}',
-                      style: TextStyle(
-                        fontSize: 10.5.sp,
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontWeight: FontWeight.w600,
+                    SizedBox(height: 2.h),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12.r),
+                      onTap: () =>
+                          AppRouter.navigateTo(context, Routes.profile),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10.w,
+                          vertical: 2.h,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(12.r),
+                        ),
+                        child: Text(
+                          '${state.currentUser.name} ${state.currentUser.role.badgeEmoji}',
+                          style: TextStyle(
+                            fontSize: 10.5.sp,
+                            color: Colors.white.withValues(alpha: 0.95),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-
-              // Profile + Notification Icons
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  GestureDetector(
-                    onTap: () => AppRouter.navigateTo(context, Routes.profile),
-                    child: CircleAvatar(
-                      radius: 15.r,
-                      backgroundColor: Colors.white24,
-                      backgroundImage:
-                          AssetImage(state.currentUser.avatarPath),
+                  Tooltip(
+                    message: isArabic ? 'الملف الشخصي' : 'Profile',
+                    child: GestureDetector(
+                      onTap: () =>
+                          AppRouter.navigateTo(context, Routes.profile),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          CircleAvatar(
+                            radius: 16.r,
+                            backgroundColor: Colors.white24,
+                            backgroundImage:
+                                AssetImage(state.currentUser.avatarPath),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              width: 9.w,
+                              height: 9.w,
+                              decoration: BoxDecoration(
+                                color: state.isOnline
+                                    ? const Color(0xFF00E676)
+                                    : AppColors.warning,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 1.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   SizedBox(width: 4.w),
@@ -94,9 +137,12 @@ class CustomAppBar extends StatelessWidget {
   }
 }
 
+/// Notification bell icon button with an unread count badge.
 class NotificationIcon extends StatelessWidget {
+  /// Number of unread notifications.
   final int unreadCount;
 
+  /// Creates a [NotificationIcon].
   const NotificationIcon({
     super.key,
     required this.unreadCount,
@@ -104,10 +150,11 @@ class NotificationIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     return Stack(
       children: [
         IconButton(
-          tooltip: 'Notifications',
+          tooltip: isArabic ? 'الإشعارات والتذكيرات' : 'Notifications',
           onPressed: () {
             AppRouter.navigateTo(context, Routes.notification);
           },

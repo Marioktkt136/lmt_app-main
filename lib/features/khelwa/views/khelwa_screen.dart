@@ -63,10 +63,6 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
     final user = cubit.state.currentUser;
     try {
       final snap = await _repo.record(userId: user.id, userName: user.name);
-      await cubit.publishDailyKhelwaSummaryToGroup(
-        attendeesNames: snap.todayAttendees,
-        forDate: DateTime.now(),
-      );
       if (!mounted) return;
       setState(() {
         _daysDifference = 0;
@@ -86,44 +82,54 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
     Navigator.pop(context);
   }
 
-  Future<void> _publishThenOpenGroup() async {
-    await context
-        .read<LmtCubit>()
-        .publishDailyKhelwaSummaryToGroup(attendeesNames: _attendees);
-    if (!mounted) return;
-    _openKhelwaGroup();
-  }
-
   @override
   Widget build(BuildContext context) {
+    final isDark = AppColors.isDark(context);
+    final primary = AppColors.primaryOf(context);
+    final appBarBg = isDark ? AppColors.surfaceDark : AppColors.primary;
+    final appBarFg = isDark ? AppColors.textPrimaryDark : Colors.white;
+
     return Scaffold(
       backgroundColor: AppColors.backgroundOf(context),
       appBar: AppBar(
-        backgroundColor: AppColors.surfaceOf(context),
-        elevation: 0,
+        backgroundColor: appBarBg,
+        foregroundColor: appBarFg,
+        iconTheme: IconThemeData(color: appBarFg),
+        actionsIconTheme: IconThemeData(color: isDark ? primary : Colors.white),
+        elevation: isDark ? 0 : 2,
+        shadowColor: Colors.black.withValues(alpha: 0.2),
         centerTitle: true,
+        shape: isDark
+            ? Border(
+                bottom: BorderSide(
+                  color: primary.withValues(alpha: 0.28),
+                  width: 1,
+                ),
+              )
+            : null,
         title: Text(
           'الخلوة اليومية 🙏',
           style: TextStyle(
             fontSize: 18.sp,
             fontWeight: FontWeight.bold,
             fontFamily: 'Cairo',
-            color: AppColors.textPrimaryOf(context),
+            color: appBarFg,
           ),
         ),
         actions: [
           IconButton(
             tooltip: 'جروب الخلوة اليومية',
             onPressed: _openKhelwaGroup,
-            icon: Icon(Icons.chat_rounded, color: AppColors.primaryOf(context)),
+            icon: Icon(
+              Icons.chat_rounded,
+              color: isDark ? primary : Colors.white,
+            ),
           ),
         ],
       ),
       body: SafeArea(
         child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(color: Color(0xFF4285F4)),
-              )
+            ? Center(child: CircularProgressIndicator(color: primary))
             : SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
                 padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 24.h),
@@ -138,10 +144,7 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
                       onPressed: _record,
                     ),
                     SizedBox(height: 32.h),
-                    KhelwaAttendeesCard(
-                      attendees: _attendees,
-                      onOpenGroup: _publishThenOpenGroup,
-                    ),
+                    KhelwaAttendeesCard(attendees: _attendees),
                     SizedBox(height: 20.h),
                   ],
                 ),

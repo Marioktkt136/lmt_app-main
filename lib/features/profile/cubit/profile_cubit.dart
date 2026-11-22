@@ -1,4 +1,5 @@
 import '../../../core/cubit/lmt_cubit.dart';
+import '../../../core/models/lmt_models.dart';
 import '../../../core/utils/app_preferences.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
@@ -34,16 +35,29 @@ mixin ProfileCubitMixin on LmtBaseCubit {
     return true;
   }
 
-  /// Updates the active user's profile details (name, specialty, committee).
+  /// Updates the active user's profile details.
+  ///
+  /// Only [UserRole.admin] (`canEditDepartmentsAndCommittees`) is allowed to
+  /// modify [departments] (`القسم`) and [committees] (`اللجنة`).
   Future<void> updateProfileInfo({
     required String name,
-    required String specialistAt,
-    required String committee,
+    required List<String> departments,
+    required List<String> committees,
   }) async {
+    final canEditDeptsAndComms =
+        state.currentUser.role.canEditDepartmentsAndCommittees;
     final updatedUser = state.currentUser.copyWith(
       name: name.trim(),
-      specialistAt: specialistAt.trim(),
-      committee: committee.trim(),
+      departments: canEditDeptsAndComms
+          ? (departments.isEmpty
+              ? [MemberModel.availableDepartments.first]
+              : departments)
+          : state.currentUser.departments,
+      committees: canEditDeptsAndComms
+          ? (committees.isEmpty
+              ? [MemberModel.availableCommittees.first]
+              : committees)
+          : state.currentUser.committees,
     );
     final updatedMembers = state.members
         .map((m) => m.id == updatedUser.id ? updatedUser : m)

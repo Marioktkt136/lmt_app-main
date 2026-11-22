@@ -6,6 +6,7 @@ import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_assets.dart';
 import '../../../core/utils/device_file_helper.dart';
+import 'voice_note_player_widget.dart';
 
 /// Renders the inner body of a [ChatMessageModel] according to its [MessageType]
 /// (Text, Voice Note, Image, File attachment, or Sticker).
@@ -30,52 +31,15 @@ class ChatMessageBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = AppColors.primaryOf(context);
-    final accentGreen = AppColors.accentGreenOf(context);
     final textPrimary = AppColors.textPrimaryOf(context);
     final textSecondary = AppColors.textSecondaryOf(context);
 
     switch (msg.type) {
       case MessageType.voiceNote:
-        return Container(
-          padding: EdgeInsets.all(8.w),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceOf(context),
-            borderRadius: BorderRadius.circular(12.r),
-          ),
-          child: Row(
-            children: [
-              IconButton.filled(
-                style: IconButton.styleFrom(backgroundColor: accentGreen),
-                onPressed: onToggleVoicePlay,
-                icon: Icon(
-                  isPlayingVoice
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  color: Colors.white,
-                ),
-              ),
-              SizedBox(width: 8.w),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    LinearProgressIndicator(
-                      value: isPlayingVoice ? 0.65 : 0.3,
-                      color: accentGreen,
-                      backgroundColor: accentGreen.withValues(alpha: 0.2),
-                    ),
-                    SizedBox(height: 4.h),
-                    Text(
-                      '🎤 00:${(msg.voiceDurationSeconds ?? 15).toString().padLeft(2, '0')} • ${msg.content}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11.sp, color: textSecondary),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        return VoiceNotePlayerWidget(
+          msg: msg,
+          isPlayingVoice: isPlayingVoice,
+          onToggleVoicePlay: onToggleVoicePlay,
         );
 
       case MessageType.image:

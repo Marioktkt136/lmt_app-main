@@ -45,31 +45,38 @@ class CalendarMonthSelectorCard extends StatelessWidget {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
                 onPressed: () => onChangeMonthDelta(-1),
                 icon: Icon(Icons.chevron_left_rounded, color: primary),
               ),
-              Column(
-                children: [
-                  Text(
-                    DateFormat('MMMM yyyy').format(focusedMonth),
-                    style: AppTypography.h4.copyWith(
-                      color: textPrimary,
-                      fontWeight: FontWeight.bold,
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      DateFormat('MMMM yyyy').format(focusedMonth),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: AppTypography.h4.copyWith(
+                        color: textPrimary,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  Text(
-                    isArabic
-                        ? 'تصفح كل شهور السنة لمعرفة الأحداث القادمة'
-                        : 'Browse all months of the year for upcoming events',
-                    style: TextStyle(
-                      fontSize: 10.5.sp,
-                      color: textSecondary,
+                    Text(
+                      isArabic
+                          ? 'تصفح كل شهور السنة لمعرفة الأحداث القادمة'
+                          : 'Browse all months of the year for upcoming events',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 10.5.sp,
+                        color: textSecondary,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               IconButton(
                 onPressed: () => onChangeMonthDelta(1),
@@ -90,9 +97,7 @@ class CalendarMonthSelectorCard extends StatelessWidget {
                 final monthDate = DateTime(focusedMonth.year, m, 1);
                 final isSelectedMonth = focusedMonth.month == m;
                 final countInMonth = calendarEvents
-                    .where((e) =>
-                        e.eventDateTime.year == focusedMonth.year &&
-                        e.eventDateTime.month == m)
+                    .where((e) => e.occursInMonth(focusedMonth.year, m))
                     .length;
 
                 return InkWell(

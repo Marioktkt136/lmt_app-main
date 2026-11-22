@@ -9,13 +9,12 @@ import '../../../core/utils/app_assets.dart';
 import '../../../core/utils/device_file_helper.dart';
 import '../cubit/chat_cubit.dart';
 
-/// Displays the media/attachment selection bottom sheet for a chat room.
+/// Displays the media/attachment selection bottom sheet for a chat room
+/// containing Image and File attachment options.
 void showChatAttachmentMenuSheet({
   required BuildContext context,
   required String groupId,
   required ChatMessageModel? replyTo,
-  required VoidCallback onOpenStickers,
-  required VoidCallback onStartVoiceRecording,
   required VoidCallback onMessageSent,
 }) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
@@ -25,9 +24,7 @@ void showChatAttachmentMenuSheet({
   showModalBottomSheet<void>(
     context: context,
     backgroundColor: AppColors.surfaceOf(context),
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
     builder: (ctx) {
       return Padding(
         padding: EdgeInsets.all(20.w),
@@ -35,16 +32,12 @@ void showChatAttachmentMenuSheet({
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              isArabic
-                  ? 'إرسال وسائط أو مرفقات للمجموعة'
-                  : 'Send Media or Attachment to Group',
-              style: AppTypography.h5.copyWith(
-                color: AppColors.textPrimaryOf(ctx),
-              ),
+              isArabic ? 'إرسال وسائط أو مرفقات للمجموعة' : 'Send Media or Attachment to Group',
+              style: AppTypography.h5.copyWith(color: AppColors.textPrimaryOf(ctx)),
             ),
-            SizedBox(height: 16.h),
+            SizedBox(height: 18.h),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 _AttachmentOptionButton(
                   icon: Icons.image_rounded,
@@ -74,24 +67,6 @@ void showChatAttachmentMenuSheet({
                     );
                   },
                 ),
-                _AttachmentOptionButton(
-                  icon: Icons.emoji_emotions_rounded,
-                  color: const Color(0xFFF59E0B),
-                  label: isArabic ? 'ملصق (Sticker)' : 'Stickers',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    onOpenStickers();
-                  },
-                ),
-                _AttachmentOptionButton(
-                  icon: Icons.mic_rounded,
-                  color: AppColors.error,
-                  label: isArabic ? 'تسجيل صوتي' : 'Voice Note',
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    onStartVoiceRecording();
-                  },
-                ),
               ],
             ),
             SizedBox(height: 12.h),
@@ -111,9 +86,7 @@ void showSendChatImageSheet({
 }) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
   final captionCtrl = TextEditingController(
-    text: isArabic
-        ? 'صورة من بروفة المسرح والتحضيرات 🎭'
-        : 'Stage rehearsal photo 🎭',
+    text: isArabic ? 'صورة من بروفة المسرح والتحضيرات 🎭' : 'Stage rehearsal photo 🎭',
   );
   String selectedAsset = AppAssets.actIcon;
   final images = [
@@ -127,9 +100,7 @@ void showSendChatImageSheet({
     context: context,
     isScrollControlled: true,
     backgroundColor: AppColors.surfaceOf(context),
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
     builder: (ctx) {
       return StatefulBuilder(
         builder: (ctx, setModalState) {
@@ -145,22 +116,16 @@ void showSendChatImageSheet({
               children: [
                 Text(
                   isArabic ? 'إرسال صورة للمجموعة 📷' : 'Send Image 📷',
-                  style: AppTypography.h5.copyWith(
-                    color: AppColors.textPrimaryOf(ctx),
-                  ),
+                  style: AppTypography.h5.copyWith(color: AppColors.textPrimaryOf(ctx)),
                 ),
                 SizedBox(height: 10.h),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
-                      final file = await DeviceFileHelper.pickFileSafely(
-                        ctx,
-                        type: FileType.image,
-                      );
+                      final file = await DeviceFileHelper.pickFileSafely(ctx, type: FileType.image);
                       if (file != null && file.path != null) {
-                        final savedPath =
-                            await DeviceFileHelper.persistPickedFile(
+                        final savedPath = await DeviceFileHelper.persistPickedFile(
                           file.path!,
                           file.name,
                         );
@@ -193,16 +158,11 @@ void showSendChatImageSheet({
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(14.r),
                             border: Border.all(
-                              color: selected
-                                  ? AppColors.primaryOf(ctx)
-                                  : AppColors.borderOf(ctx),
+                              color: selected ? AppColors.primaryOf(ctx) : AppColors.borderOf(ctx),
                               width: selected ? 2.5 : 1,
                             ),
                           ),
-                          child: DeviceFileHelper.buildImage(
-                            img,
-                            fit: BoxFit.contain,
-                          ),
+                          child: DeviceFileHelper.buildImage(img, fit: BoxFit.contain),
                         ),
                       );
                     },
@@ -211,9 +171,7 @@ void showSendChatImageSheet({
                 SizedBox(height: 12.h),
                 TextField(
                   controller: captionCtrl,
-                  decoration: InputDecoration(
-                    labelText: isArabic ? 'وصف الصورة' : 'Image Caption',
-                  ),
+                  decoration: InputDecoration(labelText: isArabic ? 'وصف الصورة' : 'Image Caption'),
                 ),
                 SizedBox(height: 14.h),
                 SizedBox(
@@ -221,12 +179,12 @@ void showSendChatImageSheet({
                   child: ElevatedButton.icon(
                     onPressed: () {
                       context.read<LmtCubit>().sendChatMessage(
-                            groupId: groupId,
-                            type: MessageType.image,
-                            content: captionCtrl.text.trim(),
-                            attachmentPath: selectedAsset,
-                            replyTo: replyTo,
-                          );
+                        groupId: groupId,
+                        type: MessageType.image,
+                        content: captionCtrl.text.trim(),
+                        attachmentPath: selectedAsset,
+                        replyTo: replyTo,
+                      );
                       Navigator.pop(ctx);
                       onSent();
                     },
@@ -251,14 +209,8 @@ void showSendChatFileSheet({
   required VoidCallback onSent,
 }) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-  final fileNameCtrl = TextEditingController(
-    text: 'اسكريبت_المشهد_الجديد_LMT.pdf',
-  );
-  final noteCtrl = TextEditingController(
-    text: isArabic
-        ? 'مرفق ملف الاسكريبت وتوزيع المهام للمراجعة 📄'
-        : 'Attached script & task sheet 📄',
-  );
+  final fileNameCtrl = TextEditingController(text: "");
+  final noteCtrl = TextEditingController(text: "");
 
   String? pickedFilePath;
   String pickedFileSize = '1.8 MB';
@@ -267,9 +219,7 @@ void showSendChatFileSheet({
     context: context,
     isScrollControlled: true,
     backgroundColor: AppColors.surfaceOf(context),
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
     builder: (ctx) {
       return StatefulBuilder(
         builder: (ctx, setModalState) {
@@ -285,9 +235,7 @@ void showSendChatFileSheet({
               children: [
                 Text(
                   isArabic ? 'إرفاق ملف في المحادثة 📎' : 'Attach File 📎',
-                  style: AppTypography.h5.copyWith(
-                    color: AppColors.textPrimaryOf(ctx),
-                  ),
+                  style: AppTypography.h5.copyWith(color: AppColors.textPrimaryOf(ctx)),
                 ),
                 SizedBox(height: 10.h),
                 SizedBox(
@@ -296,11 +244,7 @@ void showSendChatFileSheet({
                     onPressed: () async {
                       final f = await DeviceFileHelper.pickFileSafely(ctx);
                       if (f != null && f.path != null) {
-                        final savedPath =
-                            await DeviceFileHelper.persistPickedFile(
-                          f.path!,
-                          f.name,
-                        );
+                        final savedPath = await DeviceFileHelper.persistPickedFile(f.path!, f.name);
                         setModalState(() {
                           pickedFilePath = savedPath;
                           pickedFileSize = DeviceFileHelper.formatBytes(f.size);
@@ -309,11 +253,7 @@ void showSendChatFileSheet({
                       }
                     },
                     icon: const Icon(Icons.folder_open_rounded),
-                    label: Text(
-                      isArabic
-                          ? 'اختيار ملف من الهاتف 📱'
-                          : 'Choose File from Phone 📱',
-                    ),
+                    label: Text(isArabic ? 'اختيار ملف من الهاتف 📱' : 'Choose File from Phone 📱'),
                   ),
                 ),
                 SizedBox(height: 10.h),
@@ -337,14 +277,13 @@ void showSendChatFileSheet({
                   child: ElevatedButton.icon(
                     onPressed: () {
                       context.read<LmtCubit>().sendChatMessage(
-                            groupId: groupId,
-                            type: MessageType.file,
-                            content: noteCtrl.text.trim(),
-                            attachmentPath:
-                                pickedFilePath ?? fileNameCtrl.text.trim(),
-                            fileSize: pickedFileSize,
-                            replyTo: replyTo,
-                          );
+                        groupId: groupId,
+                        type: MessageType.file,
+                        content: noteCtrl.text.trim(),
+                        attachmentPath: pickedFilePath ?? fileNameCtrl.text.trim(),
+                        fileSize: pickedFileSize,
+                        replyTo: replyTo,
+                      );
                       Navigator.pop(ctx);
                       onSent();
                     },

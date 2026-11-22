@@ -2,16 +2,17 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../cubit/chat_cubit.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
 import '../../../core/widgets/lmt_search_bar.dart';
+import '../cubit/chat_cubit.dart';
 import '../widgets/chat_group_form_sheet.dart';
 import '../widgets/chat_group_tile.dart';
-import '../widgets/group_conversation_room.dart';
+import 'group_conversation_page.dart';
 
-/// Chatting Room View coordinating the Chatting Groups list and the
-/// active [GroupConversationRoom].
+/// Chatting Room View displaying the Chatting Groups list and pushing
+/// [GroupConversationPage] as a dedicated full-screen route when any group is
+/// opened (so popping/backing always returns to the Groups List).
 class ChattingRoom extends StatefulWidget {
   /// Creates a [ChattingRoom].
   const ChattingRoom({super.key});
@@ -23,24 +24,54 @@ class ChattingRoom extends StatefulWidget {
 class _ChattingRoomState extends State<ChattingRoom> {
   String _searchQuery = '';
   bool _showPinnedOnly = false;
+  bool _isPushingGroup = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final initialGroupId = context.read<LmtCubit>().state.selectedChatGroupId;
+      if (initialGroupId != null) {
+        _openGroupScreen(initialGroupId);
+      }
+    });
+  }
+
+  Future<void> _openGroupScreen(String groupId) async {
+    if (_isPushingGroup || !mounted) return;
+    final state = context.read<LmtCubit>().state;
+    final targetGroup =
+        state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    if (targetGroup == null ||
+        !targetGroup.memberIds.contains(state.currentUser.id)) {
+      context.read<LmtCubit>().selectChatGroup(null);
+      return;
+    }
+    _isPushingGroup = true;
+    context.read<LmtCubit>().selectChatGroup(null);
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => GroupConversationPage(groupId: groupId),
+      ),
+    );
+    _isPushingGroup = false;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<LmtCubit, LmtState>(
-      builder: (context, state) {
-        final selectedGroupId = state.selectedChatGroupId;
-        if (selectedGroupId != null) {
-          final group = state.chatGroups
-              .where((g) => g.id == selectedGroupId)
-              .firstOrNull;
-          if (group != null) {
-            return GroupConversationRoom(
-              group: group,
-              onBack: () => context.read<LmtCubit>().selectChatGroup(null),
-            );
-          }
+    return BlocConsumer<LmtCubit, LmtState>(
+      listenWhen: (prev, curr) =>
+          curr.selectedChatGroupId != null &&
+          prev.selectedChatGroupId != curr.selectedChatGroupId,
+      listener: (context, state) {
+        final targetGroupId = state.selectedChatGroupId;
+        if (targetGroupId != null) {
+          _openGroupScreen(targetGroupId);
         }
-
+      },
+      builder: (context, state) {
         return _buildGroupsListView(context, state);
       },
     );
@@ -53,6 +84,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
     final canManageGroups = state.currentUser.role.canManageGroups;
 
     final groups = state.sortedChatGroups.where((g) {
+      if (!g.memberIds.contains(state.currentUser.id)) return false;
       if (_showPinnedOnly && !g.isPinned) return false;
       if (_searchQuery.trim().isEmpty) return true;
       final q = _searchQuery.toLowerCase();
@@ -121,8 +153,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
                       lastMessage: lastMsg,
                       messageCount: msgCount,
                       canManageGroups: canManageGroups,
-                      onTap: () =>
-                          context.read<LmtCubit>().selectChatGroup(group.id),
+                      onTap: () => _openGroupScreen(group.id),
                       onTogglePin: () => context
                           .read<LmtCubit>()
                           .togglePinChatGroup(group.id),

@@ -101,7 +101,7 @@ class LocalNotificationService {
     required String eventId,
     required String title,
     required String description,
-    required String location,
+    String? location,
     required DateTime reminderDateTime,
   }) async {
     try {
@@ -110,7 +110,10 @@ class LocalNotificationService {
       await _plugin.cancel(notifId);
 
       final now = DateTime.now();
-      final bodyText = '$description • المكان: $location';
+      final hasLoc = location != null && location.trim().isNotEmpty;
+      final bodyText = hasLoc
+          ? '$description • المكان: ${location.trim()}'
+          : description;
 
       if (reminderDateTime.isAfter(now)) {
         final scheduledTz = tz.TZDateTime.from(reminderDateTime, tz.local);

@@ -64,17 +64,53 @@ class NativeMediaService {
     } catch (_) {}
   }
 
-  /// Plays a recorded `.m4a` voice note file through the device speaker.
-  static Future<bool> playVoiceNote(String filePath) async {
+  /// Plays or resumes a recorded `.m4a` voice note file through the device speaker
+  /// with optional playback [speed] (`1.0`, `1.5`, `2.0`) and seek [positionMs].
+  static Future<bool> playVoiceNote(
+    String filePath, {
+    double speed = 1.0,
+    int? positionMs,
+  }) async {
     try {
       final ok = await _channel.invokeMethod<bool>(
         'playVoiceNote',
-        {'path': filePath},
+        {
+          'path': filePath,
+          'speed': speed,
+          'positionMs': positionMs,
+        },
       );
       return ok ?? false;
     } catch (_) {
       return false;
     }
+  }
+
+  /// Pauses the currently playing voice note without losing its seek position.
+  static Future<void> pauseVoiceNote() async {
+    try {
+      await _channel.invokeMethod<void>('pauseVoiceNote');
+    } catch (_) {}
+  }
+
+  /// Seeks the active voice note to [positionMs] milliseconds.
+  static Future<void> seekVoiceNote(int positionMs) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'seekVoiceNote',
+        {'positionMs': positionMs},
+      );
+    } catch (_) {}
+  }
+
+  /// Updates the active voice note playback speed (`1.0`, `1.5`, or `2.0`).
+  static Future<void> setVoicePlaybackSpeed(double speed) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'setVoicePlaybackSpeed',
+        {'speed': speed},
+      );
+    } catch (_) {}
   }
 
   /// Stops any currently playing voice note.

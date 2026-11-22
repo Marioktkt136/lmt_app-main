@@ -14,14 +14,14 @@ import '../sheets/chat_attachment_menu_sheet.dart';
 import '../sheets/chat_message_actions_sheet.dart';
 import '../sheets/chat_sticker_picker_sheet.dart';
 import 'chat_message_bubble.dart';
+import 'chat_typing_indicator.dart';
 import 'conversation_composer_bar.dart';
 import 'conversation_header_bar.dart';
 
 /// Displays the active conversation room for a selected [ChatGroupModel].
 ///
 /// - Always opens anchored at the latest message at the bottom (`reverse: true`).
-/// - Delegates header, message bubbles, composer bar, and bottom sheets to
-///   dedicated single-responsibility widgets.
+/// - Displays an animated [ChatTypingIndicator] when typing is active.
 class GroupConversationRoom extends StatefulWidget {
   /// The active chat group being viewed.
   final ChatGroupModel group;
@@ -29,11 +29,16 @@ class GroupConversationRoom extends StatefulWidget {
   /// Callback invoked to return to the chat groups list.
   final VoidCallback onBack;
 
+  /// Whether to render [ConversationHeaderBar] inline (false when hosted by
+  /// [GroupConversationPage] which places it in `Scaffold.appBar`).
+  final bool showInlineHeader;
+
   /// Creates a [GroupConversationRoom].
   const GroupConversationRoom({
     super.key,
     required this.group,
     required this.onBack,
+    this.showInlineHeader = false,
   });
 
   @override
@@ -49,7 +54,8 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   bool _isRecordingVoice = false;
   int _recordingSeconds = 0;
   Timer? _recordingTimer;
-  Timer? _playbackTimer;
+  Timer? _typingHideTimer;
+  bool _isTyping = false;
   String? _playingVoiceMessageId;
   List<String> _savedStickers = const [];
 
@@ -68,11 +74,30 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   @override
   void dispose() {
     _recordingTimer?.cancel();
-    _playbackTimer?.cancel();
+    _typingHideTimer?.cancel();
     NativeMediaService.stopVoiceNote();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _handleTextChanged(String value) {
+    _typingHideTimer?.cancel();
+    final hasText = value.trim().isNotEmpty;
+    if (!hasText) {
+      if (_isTyping) {
+        setState(() => _isTyping = false);
+      }
+      return;
+    }
+    if (!_isTyping) {
+      setState(() => _isTyping = true);
+    }
+    _typingHideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _isTyping) {
+        setState(() => _isTyping = false);
+      }
+    });
   }
 
   void _scrollToLatest() {
@@ -91,6 +116,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
+    _typingHideTimer?.cancel();
     final cubit = context.read<LmtCubit>();
 
     if (_editingMessage != null) {
@@ -99,6 +125,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
         newContent: text,
       );
       setState(() {
+        _isTyping = false;
         _editingMessage = null;
         _messageController.clear();
       });
@@ -113,6 +140,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     );
 
     setState(() {
+      _isTyping = false;
       _replyingTo = null;
       _messageController.clear();
     });
@@ -187,27 +215,12 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     _scrollToLatest();
   }
 
-  Future<void> _togglePlayVoiceNote(ChatMessageModel msg) async {
-    _playbackTimer?.cancel();
-    if (_playingVoiceMessageId == msg.id) {
-      await NativeMediaService.stopVoiceNote();
-      if (!mounted) return;
-      setState(() => _playingVoiceMessageId = null);
-      return;
-    }
-
-    await NativeMediaService.stopVoiceNote();
-    if (msg.attachmentPath != null && msg.attachmentPath!.isNotEmpty) {
-      await NativeMediaService.playVoiceNote(msg.attachmentPath!);
-    }
-
-    if (!mounted) return;
-    setState(() => _playingVoiceMessageId = msg.id);
-
-    final durationSec = msg.voiceDurationSeconds ?? 15;
-    _playbackTimer = Timer(Duration(seconds: durationSec), () {
-      if (mounted && _playingVoiceMessageId == msg.id) {
-        setState(() => _playingVoiceMessageId = null);
+  void _togglePlayVoiceNote(ChatMessageModel msg) {
+    setState(() {
+      if (_playingVoiceMessageId == msg.id) {
+        _playingVoiceMessageId = null;
+      } else {
+        _playingVoiceMessageId = msg.id;
       }
     });
   }
@@ -237,11 +250,14 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
 
         return Column(
           children: [
-            ConversationHeaderBar(
-              group: widget.group,
-              onBack: widget.onBack,
-            ),
-            SizedBox(height: 8.h),
+            if (widget.showInlineHeader) ...[
+              ConversationHeaderBar(
+                group: widget.group,
+                state: state,
+                onBack: widget.onBack,
+              ),
+              SizedBox(height: 8.h),
+            ],
             Expanded(
               child: messages.isEmpty
                   ? LmtEmptyState(
@@ -290,12 +306,18 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                       },
                     ),
             ),
+            if (_isTyping)
+              ChatTypingIndicator(
+                typingUserName: state.currentUser.name,
+                avatarPath: state.currentUser.avatarPath,
+              ),
             ReplyEditBanner(
               replyingTo: _replyingTo,
               editingMessage: _editingMessage,
               onCancel: () => setState(() {
                 _replyingTo = null;
                 _editingMessage = null;
+                _isTyping = false;
                 _messageController.clear();
               }),
             ),
@@ -308,12 +330,11 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
             else
               ConversationComposerBar(
                 messageController: _messageController,
+                onChanged: _handleTextChanged,
                 onOpenAttachments: () => showChatAttachmentMenuSheet(
                   context: context,
                   groupId: widget.group.id,
                   replyTo: _replyingTo,
-                  onOpenStickers: _openStickersSheet,
-                  onStartVoiceRecording: _startVoiceNoteRecording,
                   onMessageSent: () {
                     if (mounted) setState(() => _replyingTo = null);
                     _scrollToLatest();

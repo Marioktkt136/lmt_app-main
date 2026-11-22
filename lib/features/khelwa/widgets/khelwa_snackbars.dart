@@ -29,7 +29,7 @@ class KhelwaSnackbars {
                 SizedBox(width: 10.w),
                 Expanded(
                   child: Text(
-                    'تم تسجيل الخلوة وإضافة اسمك لقائمة اليوم في جروب الخلوة 🙏',
+                    'تم تسجيل خلوتك في قائمة اليوم! سيتم إرسال القائمة تلقائياً الساعة 12:00 منتصف الليل 🙏',
                     textAlign: TextAlign.right,
                     style: TextStyle(
                       fontSize: 13.sp,

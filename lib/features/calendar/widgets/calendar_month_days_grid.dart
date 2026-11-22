@@ -99,14 +99,8 @@ class CalendarMonthDaysGrid extends StatelessWidget {
                   selectedDate!.year == dayDate.year &&
                   selectedDate!.month == dayDate.month &&
                   selectedDate!.day == dayDate.day;
-              final dayEvents = calendarEvents
-                  .where(
-                    (e) =>
-                        e.eventDateTime.year == dayDate.year &&
-                        e.eventDateTime.month == dayDate.month &&
-                        e.eventDateTime.day == dayDate.day,
-                  )
-                  .toList();
+              final dayEvents =
+                  calendarEvents.where((e) => e.occursOnDay(dayDate)).toList();
               final hasEvents = dayEvents.isNotEmpty;
 
               return InkWell(

@@ -304,7 +304,9 @@ void showChatForwardDialog(
               ),
             ),
             SizedBox(height: 12.h),
-            ...state.chatGroups.map(
+            ...state.chatGroups
+                .where((grp) => grp.memberIds.contains(state.currentUser.id))
+                .map(
               (grp) => ListTile(
                 leading: CircleAvatar(
                   backgroundImage:

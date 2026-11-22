@@ -65,13 +65,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
         final filteredEvents = state.calendarEvents.where((evt) {
           if (_selectedDateFilter != null) {
-            return evt.eventDateTime.year == _selectedDateFilter!.year &&
-                evt.eventDateTime.month == _selectedDateFilter!.month &&
-                evt.eventDateTime.day == _selectedDateFilter!.day;
+            return evt.occursOnDay(_selectedDateFilter!);
           }
           if (_selectedMonthFilter != null) {
-            return evt.eventDateTime.year == _selectedMonthFilter!.year &&
-                evt.eventDateTime.month == _selectedMonthFilter!.month;
+            return evt.occursInMonth(
+              _selectedMonthFilter!.year,
+              _selectedMonthFilter!.month,
+            );
           }
           return true;
         }).toList();

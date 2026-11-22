@@ -13,6 +13,7 @@ class RealFilesProvisioner {
   RealFilesProvisioner._();
 
   static const _imageExts = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+  static const _videoExts = ['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp'];
 
   /// Provisions sample files, then lists files from known storage folders,
   /// filtered by [type] and [allowedExtensions].
@@ -34,6 +35,7 @@ class RealFilesProvisioner {
       Directory('/storage/emulated/0/Download'),
       Directory('/storage/emulated/0/Documents'),
       Directory('/storage/emulated/0/Pictures'),
+      Directory('/storage/emulated/0/Movies'),
       Directory('/storage/emulated/0/DCIM/Camera'),
     ];
 
@@ -52,6 +54,12 @@ class RealFilesProvisioner {
               dotIdx != -1 ? name.substring(dotIdx + 1).toLowerCase() : '';
           if (type == FileType.image) {
             if (!_imageExts.contains(ext)) continue;
+          } else if (type == FileType.video) {
+            if (!_videoExts.contains(ext)) continue;
+          } else if (type == FileType.media) {
+            if (!_imageExts.contains(ext) && !_videoExts.contains(ext)) {
+              continue;
+            }
           } else if (allowed != null && allowed.isNotEmpty) {
             if (!allowed.contains(ext)) continue;
           }
@@ -137,5 +145,6 @@ class RealFilesProvisioner {
 - التأكد من جاهزية المايكات قبل البروفة بـ 30 دقيقة.
 - مراجعة توقيتات دخول التراكات الصوتية مع حركة الممثلين.
 ''',
+    'فيديو_بروفة_مسرحية_تغيروا_2026.mp4': 'LMT_THEATER_REHEARSAL_VIDEO_2026',
   };
 }

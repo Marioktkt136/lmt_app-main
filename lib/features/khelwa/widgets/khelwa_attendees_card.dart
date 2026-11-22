@@ -5,19 +5,18 @@ import '../../../core/theme/colors.dart';
 import '../data/khelwa_repository.dart';
 import 'khelwa_attendee_chip.dart';
 
-/// Card listing today's Khelwa attendees with a button that opens the group.
+/// Card listing today's Khelwa attendees only.
+///
+/// The daily summary message is sent automatically at 12:00 AM midnight to the
+/// Khelwa group without any manual user trigger.
 class KhelwaAttendeesCard extends StatelessWidget {
-  /// Names of attendees today.
+  /// Names of attendees who took Khelwa today.
   final List<String> attendees;
-
-  /// Called when the user taps "open group". Should publish then navigate.
-  final VoidCallback onOpenGroup;
 
   /// Creates a [KhelwaAttendeesCard].
   const KhelwaAttendeesCard({
     super.key,
     required this.attendees,
-    required this.onOpenGroup,
   });
 
   @override
@@ -75,7 +74,7 @@ class KhelwaAttendeesCard extends StatelessWidget {
             ),
             SizedBox(height: 6.h),
             Text(
-              'يتم إرسال وتحديث هذه القائمة تلقائياً في نهاية كل يوم داخل (جروب الخلوة اليومية 🙏)',
+              'يتم إرسال قائمة من أخذوا الخلوة تلقائياً الساعة 12:00 منتصف الليل (12:00 AM) في نهاية كل يوم إلى (جروب الخلوة اليومية 🙏)',
               style: TextStyle(
                 fontSize: 11.sp,
                 fontFamily: 'Cairo',
@@ -104,30 +103,6 @@ class KhelwaAttendeesCard extends StatelessWidget {
                     KhelwaAttendeeChip(index: i + 1, name: attendees[i]),
                 ],
               ),
-            SizedBox(height: 14.h),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: primary,
-                  side: BorderSide(color: primary, width: 1.4),
-                  minimumSize: Size.fromHeight(48.h),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14.r),
-                  ),
-                ),
-                onPressed: onOpenGroup,
-                icon: const Icon(Icons.forum_rounded),
-                label: Text(
-                  'فتح جروب الخلوة اليومية وعرض قائمة اليوم 💬',
-                  style: TextStyle(
-                    fontSize: 12.5.sp,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Cairo',
-                  ),
-                ),
-              ),
-            ),
           ],
         ),
       ),

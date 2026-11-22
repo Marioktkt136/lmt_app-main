@@ -7,12 +7,15 @@ import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
 
-/// Displays a modal bottom sheet for editing the current user's profile information.
+/// Displays a modal bottom sheet for editing the current user's profile
+/// information, supporting multi-selection for departments (`القسم`) and
+/// committees (`اللجنة`).
 void showEditProfileSheet(BuildContext context, MemberModel user) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
   final nameCtrl = TextEditingController(text: user.name);
-  final specCtrl = TextEditingController(text: user.specialistAt);
-  final commCtrl = TextEditingController(text: user.committee);
+  final selectedDepartments = Set<String>.from(user.departments);
+  final selectedCommittees = Set<String>.from(user.committees);
+  final canEditDeptsAndComms = user.role.canEditDepartmentsAndCommittees;
 
   showModalBottomSheet<void>(
     context: context,
@@ -22,61 +25,167 @@ void showEditProfileSheet(BuildContext context, MemberModel user) {
       borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
     ),
     builder: (ctx) {
-      return Padding(
-        padding: EdgeInsets.only(
-          left: 20.w,
-          right: 20.w,
-          top: 18.h,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20.h,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              isArabic ? 'تعديل الملف الشخصي' : 'Edit Profile Information',
-              style: AppTypography.h5.copyWith(
-                color: AppColors.textPrimaryOf(ctx),
-              ),
+      return StatefulBuilder(
+        builder: (ctx, setModalState) {
+          final textPrimary = AppColors.textPrimaryOf(ctx);
+          final textSecondary = AppColors.textSecondaryOf(ctx);
+
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20.w,
+              right: 20.w,
+              top: 18.h,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 20.h,
             ),
-            SizedBox(height: 12.h),
-            TextField(
-              controller: nameCtrl,
-              decoration: InputDecoration(
-                labelText: isArabic ? 'الاسم بالكامل' : 'Full Name',
-              ),
-            ),
-            SizedBox(height: 10.h),
-            TextField(
-              controller: specCtrl,
-              decoration: InputDecoration(
-                labelText:
-                    isArabic ? 'التخصص (Specialist at)' : 'Specialist at',
-              ),
-            ),
-            SizedBox(height: 10.h),
-            TextField(
-              controller: commCtrl,
-              decoration: InputDecoration(
-                labelText: isArabic ? 'اللجنة (Committee)' : 'Committee',
-              ),
-            ),
-            SizedBox(height: 14.h),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  context.read<LmtCubit>().updateProfileInfo(
-                        name: nameCtrl.text,
-                        specialistAt: specCtrl.text,
-                        committee: commCtrl.text,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Text(
+                      isArabic
+                          ? 'تعديل الملف الشخصي'
+                          : 'Edit Profile Information',
+                      style: AppTypography.h5.copyWith(color: textPrimary),
+                    ),
+                  ),
+                  SizedBox(height: 12.h),
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: InputDecoration(
+                      labelText: isArabic ? 'الاسم بالكامل' : 'Full Name',
+                      prefixIcon: const Icon(Icons.person_outline_rounded),
+                    ),
+                  ),
+                  SizedBox(height: 14.h),
+                  if (!canEditDeptsAndComms) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(12.w),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryOf(ctx).withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12.r),
+                        border: Border.all(
+                          color:
+                              AppColors.primaryOf(ctx).withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_outline_rounded,
+                            size: 18.sp,
+                            color: AppColors.primaryOf(ctx),
+                          ),
+                          SizedBox(width: 8.w),
+                          Expanded(
+                            child: Text(
+                              isArabic
+                                  ? 'تعديل القسم واللجنة متاح للمسؤول (Administrator) فقط 🔒'
+                                  : 'Editing Department & Committee is restricted to Administrator only 🔒',
+                              style: TextStyle(
+                                fontSize: 11.5.sp,
+                                color: textSecondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: 10.h),
+                  ],
+                  Text(
+                    isArabic
+                        ? (canEditDeptsAndComms
+                            ? 'القسم (يمكن اختيار قسم أو أكثر):'
+                            : 'القسم الحالي (للعرض فقط):')
+                        : 'القسم (Department):',
+                    style: AppTypography.labelLarge.copyWith(
+                      color: textPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 6.h),
+                  Wrap(
+                    spacing: 8.w,
+                    runSpacing: 6.h,
+                    children: MemberModel.availableDepartments.map((dept) {
+                      final isSelected = selectedDepartments.contains(dept);
+                      return FilterChip(
+                        selected: isSelected,
+                        onSelected: canEditDeptsAndComms
+                            ? (val) {
+                                setModalState(() {
+                                  if (val) {
+                                    selectedDepartments.add(dept);
+                                  } else if (selectedDepartments.length > 1) {
+                                    selectedDepartments.remove(dept);
+                                  }
+                                });
+                              }
+                            : null,
+                        label: Text(dept),
                       );
-                  Navigator.pop(ctx);
-                },
-                child: Text(isArabic ? 'حفظ التغييرات' : 'Save Changes'),
+                    }).toList(),
+                  ),
+                  SizedBox(height: 14.h),
+                  Text(
+                    isArabic
+                        ? (canEditDeptsAndComms
+                            ? 'اللجنة (يمكن اختيار لجنة أو أكثر):'
+                            : 'اللجنة الحالية (للعرض فقط):')
+                        : 'اللجنة (Committee):',
+                    style: AppTypography.labelLarge.copyWith(
+                      color: textPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 6.h),
+                  Wrap(
+                    spacing: 8.w,
+                    runSpacing: 6.h,
+                    children: MemberModel.availableCommittees.map((comm) {
+                      final isSelected = selectedCommittees.contains(comm);
+                      return FilterChip(
+                        selected: isSelected,
+                        onSelected: canEditDeptsAndComms
+                            ? (val) {
+                                setModalState(() {
+                                  if (val) {
+                                    selectedCommittees.add(comm);
+                                  } else if (selectedCommittees.length > 1) {
+                                    selectedCommittees.remove(comm);
+                                  }
+                                });
+                              }
+                            : null,
+                        label: Text(comm),
+                      );
+                    }).toList(),
+                  ),
+                  SizedBox(height: 18.h),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        context.read<LmtCubit>().updateProfileInfo(
+                              name: nameCtrl.text,
+                              departments: selectedDepartments.toList(),
+                              committees: selectedCommittees.toList(),
+                            );
+                        Navigator.pop(ctx);
+                      },
+                      icon: const Icon(Icons.check_circle_outline_rounded),
+                      label: Text(isArabic ? 'حفظ التغييرات' : 'Save Changes'),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          );
+        },
       );
     },
   );

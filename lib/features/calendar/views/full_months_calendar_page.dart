@@ -75,12 +75,9 @@ class _FullMonthsCalendarPageState extends State<FullMonthsCalendarPage> {
 
         final monthEvents = state.calendarEvents.where((e) {
           if (_selectedDate != null) {
-            return e.eventDateTime.year == _selectedDate!.year &&
-                e.eventDateTime.month == _selectedDate!.month &&
-                e.eventDateTime.day == _selectedDate!.day;
+            return e.occursOnDay(_selectedDate!);
           }
-          return e.eventDateTime.year == _focusedMonth.year &&
-              e.eventDateTime.month == _focusedMonth.month;
+          return e.occursInMonth(_focusedMonth.year, _focusedMonth.month);
         }).toList();
 
         return Scaffold(

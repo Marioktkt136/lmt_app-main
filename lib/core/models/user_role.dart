@@ -57,6 +57,10 @@ enum UserRole {
   /// Whether this role can permanently delete member accounts.
   bool get canDeleteMembers => this == UserRole.admin;
 
+  /// Whether this role can assign or edit any member's departments (`القسم`)
+  /// and committees (`اللجنة`). Restricted strictly to [UserRole.admin].
+  bool get canEditDepartmentsAndCommittees => this == UserRole.admin;
+
   /// Whether this role can create, update, or delete chatting groups.
   bool get canManageGroups =>
       this == UserRole.admin || this == UserRole.editor;

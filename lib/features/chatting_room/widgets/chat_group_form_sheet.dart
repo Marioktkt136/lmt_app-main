@@ -25,15 +25,6 @@ void showChatGroupFormSheet(
     existingGroup?.memberIds ?? state.members.map((m) => m.id),
   );
 
-  final availableIcons = [
-    AppAssets.appLogo,
-    AppAssets.actIcon,
-    AppAssets.postIcon,
-    AppAssets.videoIcon,
-    AppAssets.calendarIcon,
-    AppAssets.prayIcon,
-  ];
-
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -103,8 +94,8 @@ void showChatGroupFormSheet(
                   SizedBox(height: 12.h),
                   Text(
                     isArabic
-                        ? 'صورة المجموعة (من هاتفك أو الأيقونات):'
-                        : 'Group Image (From Phone or Presets):',
+                        ? 'صورة المجموعة (من هاتفك):'
+                        : 'Group Image (From Your Phone):',
                     style: AppTypography.labelLarge.copyWith(
                       color: textPrimary,
                     ),
@@ -157,38 +148,6 @@ void showChatGroupFormSheet(
                         ),
                       ),
                     ],
-                  ),
-                  SizedBox(height: 8.h),
-                  SizedBox(
-                    height: 48.h,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: availableIcons.length,
-                      separatorBuilder: (_, _) => SizedBox(width: 10.w),
-                      itemBuilder: (_, idx) {
-                        final img = availableIcons[idx];
-                        final isSelected = selectedImage == img;
-                        return GestureDetector(
-                          onTap: () =>
-                              setModalState(() => selectedImage = img),
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color:
-                                    isSelected ? primary : Colors.transparent,
-                                width: 2.2,
-                              ),
-                            ),
-                            child: CircleAvatar(
-                              radius: 19.r,
-                              backgroundImage: AssetImage(img),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
                   ),
                   SizedBox(height: 12.h),
                   Text(

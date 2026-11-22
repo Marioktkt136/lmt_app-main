@@ -154,6 +154,9 @@ class ConversationComposerBar extends StatelessWidget {
   /// Sends the typed text message.
   final VoidCallback onSendText;
 
+  /// Optional callback invoked whenever the text input changes (used for typing animation).
+  final ValueChanged<String>? onChanged;
+
   /// Creates a [ConversationComposerBar].
   const ConversationComposerBar({
     super.key,
@@ -162,6 +165,7 @@ class ConversationComposerBar extends StatelessWidget {
     required this.onOpenStickers,
     required this.onStartVoiceRecording,
     required this.onSendText,
+    this.onChanged,
   });
 
   @override
@@ -170,66 +174,79 @@ class ConversationComposerBar extends StatelessWidget {
     final primary = AppColors.primaryOf(context);
     final textPrimary = AppColors.textPrimaryOf(context);
 
-    return Directionality(
-      textDirection: TextDirection.ltr,
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: isArabic ? 'مرفقات وملصقات' : 'Attachments',
-            onPressed: onOpenAttachments,
-            icon: Icon(
-              Icons.add_circle_outline_rounded,
-              color: primary,
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 4.h),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceOf(context),
+        borderRadius: BorderRadius.circular(28.r),
+        boxShadow: AppColors.cardShadows(
+          context,
+          accent: primary,
+          intensity: 0.65,
+        ),
+      ),
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: isArabic ? 'مرفقات وملصقات' : 'Attachments',
+              onPressed: onOpenAttachments,
+              icon: Icon(
+                Icons.add_circle_outline_rounded,
+                color: primary,
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: isArabic ? 'ملصقات' : 'Stickers',
-            onPressed: onOpenStickers,
-            icon: Icon(
-              Icons.emoji_emotions_outlined,
-              color: primary,
+            IconButton(
+              tooltip: isArabic ? 'ملصقات' : 'Stickers',
+              onPressed: onOpenStickers,
+              icon: Icon(
+                Icons.emoji_emotions_outlined,
+                color: primary,
+              ),
             ),
-          ),
-          Expanded(
-            child: Directionality(
-              textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
-              child: TextField(
-                controller: messageController,
-                style: TextStyle(color: textPrimary, fontSize: 13.sp),
-                onSubmitted: (_) => onSendText(),
-                decoration: InputDecoration(
-                  hintText: isArabic
-                      ? 'اكتب رسالة للفريق...'
-                      : 'Type a message...',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 14.w,
-                    vertical: 10.h,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24.r),
+            Expanded(
+              child: Directionality(
+                textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
+                child: TextField(
+                  controller: messageController,
+                  onChanged: onChanged,
+                  style: TextStyle(color: textPrimary, fontSize: 13.sp),
+                  onSubmitted: (_) => onSendText(),
+                  decoration: InputDecoration(
+                    hintText: isArabic
+                        ? 'اكتب رسالة للفريق...'
+                        : 'Type a message...',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 14.w,
+                      vertical: 10.h,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24.r),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          SizedBox(width: 4.w),
-          IconButton(
-            tooltip: isArabic ? 'تسجيل صوتي' : 'Voice Note',
-            onPressed: onStartVoiceRecording,
-            icon: Icon(Icons.mic_none_rounded, color: primary),
-          ),
-          IconButton.filled(
-            style: IconButton.styleFrom(backgroundColor: primary),
-            tooltip: isArabic ? 'إرسال' : 'Send',
-            onPressed: onSendText,
-            icon: const Icon(
-              Icons.send_rounded,
-              color: Colors.white,
-              size: 18,
+            SizedBox(width: 4.w),
+            IconButton(
+              tooltip: isArabic ? 'تسجيل صوتي' : 'Voice Note',
+              onPressed: onStartVoiceRecording,
+              icon: Icon(Icons.mic_none_rounded, color: primary),
             ),
-          ),
-        ],
+            IconButton.filled(
+              style: IconButton.styleFrom(backgroundColor: primary),
+              tooltip: isArabic ? 'إرسال' : 'Send',
+              onPressed: onSendText,
+              icon: const Icon(
+                Icons.send_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

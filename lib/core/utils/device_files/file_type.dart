@@ -9,6 +9,12 @@ enum FileType {
   /// Images only (png, jpg, jpeg, webp, gif).
   image,
 
+  /// Videos only (mp4, mov, mkv, webm, avi).
+  video,
+
+  /// Images or videos from the device gallery.
+  media,
+
   /// Restrict to the `allowedExtensions` supplied by the caller.
   custom,
 }

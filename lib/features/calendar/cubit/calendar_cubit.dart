@@ -7,28 +7,34 @@ export '../../../core/cubit/lmt_cubit.dart';
 /// Feature Cubit alias for the Calendar & Events feature module.
 typedef CalendarCubit = LmtCubit;
 
-/// Encapsulates Calendar Events CRUD and Exact Lock-Screen Reminder scheduling.
+/// Encapsulates Calendar Events CRUD (including multi-day events and nullable
+/// Google Maps locations) and Exact Lock-Screen Reminder scheduling.
 mixin CalendarCubitMixin on LmtBaseCubit {
   /// Adds a new calendar event and schedules its OS reminder notification.
   Future<void> addCalendarEvent({
     required String title,
     required String description,
     required DateTime eventDateTime,
+    DateTime? endDateTime,
     DateTime? reminderDateTime,
-    required String location,
+    String? location,
     String category = 'Rehearsal / بروفة مسرح',
   }) async {
     if (!state.currentUser.role.canManageCalendar) return;
+
+    final cleanedLocation =
+        (location == null || location.trim().isEmpty) ? null : location.trim();
 
     final newEvent = CalendarEventModel(
       id: 'evt_${DateTime.now().millisecondsSinceEpoch}',
       title: title.trim(),
       description: description.trim(),
       eventDateTime: eventDateTime,
+      endDateTime: endDateTime,
       reminderDateTime:
           reminderDateTime ?? eventDateTime.subtract(const Duration(hours: 2)),
       isReminderActive: true,
-      location: location.trim(),
+      location: cleanedLocation,
       createdBy: state.currentUser.name,
       category: category,
     );
@@ -38,7 +44,9 @@ mixin CalendarCubitMixin on LmtBaseCubit {
 
     pushNotification(
       title: 'فعالية جديدة في التقويم 🗓️',
-      description: '${newEvent.title} - المكان: ${newEvent.location}',
+      description: cleanedLocation != null
+          ? '${newEvent.title} - المكان: $cleanedLocation'
+          : newEvent.title,
       category: NotificationCategory.calendar,
       targetTabIndex: 3,
     );

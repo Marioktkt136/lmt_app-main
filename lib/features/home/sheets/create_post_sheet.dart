@@ -5,7 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
-import '../../../core/utils/app_assets.dart';
+import '../../../core/utils/device_file_helper.dart';
 import '../cubit/posts_cubit.dart';
 import '../widgets/media_picker_strip.dart';
 import '../widgets/poll_options_editor.dart';
@@ -31,7 +31,7 @@ void showCreatePostModal(
 }
 
 /// Body of the create-post bottom sheet. Owns and disposes its text
-/// controllers; empty content is rejected with a snackbar.
+/// controllers; supports picking real images or videos from the device gallery.
 class CreatePostSheet extends StatefulWidget {
   /// Cubit used to publish the post.
   final LmtCubit cubit;
@@ -51,17 +51,11 @@ class CreatePostSheet extends StatefulWidget {
 }
 
 class _CreatePostSheetState extends State<CreatePostSheet> {
-  static const _availableMedia = [
-    AppAssets.actIcon,
-    AppAssets.appLogo,
-    AppAssets.picturesIcon,
-    AppAssets.youtubeIcon,
-  ];
-
   late PostCategoryType _type = widget.initialType;
   final _contentCtrl = TextEditingController();
   late final List<TextEditingController> _optionCtrls;
-  String _mediaAsset = AppAssets.actIcon;
+  String? _pickedMediaPath;
+  String? _pickedFileName;
   bool _isVideo = false;
 
   @override
@@ -85,23 +79,66 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
     super.dispose();
   }
 
+  Future<void> _pickMediaFromGallery({required bool pickVideo}) async {
+    final file = await DeviceFileHelper.pickFileSafely(
+      context,
+      type: pickVideo ? FileType.video : FileType.image,
+    );
+    if (file != null && file.path != null) {
+      final savedPath = await DeviceFileHelper.persistPickedFile(
+        file.path!,
+        file.name,
+      );
+      if (!mounted) return;
+      final ext = (file.extension ?? '').toLowerCase();
+      final isVidFile = pickVideo ||
+          ['mp4', 'mov', 'mkv', 'webm', 'avi', '3gp'].contains(ext);
+      setState(() {
+        _pickedMediaPath = savedPath;
+        _pickedFileName = file.name;
+        _isVideo = isVidFile;
+      });
+    }
+  }
+
   void _publish(bool isArabic) {
     if (_contentCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            isArabic ? 'اكتب محتوى المنشور أولاً' : 'Please write some content first',
+            isArabic
+                ? 'اكتب محتوى المنشور أولاً'
+                : 'Please write some content first',
           ),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
         ),
       );
       return;
     }
+
+    if (_type == PostCategoryType.media &&
+        (_pickedMediaPath == null || _pickedMediaPath!.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isArabic
+                ? 'يرجى اختيار صورة أو فيديو من المعرض أولاً 📱'
+                : 'Please pick an image or video from your gallery first 📱',
+          ),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     widget.cubit.createPost(
       type: _type,
       content: _contentCtrl.text,
-      mediaPath: _type == PostCategoryType.media ? _mediaAsset : null,
-      isVideo: _isVideo,
-      videoUrl: _isVideo ? 'https://www.youtube.com' : null,
+      mediaPath: _type == PostCategoryType.media ? _pickedMediaPath : null,
+      isVideo: _type == PostCategoryType.media && _isVideo,
+      videoUrl: null,
       pollOptionsText: _type == PostCategoryType.poll
           ? _optionCtrls.map((c) => c.text).toList()
           : const [],
@@ -145,7 +182,7 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 decoration: InputDecoration(
                   labelText: isArabic ? 'محتوى المنشور' : 'Post Content',
                   hintText: isArabic
-                      ? 'اكتب تفاصيل الإعلاان أو موعد البروفة...'
+                      ? 'اكتب تفاصيل الإعلان أو موعد البروفة...'
                       : 'Write your announcement or post details...',
                 ),
               ),
@@ -154,11 +191,18 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 PollOptionsEditor(controllers: _optionCtrls),
               if (_type == PostCategoryType.media)
                 MediaPickerStrip(
-                  assets: _availableMedia,
-                  selectedAsset: _mediaAsset,
+                  pickedMediaPath: _pickedMediaPath,
+                  pickedFileName: _pickedFileName,
                   isVideo: _isVideo,
-                  onAssetSelected: (a) => setState(() => _mediaAsset = a),
-                  onVideoChanged: (v) => setState(() => _isVideo = v),
+                  onPickImageFromGallery: () =>
+                      _pickMediaFromGallery(pickVideo: false),
+                  onPickVideoFromGallery: () =>
+                      _pickMediaFromGallery(pickVideo: true),
+                  onClearMedia: () => setState(() {
+                    _pickedMediaPath = null;
+                    _pickedFileName = null;
+                    _isVideo = false;
+                  }),
                 ),
               SizedBox(height: 16.h),
               SizedBox(
@@ -167,7 +211,8 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 child: ElevatedButton.icon(
                   onPressed: () => _publish(isArabic),
                   icon: const Icon(Icons.publish_rounded),
-                  label: Text(isArabic ? 'نشر في التايم لاين' : 'Publish Post'),
+                  label:
+                      Text(isArabic ? 'نشر في التايم لاين' : 'Publish Post'),
                 ),
               ),
             ],

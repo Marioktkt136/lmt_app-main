@@ -2,22 +2,59 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../cubit/profile_cubit.dart';
+import '../../../core/routes/app_router.dart';
+import '../../../core/routes/routes.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
+import '../../../core/utils/app_preferences.dart';
 import '../../../core/widgets/lmt_avatar.dart';
 import '../../../core/widgets/lmt_card.dart';
+import '../cubit/profile_cubit.dart';
 import '../widgets/profile_info_row.dart';
 import '../widgets/profile_sheets.dart';
 
 /// Profile View displaying user information (ID, Name, Role, Joined Groups,
-/// Specialist at, Committee) and password update controls.
+/// Specialist at, Committee), password update controls, and a Log-out button.
 class ProfileScreen extends StatelessWidget {
   /// Whether this screen is pushed as a standalone page with an [AppBar].
   final bool isStandalonePage;
 
   /// Creates a [ProfileScreen].
   const ProfileScreen({super.key, this.isStandalonePage = true});
+
+  Future<void> _confirmAndLogout(BuildContext context, bool isArabic) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isArabic ? 'تسجيل الخروج' : 'Log-out'),
+        content: Text(
+          isArabic
+              ? 'هل أنت متأكد من رغبتك في تسجيل الخروج من حساب L.M.T؟'
+              : 'Are you sure you want to log out of your L.M.T account?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(isArabic ? 'تسجيل الخروج' : 'Log-out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      await AppPreferences.clearLogin();
+      if (!context.mounted) return;
+      AppRouter.navigateAndRemoveUntil(context, Routes.login);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -145,14 +182,12 @@ class ProfileScreen extends StatelessWidget {
                     ),
                     ProfileInfoRow(
                       icon: Icons.theater_comedy_outlined,
-                      label: isArabic
-                          ? 'التخصص (Specialist at)'
-                          : 'Specialist at',
+                      label: isArabic ? 'القسم' : 'Department (القسم)',
                       value: user.specialistAt,
                     ),
                     ProfileInfoRow(
                       icon: Icons.category_outlined,
-                      label: isArabic ? 'اللجنة (Committee)' : 'Committee',
+                      label: isArabic ? 'اللجنة' : 'Committee (اللجنة)',
                       value: user.committee,
                     ),
                     SizedBox(height: 10.h),
@@ -250,6 +285,42 @@ class ProfileScreen extends StatelessWidget {
                   ),
                 ),
               ),
+              SizedBox(height: 12.h),
+
+              // Logout Button at the bottom of the Profile Page
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16.r),
+                  boxShadow: AppColors.cardShadows(
+                    context,
+                    accent: AppColors.error,
+                    intensity: 0.9,
+                  ),
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 15.h),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16.r),
+                      ),
+                    ),
+                    onPressed: () => _confirmAndLogout(context, isArabic),
+                    icon: const Icon(Icons.logout_rounded),
+                    label: Text(
+                      isArabic ? 'تسجيل الخروج (Log-out)' : 'Log-out',
+                      style: TextStyle(
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(height: 8.h),
             ],
           ),
         );

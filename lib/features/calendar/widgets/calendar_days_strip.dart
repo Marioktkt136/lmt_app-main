@@ -96,12 +96,7 @@ class CalendarDaysStrip extends StatelessWidget {
               selectedDateFilter!.year == day.year &&
               selectedDateFilter!.month == day.month &&
               selectedDateFilter!.day == day.day;
-          final hasEvent = calendarEvents.any(
-            (e) =>
-                e.eventDateTime.year == day.year &&
-                e.eventDateTime.month == day.month &&
-                e.eventDateTime.day == day.day,
-          );
+          final hasEvent = calendarEvents.any((e) => e.occursOnDay(day));
 
           return InkWell(
             borderRadius: BorderRadius.circular(14.r),

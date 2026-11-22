@@ -2,11 +2,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../cubit/shared_files_cubit.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
+import '../../../core/widgets/lmt_empty_state.dart';
 import '../../../core/widgets/lmt_search_bar.dart';
+import '../cubit/shared_files_cubit.dart';
 import '../widgets/file_preview_sheet.dart';
 import '../widgets/hyperlink_card_widget.dart';
 import '../widgets/shared_document_tile.dart';
@@ -122,79 +123,88 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             // Content Area
             Expanded(
-              child: ListView(
-                physics: const BouncingScrollPhysics(),
-                padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 4.h),
-                children: [
-                  // 1. Cards Section (Image & Hyperlink 🔗)
-                  if (cards.isNotEmpty) ...[
-                    Padding(
-                      padding: EdgeInsets.symmetric(vertical: 4.h),
-                      child: Text(
-                        isArabic
-                            ? 'البطاقات والروابط السريعة (Cards & Hyperlinks 🔗)'
-                            : 'Interactive Cards & External Links 🔗',
-                        style: AppTypography.h6.copyWith(
-                          color: primary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      padding: EdgeInsets.symmetric(vertical: 6.h),
-                      itemCount: cards.length,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12.w,
-                        mainAxisSpacing: 12.h,
-                        childAspectRatio: 1.08,
-                      ),
-                      itemBuilder: (context, index) {
-                        final card = cards[index];
-                        return HyperlinkCardWidget(
-                          file: card,
-                          canDelete: canManageFiles,
-                          onTap: () => handleSharedFileTap(context, card),
-                          onDelete: () => context
-                              .read<LmtCubit>()
-                              .deleteSharedFile(card.id),
-                        );
-                      },
-                    ),
-                    SizedBox(height: 12.h),
-                  ],
+              child: (cards.isEmpty && docs.isEmpty)
+                  ? LmtEmptyState(
+                      icon: Icons.folder_off_rounded,
+                      message: isArabic
+                          ? 'لا توجد ملفات أو بطاقات مطابقة للبحث حالياً'
+                          : 'No matching shared files or cards found',
+                    )
+                  : ListView(
+                      physics: const BouncingScrollPhysics(),
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 2.w, vertical: 4.h),
+                      children: [
+                        // 1. Cards Section (Image & Hyperlink 🔗)
+                        if (cards.isNotEmpty) ...[
+                          Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4.h),
+                            child: Text(
+                              isArabic
+                                  ? 'البطاقات والروابط السريعة (${cards.length}) 🔗'
+                                  : 'Interactive Cards & External Links (${cards.length}) 🔗',
+                              style: AppTypography.h6.copyWith(
+                                color: primary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            padding: EdgeInsets.symmetric(vertical: 4.h),
+                            itemCount: cards.length,
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              crossAxisSpacing: 8.w,
+                              mainAxisSpacing: 8.h,
+                              childAspectRatio: 2.55,
+                            ),
+                            itemBuilder: (context, index) {
+                              final card = cards[index];
+                              return HyperlinkCardWidget(
+                                file: card,
+                                canDelete: canManageFiles,
+                                onTap: () => handleSharedFileTap(context, card),
+                                onDelete: () => context
+                                    .read<LmtCubit>()
+                                    .deleteSharedFile(card.id),
+                              );
+                            },
+                          ),
+                          SizedBox(height: 8.h),
+                        ],
 
-                  // 2. Documents, PDF, Word/Excel, Paperwork & Images Section
-                  if (docs.isNotEmpty) ...[
-                    Padding(
-                      padding: EdgeInsets.symmetric(vertical: 4.h),
-                      child: Text(
-                        isArabic
-                            ? 'الملفات والمستندات المشتركة (PDF • Word/Excel • أوراق عمل • صور)'
-                            : 'Shared Documents (PDF • Word/Excel • Paperwork • Images)',
-                        style: AppTypography.h6.copyWith(
-                          color: primary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                        // 2. Documents, PDF, Word/Excel, Paperwork & Images Section
+                        if (docs.isNotEmpty) ...[
+                          Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4.h),
+                            child: Text(
+                              isArabic
+                                  ? 'الملفات والمستندات المشتركة (${docs.length}) 📄'
+                                  : 'Shared Documents (${docs.length}) 📄',
+                              style: AppTypography.h6.copyWith(
+                                color: primary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          ...docs.map(
+                            (doc) => SharedDocumentTile(
+                              doc: doc,
+                              canManageFiles: canManageFiles,
+                              onTap: () => handleSharedFileTap(context, doc),
+                              onDownload: () =>
+                                  downloadAndOpenSharedFile(context, doc),
+                              onDelete: () => context
+                                  .read<LmtCubit>()
+                                  .deleteSharedFile(doc.id),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                    ...docs.map(
-                      (doc) => SharedDocumentTile(
-                        doc: doc,
-                        canManageFiles: canManageFiles,
-                        onTap: () => handleSharedFileTap(context, doc),
-                        onDownload: () =>
-                            downloadAndOpenSharedFile(context, doc),
-                        onDelete: () => context
-                            .read<LmtCubit>()
-                            .deleteSharedFile(doc.id),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
             ),
           ],
         );

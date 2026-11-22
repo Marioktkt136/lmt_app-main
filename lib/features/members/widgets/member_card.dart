@@ -116,7 +116,7 @@ class MemberCard extends StatelessWidget {
           Divider(color: border, height: 1),
           SizedBox(height: 8.h),
 
-          // Specialist at & Committee
+          // Department (القسم) & Committee (اللجنة)
           Row(
             children: [
               Icon(
@@ -127,7 +127,7 @@ class MemberCard extends StatelessWidget {
               SizedBox(width: 6.w),
               Expanded(
                 child: Text(
-                  '${isArabic ? 'التخصص:' : 'Specialist at:'} ${member.specialistAt}',
+                  '${isArabic ? 'القسم:' : 'القسم (Department):'} ${member.specialistAt}',
                   style: TextStyle(
                     fontSize: 12.sp,
                     color: textPrimary,
@@ -148,7 +148,7 @@ class MemberCard extends StatelessWidget {
               SizedBox(width: 6.w),
               Expanded(
                 child: Text(
-                  '${isArabic ? 'اللجنة:' : 'Committee:'} ${member.committee}',
+                  '${isArabic ? 'اللجنة:' : 'اللجنة (Committee):'} ${member.committee}',
                   style: TextStyle(
                     fontSize: 12.sp,
                     color: textPrimary,

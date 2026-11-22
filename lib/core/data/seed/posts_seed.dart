@@ -15,7 +15,7 @@ class PostsSeed {
         creatorName: 'Mario Naiem',
         creatorAvatar: AppAssets.ktktProfileAvatar,
         creatorRole: UserRole.admin,
-        creatorCommittee: 'اللجنة الفنية والمسرح',
+        creatorCommittee: 'اللجنة الفنية',
         publishTime: now.subtract(const Duration(days: 1, hours: 3)),
         type: PostCategoryType.poll,
         content:
@@ -77,7 +77,7 @@ class PostsSeed {
         creatorName: 'Samy Farouk',
         creatorAvatar: AppAssets.samyProfileAvatar,
         creatorRole: UserRole.editor,
-        creatorCommittee: 'لجنة التأليف والاسكريبت',
+        creatorCommittee: 'اللجنة الفنية',
         publishTime: now.subtract(const Duration(days: 2, hours: 5)),
         type: PostCategoryType.simple,
         content:
@@ -106,7 +106,7 @@ class PostsSeed {
         creatorName: 'Mario Naiem',
         creatorAvatar: AppAssets.ktktProfileAvatar,
         creatorRole: UserRole.admin,
-        creatorCommittee: 'اللجنة الفنية والمسرح',
+        creatorCommittee: 'اللجنة الفنية',
         publishTime: now.subtract(const Duration(days: 3)),
         type: PostCategoryType.media,
         content:

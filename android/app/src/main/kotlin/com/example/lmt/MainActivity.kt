@@ -31,6 +31,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var mediaRecorder: MediaRecorder? = null
     private var mediaPlayer: MediaPlayer? = null
     private var currentRecordingPath: String? = null
+    private var currentPlayingPath: String? = null
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingFilePickerResult: MethodChannel.Result? = null
 
@@ -88,16 +89,35 @@ class MainActivity : FlutterFragmentActivity() {
 
                     "playVoiceNote" -> {
                         val path = call.argument<String>("path")
+                        val speed = call.argument<Double>("speed") ?: 1.0
+                        val positionMs = call.argument<Int>("positionMs")
                         if (path.isNullOrEmpty()) {
                             result.error("INVALID_PATH", "Audio path is empty", null)
                         } else {
                             try {
-                                playAudioInternal(path)
+                                playAudioInternal(path, speed.toFloat(), positionMs)
                                 result.success(true)
                             } catch (e: Exception) {
                                 result.error("PLAY_ERROR", e.message, null)
                             }
                         }
+                    }
+
+                    "pauseVoiceNote" -> {
+                        pauseAudioInternal()
+                        result.success(true)
+                    }
+
+                    "seekVoiceNote" -> {
+                        val positionMs = call.argument<Int>("positionMs") ?: 0
+                        seekAudioInternal(positionMs)
+                        result.success(true)
+                    }
+
+                    "setVoicePlaybackSpeed" -> {
+                        val speed = call.argument<Double>("speed") ?: 1.0
+                        setAudioSpeedInternal(speed.toFloat())
+                        result.success(true)
                     }
 
                     "stopVoiceNote" -> {
@@ -135,8 +155,14 @@ class MainActivity : FlutterFragmentActivity() {
             pendingFilePickerResult = result
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
-                type = if (pickerType == "image") "image/*" else "*/*"
-                if (pickerType == "custom" && !allowedExtensions.isNullOrEmpty()) {
+                type = when (pickerType) {
+                    "image" -> "image/*"
+                    "video" -> "video/*"
+                    else -> "*/*"
+                }
+                if (pickerType == "media") {
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                } else if (pickerType == "custom" && !allowedExtensions.isNullOrEmpty()) {
                     val mimeTypes = allowedExtensions.mapNotNull { ext ->
                         MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
                     }.distinct().toTypedArray()
@@ -282,7 +308,24 @@ class MainActivity : FlutterFragmentActivity() {
         currentRecordingPath = null
     }
 
-    private fun playAudioInternal(path: String) {
+    private fun playAudioInternal(path: String, speed: Float, positionMs: Int?) {
+        val existing = mediaPlayer
+        if (existing != null && currentPlayingPath == path) {
+            if (positionMs != null) {
+                existing.seekTo(positionMs)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    existing.playbackParams = existing.playbackParams.setSpeed(speed)
+                } catch (_: Exception) {
+                }
+            }
+            if (!existing.isPlaying) {
+                existing.start()
+            }
+            return
+        }
+
         stopAudioInternal()
         val file = File(path)
         if (!file.exists()) {
@@ -291,14 +334,56 @@ class MainActivity : FlutterFragmentActivity() {
         val player = MediaPlayer()
         player.setDataSource(path)
         player.prepare()
+        if (positionMs != null && positionMs > 0) {
+            player.seekTo(positionMs)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                player.playbackParams = player.playbackParams.setSpeed(speed)
+            } catch (_: Exception) {
+            }
+        }
         player.start()
         player.setOnCompletionListener {
             it.release()
             if (mediaPlayer == it) {
                 mediaPlayer = null
+                currentPlayingPath = null
             }
         }
         mediaPlayer = player
+        currentPlayingPath = path
+    }
+
+    private fun pauseAudioInternal() {
+        try {
+            mediaPlayer?.let {
+                if (it.isPlaying) {
+                    it.pause()
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun seekAudioInternal(positionMs: Int) {
+        try {
+            mediaPlayer?.seekTo(positionMs)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun setAudioSpeedInternal(speed: Float) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                mediaPlayer?.let { player ->
+                    if (player.isPlaying) {
+                        player.playbackParams = player.playbackParams.setSpeed(speed)
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun stopAudioInternal() {
@@ -312,6 +397,7 @@ class MainActivity : FlutterFragmentActivity() {
         } catch (_: Exception) {
         } finally {
             mediaPlayer = null
+            currentPlayingPath = null
         }
     }
 

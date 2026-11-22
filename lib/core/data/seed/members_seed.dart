@@ -20,8 +20,8 @@ class MembersSeed {
             'لجنة الاسكريبت والدراما',
             'لجنة الميديا والصوتيات',
           ],
-          specialistAt: 'تمثيل وإخراج مسرحي (Acting & Directing)',
-          committee: 'اللجنة الفنية والمسرح (Artistic Committee)',
+          departments: ['إضاءة', 'مزيكا وميكسر'],
+          committees: ['اللجنة الفنية', 'اللجنة الإدارية'],
         ),
         MemberModel(
           id: 'LMT-2026-002',
@@ -35,8 +35,8 @@ class MembersSeed {
             'بروفات مسرحية تغيروا 2026',
             'لجنة الاسكريبت والدراما',
           ],
-          specialistAt: 'كتابة اسكريبت ودراما (Scriptwriting & Drama)',
-          committee: 'لجنة التأليف والاسكريبت (Script Committee)',
+          departments: ['ديكور', 'ملابس وإكسسوار'],
+          committees: ['اللجنة الفنية', 'اللجنة العامة'],
         ),
         MemberModel(
           id: 'LMT-2026-003',
@@ -49,8 +49,8 @@ class MembersSeed {
             'فريق الرسالة الاخيرة - العام',
             'لجنة الميديا والصوتيات',
           ],
-          specialistAt: 'هندسة صوت وإضاءة مسرحية (Sound & Lighting)',
-          committee: 'اللجنة التقنية والميديا (Technical & Media)',
+          departments: ['إضاءة', 'مزيكا وميكسر'],
+          committees: ['اللجنة الفنية'],
         ),
         MemberModel(
           id: 'LMT-2026-004',
@@ -63,8 +63,8 @@ class MembersSeed {
             'فريق الرسالة الاخيرة - العام',
             'بروفات مسرحية تغيروا 2026',
           ],
-          specialistAt: 'تمثيل وبانتومايم (Acting & Pantomime)',
-          committee: 'اللجنة الفنية والمسرح (Artistic Committee)',
+          departments: ['ملابس وإكسسوار', 'ميك اب'],
+          committees: ['اللجنة الفنية', 'اللجنة الروحية'],
         ),
         MemberModel(
           id: 'LMT-2026-005',
@@ -77,8 +77,8 @@ class MembersSeed {
             'فريق الرسالة الاخيرة - العام',
             'بروفات مسرحية تغيروا 2026',
           ],
-          specialistAt: 'سينوغرافيا وديكور مسرحي (Scenography & Decor)',
-          committee: 'لجنة الديكور والاكسسوارات (Decor Committee)',
+          departments: ['ديكور', 'إضاءة'],
+          committees: ['اللجنة الإدارية', 'اللجنة العامة'],
         ),
         MemberModel(
           id: 'LMT-2026-006',
@@ -91,8 +91,8 @@ class MembersSeed {
             'فريق الرسالة الاخيرة - العام',
             'لجنة الميديا والصوتيات',
           ],
-          specialistAt: 'تصوير ومونتاج (Photography & Video Editing)',
-          committee: 'لجنة الميديا (Media Committee)',
+          departments: ['ميك اب', 'ملابس وإكسسوار'],
+          committees: ['اللجنة الروحية', 'اللجنة العامة'],
         ),
       ];
 }
