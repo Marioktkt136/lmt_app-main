@@ -24,6 +24,24 @@ class ReplyEditBanner extends StatelessWidget {
     required this.onCancel,
   });
 
+  String _replyPreviewText(ChatMessageModel msg, bool isArabic) {
+    if (msg.content.trim().isNotEmpty) return msg.content;
+    switch (msg.type) {
+      case MessageType.voiceNote:
+        return isArabic ? 'رسالة صوتية 🎤' : 'Voice note 🎤';
+      case MessageType.image:
+        return isArabic ? 'صورة 🖼️' : 'Image 🖼️';
+      case MessageType.video:
+        return isArabic ? 'فيديو 🎬' : 'Video 🎬';
+      case MessageType.file:
+        return isArabic ? 'ملف 📄' : 'File 📄';
+      case MessageType.sticker:
+        return isArabic ? 'ملصق 😊' : 'Sticker 😊';
+      case MessageType.text:
+        return msg.content;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (replyingTo == null && editingMessage == null) {
@@ -52,7 +70,7 @@ class ReplyEditBanner extends StatelessWidget {
             child: Text(
               editingMessage != null
                   ? '${isArabic ? 'تعديل الرسالة:' : 'Editing:'} ${editingMessage!.content}'
-                  : '${isArabic ? 'الرد على' : 'Replying to'} ${replyingTo!.senderName}: ${replyingTo!.content}',
+                  : '${isArabic ? 'الرد على' : 'Replying to'} ${replyingTo!.senderName}: ${_replyPreviewText(replyingTo!, isArabic)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12.sp, color: textPrimary),

@@ -165,7 +165,11 @@ mixin ChatCubitMixin on LmtBaseCubit {
       voiceDurationSeconds: voiceDurationSeconds,
       replyToMessageId: replyTo?.id,
       replyToSenderName: replyTo?.senderName,
-      replyToPreview: replyTo?.content,
+      replyToPreview: replyTo == null
+          ? null
+          : (replyTo.content.trim().isNotEmpty
+              ? replyTo.content
+              : _messagePreviewText(replyTo.type, replyTo.content)),
       seenBy: initialSeen,
       sentAt: now,
     );

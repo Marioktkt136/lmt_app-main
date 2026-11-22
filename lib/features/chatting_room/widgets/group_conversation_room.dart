@@ -49,6 +49,7 @@ class GroupConversationRoom extends StatefulWidget {
 class _GroupConversationRoomState extends State<GroupConversationRoom> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _messageKeys = {};
 
   ChatMessageModel? _replyingTo;
   ChatMessageModel? _editingMessage;
@@ -56,8 +57,10 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   int _recordingSeconds = 0;
   Timer? _recordingTimer;
   Timer? _typingHideTimer;
+  Timer? _highlightClearTimer;
   bool _isTyping = false;
   String? _playingVoiceMessageId;
+  String? _highlightedMessageId;
   List<String> _savedStickers = const [];
 
   @override
@@ -76,10 +79,97 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   void dispose() {
     _recordingTimer?.cancel();
     _typingHideTimer?.cancel();
+    _highlightClearTimer?.cancel();
     NativeMediaService.stopVoiceNote();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _jumpToOriginalMessage(
+    String targetMessageId,
+    List<ChatMessageModel> messages,
+  ) async {
+    final targetIdx = messages.indexWhere((m) => m.id == targetMessageId);
+    if (targetIdx == -1) {
+      if (!mounted) return;
+      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isArabic
+                ? 'لم يتم العثور على الرسالة الأصلية'
+                : 'Original message not found',
+          ),
+        ),
+      );
+      return;
+    }
+
+    _highlightClearTimer?.cancel();
+    setState(() => _highlightedMessageId = targetMessageId);
+
+    final directContext = _messageKeys[targetMessageId]?.currentContext;
+    if (directContext != null) {
+      await Scrollable.ensureVisible(
+        directContext,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+        alignment: 0.45,
+      );
+    } else if (_scrollController.hasClients) {
+      final totalItems = messages.length;
+      final reversedIdx = totalItems - 1 - targetIdx;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      if (maxExtent > 0 && totalItems > 1) {
+        final estimatedOffset =
+            ((reversedIdx / (totalItems - 1)) * maxExtent).clamp(0.0, maxExtent);
+        await _scrollController.animateTo(
+          estimatedOffset,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+        );
+      }
+
+      for (var attempt = 0; attempt < 18; attempt++) {
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        final ctx = _messageKeys[targetMessageId]?.currentContext;
+        if (ctx != null && ctx.mounted) {
+          await Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            alignment: 0.45,
+          );
+          break;
+        }
+        if (!_scrollController.hasClients) break;
+        double? delta;
+        for (var i = 0; i < totalItems; i++) {
+          if (_messageKeys[messages[i].id]?.currentContext != null) {
+            // In reverse:true ListView, older items (smaller i) live higher
+            // up at larger scroll offsets; newer items live at smaller offsets.
+            delta = i > targetIdx ? 320.0 : -320.0;
+            break;
+          }
+        }
+        if (delta == null) break;
+        final pos = _scrollController.position;
+        final next = (pos.pixels + delta).clamp(0.0, pos.maxScrollExtent);
+        if ((next - pos.pixels).abs() < 1.0) break;
+        _scrollController.jumpTo(next);
+      }
+    }
+
+    if (!mounted) return;
+    _highlightClearTimer?.cancel();
+    _highlightClearTimer = Timer(const Duration(milliseconds: 2000), () {
+      if (!mounted) return;
+      if (_highlightedMessageId == targetMessageId) {
+        setState(() => _highlightedMessageId = null);
+      }
+    });
   }
 
   void _handleTextChanged(String value) {
@@ -333,40 +423,54 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                       itemBuilder: (context, index) {
                         final msg = messages[messages.length - 1 - index];
                         final isMe = msg.senderId == state.currentUser.id;
+                        final itemKey = _messageKeys.putIfAbsent(
+                          msg.id,
+                          GlobalKey.new,
+                        );
 
-                        return ChatMessageBubble(
-                          msg: msg,
-                          isMe: isMe,
-                          isPlayingVoice: _playingVoiceMessageId == msg.id,
-                          onShowActions: () => showChatMessageActionsSheet(
-                            context: context,
-                            state: state,
-                            group: widget.group,
-                            message: msg,
-                            onSaveSticker: _saveStickerMessage,
+                        return KeyedSubtree(
+                          key: itemKey,
+                          child: ChatMessageBubble(
+                            msg: msg,
+                            isMe: isMe,
+                            isPlayingVoice: _playingVoiceMessageId == msg.id,
+                            isHighlighted: _highlightedMessageId == msg.id,
+                            onTapReplyPreview: msg.replyToMessageId != null
+                                ? () => _jumpToOriginalMessage(
+                                      msg.replyToMessageId!,
+                                      messages,
+                                    )
+                                : null,
+                            onShowActions: () => showChatMessageActionsSheet(
+                              context: context,
+                              state: state,
+                              group: widget.group,
+                              message: msg,
+                              onSaveSticker: _saveStickerMessage,
+                              onReply: (target) => setState(() {
+                                _replyingTo = target;
+                                _editingMessage = null;
+                              }),
+                              onEdit: (target) => setState(() {
+                                _editingMessage = target;
+                                _replyingTo = null;
+                                _messageController.text = target.content;
+                              }),
+                            ),
+                            onShowSeenBy: () => showChatSeenBySheet(context, msg),
+                            onToggleReaction: (emoji) => context
+                                .read<LmtCubit>()
+                                .toggleMessageReaction(
+                                  messageId: msg.id,
+                                  emoji: emoji,
+                                ),
+                            onToggleVoicePlay: () => _togglePlayVoiceNote(msg),
                             onReply: (target) => setState(() {
                               _replyingTo = target;
                               _editingMessage = null;
                             }),
-                            onEdit: (target) => setState(() {
-                              _editingMessage = target;
-                              _replyingTo = null;
-                              _messageController.text = target.content;
-                            }),
+                            onSaveSticker: _saveStickerMessage,
                           ),
-                          onShowSeenBy: () => showChatSeenBySheet(context, msg),
-                          onToggleReaction: (emoji) => context
-                              .read<LmtCubit>()
-                              .toggleMessageReaction(
-                                messageId: msg.id,
-                                emoji: emoji,
-                              ),
-                          onToggleVoicePlay: () => _togglePlayVoiceNote(msg),
-                          onReply: (target) => setState(() {
-                            _replyingTo = target;
-                            _editingMessage = null;
-                          }),
-                          onSaveSticker: _saveStickerMessage,
                         );
                       },
                     ),

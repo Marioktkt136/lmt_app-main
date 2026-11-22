@@ -36,6 +36,14 @@ class ChatMessageBubble extends StatelessWidget {
   /// Optional callback invoked to save a sticker message to user's stickers.
   final ValueChanged<ChatMessageModel>? onSaveSticker;
 
+  /// Optional callback invoked when the quoted reply box inside this bubble
+  /// is tapped, scrolling to and highlighting the original message.
+  final VoidCallback? onTapReplyPreview;
+
+  /// Whether this bubble is temporarily highlighted and pointed at as the
+  /// target of a tapped reply preview.
+  final bool isHighlighted;
+
   /// Creates a [ChatMessageBubble].
   const ChatMessageBubble({
     super.key,
@@ -48,6 +56,8 @@ class ChatMessageBubble extends StatelessWidget {
     required this.onToggleVoicePlay,
     required this.onReply,
     this.onSaveSticker,
+    this.onTapReplyPreview,
+    this.isHighlighted = false,
   });
 
   @override
@@ -66,7 +76,9 @@ class ChatMessageBubble extends StatelessWidget {
         alignment: isMe
             ? AlignmentDirectional.centerEnd
             : AlignmentDirectional.centerStart,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
           constraints: BoxConstraints(
             maxWidth: MediaQuery.sizeOf(context).width * 0.78,
           ),
@@ -76,9 +88,11 @@ class ChatMessageBubble extends StatelessWidget {
           ),
           padding: EdgeInsets.all(12.w),
           decoration: BoxDecoration(
-            color: isMe
-                ? primary.withValues(alpha: 0.14)
-                : AppColors.cardSurfaceOf(context),
+            color: isHighlighted
+                ? primary.withValues(alpha: 0.26)
+                : (isMe
+                    ? primary.withValues(alpha: 0.14)
+                    : AppColors.cardSurfaceOf(context)),
             borderRadius: BorderRadius.only(
               topLeft: Radius.circular(18.r),
               topRight: Radius.circular(18.r),
@@ -86,19 +100,64 @@ class ChatMessageBubble extends StatelessWidget {
               bottomRight: Radius.circular(isMe ? 4.r : 18.r),
             ),
             border: Border.all(
-              color: isMe
-                  ? primary.withValues(alpha: 0.45)
-                  : primary.withValues(alpha: 0.2),
+              color: isHighlighted
+                  ? primary
+                  : (isMe
+                      ? primary.withValues(alpha: 0.45)
+                      : primary.withValues(alpha: 0.2)),
+              width: isHighlighted ? 2.2 : 1.0,
             ),
-            boxShadow: AppColors.cardShadows(
-              context,
-              accent: primary,
-              intensity: 0.55,
-            ),
+            boxShadow: [
+              if (isHighlighted)
+                BoxShadow(
+                  color: primary.withValues(alpha: 0.45),
+                  blurRadius: 14,
+                  spreadRadius: 1,
+                ),
+              ...AppColors.cardShadows(
+                context,
+                accent: primary,
+                intensity: isHighlighted ? 0.9 : 0.55,
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (isHighlighted) ...[
+                Container(
+                  margin: EdgeInsets.only(bottom: 6.h),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 8.w,
+                    vertical: 3.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: primary,
+                    borderRadius: BorderRadius.circular(20.r),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.arrow_downward_rounded,
+                        size: 13.sp,
+                        color: Colors.white,
+                      ),
+                      SizedBox(width: 4.w),
+                      Text(
+                        isArabic
+                            ? 'الرسالة الأصلية 👈'
+                            : 'Original message 👈',
+                        style: TextStyle(
+                          fontSize: 10.sp,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               // Sender Name & Role Badge
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -149,42 +208,67 @@ class ChatMessageBubble extends StatelessWidget {
               ],
 
               // Replied Message Preview
-              if (msg.replyToPreview != null) ...[
+              if (msg.replyToPreview != null ||
+                  msg.replyToMessageId != null) ...[
                 SizedBox(height: 6.h),
-                Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.all(8.w),
-                  decoration: BoxDecoration(
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8.r),
+                  child: Material(
                     color: primary.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8.r),
-                    border: Border(
-                      left: BorderSide(
-                        color: primary,
-                        width: 3,
+                    child: InkWell(
+                      onTap: onTapReplyPreview,
+                      child: Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(8.w),
+                        decoration: BoxDecoration(
+                          border: BorderDirectional(
+                            start: BorderSide(
+                              color: primary,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    msg.replyToSenderName ?? '',
+                                    style: TextStyle(
+                                      fontSize: 10.sp,
+                                      fontWeight: FontWeight.bold,
+                                      color: primary,
+                                    ),
+                                  ),
+                                  Text(
+                                    (msg.replyToPreview?.trim().isNotEmpty ??
+                                            false)
+                                        ? msg.replyToPreview!
+                                        : (isArabic ? 'رسالة' : 'Message'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11.sp,
+                                      color: textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (onTapReplyPreview != null) ...[
+                              SizedBox(width: 6.w),
+                              Icon(
+                                Icons.north_rounded,
+                                size: 14.sp,
+                                color: primary.withValues(alpha: 0.8),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        msg.replyToSenderName ?? '',
-                        style: TextStyle(
-                          fontSize: 10.sp,
-                          fontWeight: FontWeight.bold,
-                          color: primary,
-                        ),
-                      ),
-                      Text(
-                        msg.replyToPreview!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11.sp,
-                          color: textSecondary,
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ],
