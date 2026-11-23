@@ -1,0 +1,126 @@
+name: Shorebird Release (iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      codesign:
+        description: Sign build with Apple certificate (disable for unsigned CI test)
+        type: boolean
+        required: true
+        default: true
+      export_method:
+        description: IPA distribution method when codesign=true
+        type: choice
+        required: true
+        default: app-store
+        options:
+          - app-store
+          - ad-hoc
+          - development
+          - enterprise
+      upload_testflight:
+        description: Upload signed IPA to TestFlight / App Store Connect
+        type: boolean
+        required: true
+        default: false
+  push:
+    tags:
+      - 'ios-v*'
+
+jobs:
+  release-ios:
+    name: Build & Publish Shorebird iOS Release
+    # Pinned macOS version so Xcode matches future shorebird-patch-ios runs.
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Shorebird CI token
+        shell: bash
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: |
+          if [ -z "$SHOREBIRD_TOKEN" ]; then
+            echo "::error::Missing SHOREBIRD_TOKEN secret. Run 'shorebird tokens create' locally and add it to GitHub Repository Secrets."
+            exit 1
+          fi
+
+      - name: Setup iOS & Shorebird environment
+        id: ios_setup
+        uses: ./.github/actions/setup-ios-shorebird
+        with:
+          codesign: ${{ github.event_name != 'workflow_dispatch' || inputs.codesign }}
+          cert-base64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          cert-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          profile-base64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          keychain-password: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+
+      - name: Run Shorebird iOS Release
+        shell: bash
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: |
+          set -euo pipefail
+          CODESIGN_ENABLED="${{ github.event_name != 'workflow_dispatch' || inputs.codesign }}"
+          EXPORT_METHOD="${{ inputs.export_method || 'app-store' }}"
+          if [ "$CODESIGN_ENABLED" = "true" ]; then
+            shorebird release --platforms=ios --export-method="$EXPORT_METHOD"
+          else
+            shorebird release --platforms=ios --no-codesign
+          fi
+
+      - name: Upload signed IPA artifact
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.codesign }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lmt-ios-ipa
+          path: build/ios/ipa/*.ipa
+          if-no-files-found: warn
+
+      - name: Upload unsigned xcarchive artifact
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.codesign }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lmt-ios-xcarchive
+          path: build/ios/archive/Runner.xcarchive
+          if-no-files-found: warn
+
+      - name: Upload IPA to TestFlight (App Store Connect)
+        if: ${{ inputs.upload_testflight && inputs.codesign }}
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_B64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_B64" ]; then
+            echo "::error::Missing App Store Connect secrets (APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_API_KEY_BASE64)."
+            exit 1
+          fi
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          echo -n "$ASC_KEY_B64" | base64 --decode -o "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          IPA_FILE=$(find build/ios/ipa -name "*.ipa" | head -n 1)
+          if [ -z "$IPA_FILE" ]; then
+            echo "::error::No .ipa file found under build/ios/ipa."
+            exit 1
+          fi
+          xcrun altool --upload-app \
+            -t ios \
+            -f "$IPA_FILE" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Clean up temporary Keychain and API key
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${{ steps.ios_setup.outputs.keychain-path }}" ] && [ -f "${{ steps.ios_setup.outputs.keychain-path }}" ]; then
+            security delete-keychain "${{ steps.ios_setup.outputs.keychain-path }}" || true
+          fi
+          rm -rf "$HOME/.appstoreconnect/private_keys" || true

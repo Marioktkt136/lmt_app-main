@@ -90,3 +90,4 @@ flutter:
     - assets/lang/
     - assets/icons/
     - assets/images/
+    - shorebird.yaml

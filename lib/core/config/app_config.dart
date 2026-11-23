@@ -3,9 +3,8 @@ class AppConfig {
   AppConfig._();
 
   static const String appName = 'L.M.T';
-  static const String appVersion = '1.0.0';
+  static const String appVersion = '1.0.8';
   static const String buildNumber = '1';
-
 
   // Environment
   static const bool isProduction = false;
@@ -13,8 +12,6 @@ class AppConfig {
 
   // API Configuration
   static String get baseUrl {
-    return isProduction
-        ? 'https://api.production.com'
-        : 'https://api.development.com';
+    return isProduction ? 'https://api.production.com' : 'https://api.development.com';
   }
 }

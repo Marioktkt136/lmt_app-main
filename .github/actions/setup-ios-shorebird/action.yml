@@ -1,0 +1,93 @@
+name: Setup Shorebird iOS Environment
+description: Sets up Flutter, Shorebird CLI, iOS 15.0 Podfile compatibility, and optional Apple code-signing keychain.
+
+inputs:
+  codesign:
+    description: Whether Apple code signing is enabled ('true' or 'false').
+    required: true
+    default: 'true'
+  cert-base64:
+    description: Base64-encoded Apple Distribution .p12 certificate.
+    required: false
+    default: ''
+  cert-password:
+    description: Password for the Apple Distribution .p12 certificate.
+    required: false
+    default: ''
+  profile-base64:
+    description: Base64-encoded iOS provisioning profile (.mobileprovision).
+    required: false
+    default: ''
+  keychain-password:
+    description: Password for the temporary CI macOS keychain.
+    required: false
+    default: ''
+
+outputs:
+  keychain-path:
+    description: Path to temporary keychain created during CI setup (empty if unsigned).
+    value: ${{ steps.signing.outputs.keychain-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Flutter (for iOS Podfile pre-config)
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+
+    - name: Setup Shorebird CLI
+      uses: shorebirdtech/setup-shorebird@v1
+      with:
+        cache: true
+
+    - name: Prepare Flutter dependencies and iOS 15.0 Podfile
+      shell: bash
+      run: |
+        flutter pub get
+        flutter build ios --config-only --no-codesign || true
+        if [ -f ios/Podfile ]; then
+          sed -i '' "s/^# *platform :ios.*/platform :ios, '15.0'/" ios/Podfile
+          sed -i '' "s/^platform :ios, '[0-9.]*'/platform :ios, '15.0'/" ios/Podfile
+        fi
+
+    - name: Configure Apple Code Signing Keychain
+      id: signing
+      if: inputs.codesign == 'true'
+      shell: bash
+      env:
+        APPLE_CERT_B64: ${{ inputs.cert-base64 }}
+        APPLE_CERT_PASS: ${{ inputs.cert-password }}
+        APPLE_PROFILE_B64: ${{ inputs.profile-base64 }}
+        TEMP_KEYCHAIN_PASS: ${{ inputs.keychain-password }}
+      run: |
+        set -euo pipefail
+        if [ -z "$APPLE_CERT_B64" ] || [ -z "$APPLE_PROFILE_B64" ]; then
+          echo "::error::Missing Apple signing secrets (IOS_DIST_CERT_BASE64 / IOS_PROVISION_PROFILE_BASE64). Add them in GitHub Secrets or run with codesign=false for an unsigned test build."
+          exit 1
+        fi
+
+        KEYCHAIN_PATH="$RUNNER_TEMP/lmt-signing.keychain-db"
+        KEYCHAIN_PASS="${TEMP_KEYCHAIN_PASS:-ci-temp-keychain-pass}"
+        PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+        mkdir -p "$PP_DIR"
+
+        echo -n "$APPLE_CERT_B64" | base64 --decode -o "$RUNNER_TEMP/certificate.p12"
+        echo -n "$APPLE_PROFILE_B64" | base64 --decode -o "$RUNNER_TEMP/profile.mobileprovision"
+
+        security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+        security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+        security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+        security import "$RUNNER_TEMP/certificate.p12" \
+          -P "$APPLE_CERT_PASS" \
+          -A -t cert -f pkcs12 \
+          -k "$KEYCHAIN_PATH"
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+        security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+        PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision")")
+        cp "$RUNNER_TEMP/profile.mobileprovision" "$PP_DIR/$PROFILE_UUID.mobileprovision"
+
+        echo "keychain-path=$KEYCHAIN_PATH" >> "$GITHUB_OUTPUT"
+        rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/profile.mobileprovision"

@@ -1,0 +1,82 @@
+name: Shorebird OTA Patch (iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Released iOS version to patch (e.g. 1.0.0+1 or latest)
+        type: string
+        required: true
+        default: latest
+      track:
+        description: Shorebird release track
+        type: choice
+        required: true
+        default: stable
+        options:
+          - stable
+          - beta
+          - staging
+      codesign:
+        description: Sign iOS archive during patch verification (match release setting)
+        type: boolean
+        required: true
+        default: true
+
+jobs:
+  patch-ios:
+    name: Publish Shorebird iOS OTA Patch
+    # Must stay pinned to the exact same macOS runner used for shorebird-release-ios.yml.
+    runs-on: macos-26
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Shorebird CI token
+        shell: bash
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: |
+          if [ -z "$SHOREBIRD_TOKEN" ]; then
+            echo "::error::Missing SHOREBIRD_TOKEN secret. Run 'shorebird tokens create' locally and add it to GitHub Repository Secrets."
+            exit 1
+          fi
+
+      - name: Setup iOS & Shorebird environment
+        id: ios_setup
+        uses: ./.github/actions/setup-ios-shorebird
+        with:
+          codesign: ${{ inputs.codesign }}
+          cert-base64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          cert-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          profile-base64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          keychain-password: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+
+      - name: Publish Shorebird iOS Patch
+        shell: bash
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.codesign }}" = "true" ]; then
+            shorebird patch \
+              --platforms=ios \
+              --release-version="${{ inputs.release_version }}" \
+              --track="${{ inputs.track }}"
+          else
+            shorebird patch \
+              --platforms=ios \
+              --release-version="${{ inputs.release_version }}" \
+              --track="${{ inputs.track }}" \
+              --no-codesign
+          fi
+
+      - name: Clean up temporary Keychain
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${{ steps.ios_setup.outputs.keychain-path }}" ] && [ -f "${{ steps.ios_setup.outputs.keychain-path }}" ]; then
+            security delete-keychain "${{ steps.ios_setup.outputs.keychain-path }}" || true
+          fi
