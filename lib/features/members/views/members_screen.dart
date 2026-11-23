@@ -60,7 +60,7 @@ class _MembersScreenState extends State<MembersScreen> {
         }).toList();
 
         return AdaptiveContentBox(
-          maxWidth: 960,
+          maxWidth: AdaptiveBreakpoints.wideDesktopMaxWidth,
           child: Column(
             children: [
               // Search & Add Account Bar (Admin only)

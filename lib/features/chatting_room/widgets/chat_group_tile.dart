@@ -37,6 +37,9 @@ class ChatGroupTile extends StatelessWidget {
   /// Callback invoked when delete group is selected.
   final VoidCallback onDelete;
 
+  /// Whether this group is currently active in desktop split view.
+  final bool isSelected;
+
   /// Creates a [ChatGroupTile].
   const ChatGroupTile({
     super.key,
@@ -49,6 +52,7 @@ class ChatGroupTile extends StatelessWidget {
     required this.onTogglePin,
     required this.onEdit,
     required this.onDelete,
+    this.isSelected = false,
   });
 
   @override
@@ -62,7 +66,7 @@ class ChatGroupTile extends StatelessWidget {
       padding: EdgeInsets.symmetric(vertical: 11.h, horizontal: 10.w),
       borderRadius: 18.r,
       accentColor: primary,
-      isHighlighted: group.isPinned,
+      isHighlighted: isSelected || group.isPinned,
       onTap: onTap,
       child: Row(
         children: [

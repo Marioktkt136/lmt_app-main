@@ -1,34 +1,39 @@
-import 'dart:io';
+ import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../models/lmt_models.dart';
 import '../services/native_media_service.dart';
 import 'app_assets.dart';
-import 'device_files/fallback_file_picker_dialog.dart';
-import 'device_files/file_download_service.dart';
+import 'device_files/device_file_platform.dart';
 import 'device_files/file_size_formatter.dart';
 import 'device_files/file_type.dart';
-import 'device_files/mime_type_util.dart';
 import 'device_files/platform_file.dart';
 
 export 'device_files/file_type.dart';
 export 'device_files/platform_file.dart';
 
-/// Facade for device file & image handling.
+/// Cross-platform facade for device file & image handling across Mobile & Web.
 ///
-/// - Displays images from device storage ([File]) or bundled assets.
-/// - Picks files via the native picker, falling back to a `dart:io` dialog.
-/// - Persists, formats and downloads files.
-///
-/// Implementation lives in `utils/device_files/`; keep this public API stable.
+/// - Displays images from bundled assets, `data:` URLs, `http(s):` URLs,
+///   and local disk files (on IO platforms).
+/// - Picks files via the native picker on mobile or HTML `<input type="file">`
+///   on Web, falling back safely to [FallbackFilePickerDialog] on mobile IO.
+/// - Persists, formats, downloads, and opens files cross-platform.
 class DeviceFileHelper {
   DeviceFileHelper._();
 
   /// Whether [path] refers to a bundled Flutter asset.
   static bool isAssetPath(String path) => path.startsWith('assets/');
+
+  /// Whether [path] refers to an HTTP(S) or inline `data:` / `blob:` URL.
+  static bool isRemoteOrDataUri(String path) =>
+      path.startsWith('http://') ||
+      path.startsWith('https://') ||
+      path.startsWith('data:') ||
+      path.startsWith('blob:');
 
   /// Whether [path] refers to a video file based on its extension.
   static bool isVideoPath(String? path) {
@@ -40,13 +45,33 @@ class DeviceFileHelper {
         lower.endsWith('.webm') ||
         lower.endsWith('.avi') ||
         lower.endsWith('.3gp') ||
-        lower.endsWith('.m4v');
+        lower.endsWith('.m4v') ||
+        lower.startsWith('data:video/');
   }
 
-  /// Launches the device camera directly to take a photo.
+  static Uint8List? _decodeDataImageBytes(String dataUrl) {
+    if (!dataUrl.startsWith('data:')) return null;
+    try {
+      return UriData.parse(dataUrl).contentAsBytes();
+    } catch (_) {
+      final commaIdx = dataUrl.indexOf(',');
+      if (commaIdx == -1) return null;
+      try {
+        return base64Decode(dataUrl.substring(commaIdx + 1));
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  /// Launches the device camera directly on mobile (or opens browser image
+  /// upload with camera capture hint on Web).
   static Future<PlatformFile?> capturePhotoFromCamera(
     BuildContext context,
   ) async {
+    if (kIsWeb) {
+      return pickFallbackOrWebFile(context, type: FileType.image);
+    }
     try {
       final resultMap = await NativeMediaService.captureCameraPhoto();
       if (resultMap != null) {
@@ -65,22 +90,29 @@ class DeviceFileHelper {
     }
   }
 
-  static File? _existingLocalFile(String path) {
-    if (isAssetPath(path) || path.trim().isEmpty) return null;
-    final file = File(path);
-    return file.existsSync() ? file : null;
-  }
-
-  /// Returns an [ImageProvider] for a local device file or a bundled asset.
+  /// Returns an [ImageProvider] for a `data:` image, network URL, local disk
+  /// file (on IO), or bundled asset.
   static ImageProvider imageProviderFor(String path, {String? fallbackAsset}) {
-    final file = _existingLocalFile(path);
-    if (file != null) return FileImage(file);
+    if (path.startsWith('data:image/')) {
+      final bytes = _decodeDataImageBytes(path);
+      if (bytes != null) return MemoryImage(bytes);
+    }
+    if (path.startsWith('http://') ||
+        path.startsWith('https://') ||
+        path.startsWith('blob:')) {
+      return NetworkImage(path);
+    }
+    if (!kIsWeb) {
+      final local = localFileImageProvider(path);
+      if (local != null) return local;
+    }
     return AssetImage(
       isAssetPath(path) ? path : (fallbackAsset ?? AppAssets.appLogo),
     );
   }
 
-  /// Builds an [Image] widget for a local device file or a bundled asset.
+  /// Builds an [Image] widget for `data:` images, network URLs, local files
+  /// (on IO), or bundled assets.
   static Widget buildImage(
     String path, {
     double? width,
@@ -88,18 +120,41 @@ class DeviceFileHelper {
     BoxFit fit = BoxFit.contain,
     Widget Function(BuildContext, Object, StackTrace?)? errorBuilder,
   }) {
-    final file = _existingLocalFile(path);
-    if (file != null) {
-      return Image.file(
-        file,
+    if (path.startsWith('data:image/')) {
+      final bytes = _decodeDataImageBytes(path);
+      if (bytes != null) {
+        return Image.memory(
+          bytes,
+          width: width,
+          height: height,
+          fit: fit,
+          errorBuilder: errorBuilder,
+        );
+      }
+    }
+    if (path.startsWith('http://') ||
+        path.startsWith('https://') ||
+        path.startsWith('blob:')) {
+      return Image.network(
+        path,
         width: width,
         height: height,
         fit: fit,
         errorBuilder: errorBuilder,
       );
     }
+    if (!kIsWeb) {
+      final localWidget = buildLocalFileImage(
+        path,
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: errorBuilder,
+      );
+      if (localWidget != null) return localWidget;
+    }
     return Image.asset(
-      path,
+      isAssetPath(path) ? path : AppAssets.appLogo,
       width: width,
       height: height,
       fit: fit,
@@ -107,13 +162,20 @@ class DeviceFileHelper {
     );
   }
 
-  /// Invokes the native file picker via [NativeMediaService], falling back to
-  /// [FallbackFilePickerDialog] when the plugin is unavailable or fails.
+  /// Picks a file via native Gallery/File browser on mobile or `<input type="file">`
+  /// on Web, falling back safely to [FallbackFilePickerDialog] on mobile IO.
   static Future<PlatformFile?> pickFileSafely(
     BuildContext context, {
     FileType type = FileType.any,
     List<String>? allowedExtensions,
   }) async {
+    if (kIsWeb) {
+      return pickFallbackOrWebFile(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
+    }
     try {
       final resultMap = await NativeMediaService.pickDeviceFile(
         type: type.name,
@@ -132,57 +194,48 @@ class DeviceFileHelper {
       return null;
     } on MissingPluginException {
       if (!context.mounted) return null;
-      return _fallback(context, type, allowedExtensions);
+      return pickFallbackOrWebFile(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
     } on PlatformException {
       if (!context.mounted) return null;
-      return _fallback(context, type, allowedExtensions);
+      return pickFallbackOrWebFile(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
     } catch (_) {
       if (!context.mounted) return null;
-      return _fallback(context, type, allowedExtensions);
+      return pickFallbackOrWebFile(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
     }
   }
 
-  static Future<PlatformFile?> _fallback(
-    BuildContext context,
-    FileType type,
-    List<String>? allowedExtensions,
-  ) {
-    return FallbackFilePickerDialog.show(
-      context,
-      type: type,
-      allowedExtensions: allowedExtensions,
-    );
-  }
-
-  /// Copies a picked file into persistent app storage and returns the new
-  /// path (or [sourcePath] if copying fails).
+  /// Copies a picked file into persistent storage on IO platforms or keeps URLs
+  /// / `data:` URIs intact on Web.
   static Future<String> persistPickedFile(
     String sourcePath,
     String fileName,
-  ) async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final uploadsDir = Directory('${dir.path}/lmt_uploads');
-      if (!uploadsDir.existsSync()) {
-        await uploadsDir.create(recursive: true);
-      }
-      final safeName =
-          '${DateTime.now().millisecondsSinceEpoch}_${MimeTypeUtil.sanitizeFileName(fileName)}';
-      final copied = await File(sourcePath).copy('${uploadsDir.path}/$safeName');
-      return copied.path;
-    } catch (_) {
-      return sourcePath;
-    }
-  }
+  ) =>
+      persistPickedFilePlatform(sourcePath, fileName);
 
   /// Formats a byte count into KB / MB.
   static String formatBytes(int bytes) => FileSizeFormatter.format(bytes);
 
-  /// Downloads [file] to the public Download folder and (optionally) opens
-  /// it. Returns the public path. See [FileDownloadService].
+  /// Downloads [file] (browser download on Web, public folder on mobile).
   static Future<String> downloadAndOpenRealFile(
     SharedFileModel file, {
     bool openAfterSave = true,
   }) =>
-      FileDownloadService.downloadAndOpen(file, openAfterSave: openAfterSave);
+      downloadAndOpenRealFilePlatform(file, openAfterSave: openAfterSave);
+
+  /// Opens [path] natively on mobile or in a new browser tab on Web.
+  /// Returns `null` on success or a human-readable error message on failure.
+  static Future<String?> openPath(String path) =>
+      openLocalOrExternalPathPlatform(path);
 }

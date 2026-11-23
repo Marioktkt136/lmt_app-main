@@ -1,6 +1,5 @@
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:open_filex/open_filex.dart';
 
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
@@ -207,10 +206,9 @@ class ChatMessageBody extends StatelessWidget {
         return InkWell(
           borderRadius: BorderRadius.circular(12.r),
           onTap: () {
-            if (msg.attachmentPath != null &&
-                !DeviceFileHelper.isAssetPath(msg.attachmentPath!) &&
-                msg.attachmentPath!.contains('/')) {
-              OpenFilex.open(msg.attachmentPath!);
+            final path = msg.attachmentPath;
+            if (path != null && !DeviceFileHelper.isAssetPath(path)) {
+              DeviceFileHelper.openPath(path);
             }
           },
           child: Container(

@@ -654,6 +654,19 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   }
 
   @override
+  Stream<List<AppNotificationModel>> watchNotifications() {
+    final db = _db;
+    if (db == null) return const Stream.empty();
+    return db.collection(_notificationsCol).snapshots().map((snap) {
+      final list = snap.docs
+          .map((d) => AppNotificationModel.fromJson({...d.data(), 'id': d.id}))
+          .toList()
+        ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
+      return list;
+    });
+  }
+
+  @override
   Future<void> clearCachedState() async {
     await localCache.clearCachedState();
   }

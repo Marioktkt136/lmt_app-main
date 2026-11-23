@@ -10,9 +10,7 @@ class DefaultFirebaseOptions {
 
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -44,5 +42,14 @@ class DefaultFirebaseOptions {
     projectId: 'lmt-temp-cloud-2026',
     storageBucket: 'lmt-temp-cloud-2026.firebasestorage.app',
     iosBundleId: 'com.example.lmt',
+  );
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyCgDfErg5uDehNJX_8azes8kQr0vCSMRz4',
+    appId: '1:688051545067:web:56a123dc7a81cec21b2fae',
+    messagingSenderId: '688051545067',
+    projectId: 'lmt-temp-cloud-2026',
+    authDomain: 'lmt-temp-cloud-2026.firebaseapp.com',
+    storageBucket: 'lmt-temp-cloud-2026.firebasestorage.app',
   );
 }

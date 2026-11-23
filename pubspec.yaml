@@ -67,6 +67,7 @@ dependencies:
   firebase_auth: ^7.1.0
   shorebird_code_push: ^2.0.7
   package_info_plus: ^10.2.2
+  web: ^1.1.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -90,4 +91,5 @@ flutter:
     - assets/lang/
     - assets/icons/
     - assets/images/
+    - assets/notifications_tones/
     - shorebird.yaml

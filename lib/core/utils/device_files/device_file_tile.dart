@@ -1,11 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../theme/colors.dart';
+import '../device_file_helper.dart';
 import 'file_size_formatter.dart';
-import 'platform_file.dart';
 
 /// A single selectable file row inside the fallback picker dialog.
 ///
@@ -54,7 +52,10 @@ class DeviceFileTile extends StatelessWidget {
                 child: isImg && file.path != null
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(8.r),
-                        child: Image.file(File(file.path!), fit: BoxFit.cover),
+                        child: DeviceFileHelper.buildImage(
+                          file.path!,
+                          fit: BoxFit.cover,
+                        ),
                       )
                     : Icon(
                         ext == 'PDF'

@@ -2,7 +2,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:open_filex/open_filex.dart';
 
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
@@ -125,21 +124,19 @@ class _ChatMediaViewerPageState extends State<ChatMediaViewerPage> {
     String path,
   ) async {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-    try {
-      final res = await OpenFilex.open(path);
-      if (res.type != ResultType.done && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isArabic
-                  ? 'تعذر فتح مشغل الفيديو: ${res.message}'
-                  : 'Unable to open video player: ${res.message}',
-            ),
-            behavior: SnackBarBehavior.floating,
+    final error = await DeviceFileHelper.openPath(path);
+    if (error != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isArabic
+                ? 'تعذر فتح مشغل الفيديو: $error'
+                : 'Unable to open video player: $error',
           ),
-        );
-      }
-    } catch (_) {}
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override

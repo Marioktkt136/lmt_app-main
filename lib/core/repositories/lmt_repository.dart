@@ -82,6 +82,10 @@ abstract class LmtRepository {
   /// Streams active typing members inside [groupId].
   Stream<List<TypingMemberStatus>> watchGroupTyping(String groupId) =>
       const Stream.empty();
+
+  /// Streams real-time notifications for multi-device Web & Mobile sync.
+  Stream<List<AppNotificationModel>> watchNotifications() =>
+      const Stream.empty();
 }
 
 /// Concrete local-first implementation of [LmtRepository].
@@ -211,5 +215,9 @@ class LmtLocalRepositoryImpl implements LmtRepository {
 
   @override
   Stream<List<TypingMemberStatus>> watchGroupTyping(String groupId) =>
+      const Stream.empty();
+
+  @override
+  Stream<List<AppNotificationModel>> watchNotifications() =>
       const Stream.empty();
 }

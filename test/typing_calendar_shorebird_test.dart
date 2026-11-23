@@ -53,6 +53,10 @@ class _InMemoryTestRepo implements LmtRepository {
   @override
   Stream<List<TypingMemberStatus>> watchGroupTyping(String groupId) =>
       const Stream.empty();
+
+  @override
+  Stream<List<AppNotificationModel>> watchNotifications() =>
+      const Stream.empty();
 }
 
 const _mario = MemberModel(

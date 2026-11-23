@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
@@ -9,11 +10,16 @@ import '../../../core/widgets/lmt_search_bar.dart';
 import '../cubit/chat_cubit.dart';
 import '../widgets/chat_group_form_sheet.dart';
 import '../widgets/chat_group_tile.dart';
+import '../widgets/group_conversation_room.dart';
 import 'group_conversation_page.dart';
 
-/// Chatting Room View displaying the Chatting Groups list and pushing
-/// [GroupConversationPage] as a dedicated full-screen route when any group is
-/// opened (so popping/backing always returns to the Groups List).
+/// Chatting Room View displaying Chatting Groups.
+///
+/// - On compact mobile screens (`< 960px`), tapping a group pushes
+///   [GroupConversationPage] fullscreen.
+/// - On wide Web/Desktop viewports (`>= 960px`), displays a responsive
+///   Master-Detail split layout with the groups list alongside the active
+///   [GroupConversationRoom].
 class ChattingRoom extends StatefulWidget {
   /// Creates a [ChattingRoom].
   const ChattingRoom({super.key});
@@ -26,6 +32,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
   String _searchQuery = '';
   bool _showPinnedOnly = false;
   bool _isPushingGroup = false;
+  String? _desktopSelectedGroupId;
 
   @override
   void initState() {
@@ -34,13 +41,17 @@ class _ChattingRoomState extends State<ChattingRoom> {
       if (!mounted) return;
       final initialGroupId = context.read<LmtCubit>().state.selectedChatGroupId;
       if (initialGroupId != null) {
-        _openGroupScreen(initialGroupId);
+        _openGroup(initialGroupId);
       }
     });
   }
 
-  Future<void> _openGroupScreen(String groupId) async {
-    if (_isPushingGroup || !mounted) return;
+  bool _isDesktopSplit(BuildContext context) =>
+      MediaQuery.sizeOf(context).width >=
+      AdaptiveBreakpoints.desktopSplitMinWidth;
+
+  Future<void> _openGroup(String groupId, {bool? forceSplit}) async {
+    if (!mounted) return;
     final state = context.read<LmtCubit>().state;
     final targetGroup =
         state.chatGroups.where((g) => g.id == groupId).firstOrNull;
@@ -49,9 +60,15 @@ class _ChattingRoomState extends State<ChattingRoom> {
       context.read<LmtCubit>().selectChatGroup(null);
       return;
     }
-    _isPushingGroup = true;
-    context.read<LmtCubit>().selectChatGroup(null);
 
+    context.read<LmtCubit>().selectChatGroup(null);
+    if (forceSplit ?? _isDesktopSplit(context)) {
+      setState(() => _desktopSelectedGroupId = groupId);
+      return;
+    }
+
+    if (_isPushingGroup) return;
+    _isPushingGroup = true;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => GroupConversationPage(groupId: groupId),
@@ -60,46 +77,21 @@ class _ChattingRoomState extends State<ChattingRoom> {
     _isPushingGroup = false;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return BlocConsumer<LmtCubit, LmtState>(
-      listenWhen: (prev, curr) =>
-          curr.selectedChatGroupId != null &&
-          prev.selectedChatGroupId != curr.selectedChatGroupId,
-      listener: (context, state) {
-        final targetGroupId = state.selectedChatGroupId;
-        if (targetGroupId != null) {
-          _openGroupScreen(targetGroupId);
-        }
-      },
-      builder: (context, state) {
-        return _buildGroupsListView(context, state);
-      },
-    );
-  }
-
-  Widget _buildGroupsListView(BuildContext context, LmtState state) {
+  Widget _buildGroupListPane({
+    required BuildContext context,
+    required LmtState state,
+    required List<ChatGroupModel> groups,
+    required String? activeDesktopId,
+    required bool isSplit,
+  }) {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final primary = AppColors.primaryOf(context);
     final textSecondary = AppColors.textSecondaryOf(context);
     final canManageGroups = state.currentUser.role.canManageGroups;
     final canDeleteGroups = state.currentUser.role.canDeleteGroups;
 
-    final groups = state.sortedChatGroups.where((g) {
-      if (!g.memberIds.contains(state.currentUser.id)) return false;
-      if (_showPinnedOnly && !g.isPinned) return false;
-      if (_searchQuery.trim().isEmpty) return true;
-      final q = _searchQuery.toLowerCase();
-      return g.name.toLowerCase().contains(q) ||
-          g.description.toLowerCase().contains(q) ||
-          g.adminName.toLowerCase().contains(q);
-    }).toList();
-
-    return AdaptiveContentBox(
-      maxWidth: 820,
-      child: Column(
-        children: [
-        // Top Search & Action Bar
+    return Column(
+      children: [
         LmtSearchBar(
           hintText: isArabic
               ? 'ابحث في مجموعات المحادثة...'
@@ -132,8 +124,6 @@ class _ChattingRoomState extends State<ChattingRoom> {
           ],
         ),
         SizedBox(height: 10.h),
-
-        // Groups List
         Expanded(
           child: groups.isEmpty
               ? LmtEmptyState(
@@ -158,7 +148,8 @@ class _ChattingRoomState extends State<ChattingRoom> {
                       messageCount: msgCount,
                       canEditGroups: canManageGroups,
                       canDeleteGroups: canDeleteGroups,
-                      onTap: () => _openGroupScreen(group.id),
+                      isSelected: isSplit && activeDesktopId == group.id,
+                      onTap: () => _openGroup(group.id, forceSplit: isSplit),
                       onTogglePin: () => context
                           .read<LmtCubit>()
                           .togglePinChatGroup(group.id),
@@ -174,7 +165,98 @@ class _ChattingRoomState extends State<ChattingRoom> {
                 ),
         ),
       ],
-    ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocConsumer<LmtCubit, LmtState>(
+      listenWhen: (prev, curr) =>
+          curr.selectedChatGroupId != null &&
+          prev.selectedChatGroupId != curr.selectedChatGroupId,
+      listener: (context, state) {
+        final targetGroupId = state.selectedChatGroupId;
+        if (targetGroupId != null) {
+          _openGroup(targetGroupId);
+        }
+      },
+      builder: (context, state) {
+        final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+        final groups = state.sortedChatGroups.where((g) {
+          if (!g.memberIds.contains(state.currentUser.id)) return false;
+          if (_showPinnedOnly && !g.isPinned) return false;
+          if (_searchQuery.trim().isEmpty) return true;
+          final q = _searchQuery.toLowerCase();
+          return g.name.toLowerCase().contains(q) ||
+              g.description.toLowerCase().contains(q) ||
+              g.adminName.toLowerCase().contains(q);
+        }).toList();
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isSplit = constraints.maxWidth >=
+                AdaptiveBreakpoints.desktopSplitMinWidth;
+            if (!isSplit) {
+              return AdaptiveContentBox(
+                maxWidth: 820,
+                child: _buildGroupListPane(
+                  context: context,
+                  state: state,
+                  groups: groups,
+                  activeDesktopId: null,
+                  isSplit: false,
+                ),
+              );
+            }
+
+            final memberGroups = state.sortedChatGroups
+                .where((g) => g.memberIds.contains(state.currentUser.id))
+                .toList();
+            final activeGroup = memberGroups
+                    .where((g) => g.id == _desktopSelectedGroupId)
+                    .firstOrNull ??
+                groups.firstOrNull ??
+                memberGroups.firstOrNull;
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: 340,
+                  child: _buildGroupListPane(
+                    context: context,
+                    state: state,
+                    groups: groups,
+                    activeDesktopId: activeGroup?.id,
+                    isSplit: true,
+                  ),
+                ),
+                VerticalDivider(
+                  width: 24,
+                  thickness: 1,
+                  color: AppColors.borderOf(context),
+                ),
+                Expanded(
+                  child: activeGroup == null
+                      ? LmtEmptyState(
+                          icon: Icons.chat_bubble_outline_rounded,
+                          message: isArabic
+                              ? 'اختر مجموعة محادثة لبدء المراسلة'
+                              : 'Select a chat group to start messaging',
+                        )
+                      : GroupConversationRoom(
+                          key: ValueKey('desktop_room_${activeGroup.id}'),
+                          group: activeGroup,
+                          showInlineHeader: true,
+                          onBack: () =>
+                              setState(() => _desktopSelectedGroupId = null),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

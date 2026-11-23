@@ -192,6 +192,14 @@ class LmtState extends Equatable {
 abstract class LmtBaseCubit extends Cubit<LmtState> {
   static int _notificationSeq = 0;
   final LmtRepository repository;
+  final Set<String> knownNotificationIds = <String>{};
+  DateTime? _suppressRemoteNotifUntil;
+
+  /// Whether remote notification snapshot syncing is paused right after a
+  /// local write to prevent stale delete/read bounces without spawning Timers.
+  bool get isSuppressingRemoteNotifSync =>
+      _suppressRemoteNotifUntil != null &&
+      DateTime.now().isBefore(_suppressRemoteNotifUntil!);
 
   LmtBaseCubit({required this.repository})
       : super(
@@ -210,10 +218,16 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
 
   /// Persists the current state snapshot to the underlying [LmtRepository].
   Future<void> persistState() async {
-    await repository.persistSnapshot(
-      stateJson: state.toJson(),
-      currentUserId: state.currentUser.id,
-    );
+    _suppressRemoteNotifUntil = DateTime.now().add(const Duration(seconds: 1));
+    try {
+      await repository.persistSnapshot(
+        stateJson: state.toJson(),
+        currentUserId: state.currentUser.id,
+      );
+    } finally {
+      _suppressRemoteNotifUntil =
+          DateTime.now().add(const Duration(milliseconds: 800));
+    }
   }
 
   /// Dispatches an in-app and OS-level notification with category-matched or
@@ -236,6 +250,7 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
   }) {
     final resolvedId = id ??
         'notif_${DateTime.now().microsecondsSinceEpoch}_${++_notificationSeq}';
+    knownNotificationIds.add(resolvedId);
     if (state.notifications.any((n) => n.id == resolvedId)) {
       return;
     }

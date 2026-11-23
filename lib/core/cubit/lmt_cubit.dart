@@ -48,6 +48,7 @@ class LmtCubit extends LmtBaseCubit
         NotificationsCubitMixin,
         KhelwaCubitMixin {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<List<AppNotificationModel>>? _notificationsSubscription;
 
   LmtCubit({LmtRepository? repository})
       : super(repository: repository ?? const LmtLocalRepositoryImpl()) {
@@ -112,7 +113,9 @@ class LmtCubit extends LmtBaseCubit
       ),
     );
 
+    knownNotificationIds.addAll(snapshot.notifications.map((n) => n.id));
     _startConnectivityListener();
+    _startNotificationsListener();
     scheduleEndOfDayKhelwaSummaryTimer();
     await scheduleAllCalendarNotifications();
     await syncDueCalendarReminders();
@@ -147,12 +150,67 @@ class LmtCubit extends LmtBaseCubit
     } catch (_) {}
   }
 
+  void _startNotificationsListener() {
+    _notificationsSubscription?.cancel();
+    try {
+      _notificationsSubscription = repository.watchNotifications().listen(
+        _onRemoteNotificationsSnapshot,
+        onError: (_) {},
+      );
+    } catch (_) {}
+  }
+
+  void _onRemoteNotificationsSnapshot(List<AppNotificationModel> remoteList) {
+    if (isClosed || !state.isInitialized) return;
+    if (state.isSyncing) {
+      knownNotificationIds.addAll(remoteList.map((n) => n.id));
+      return;
+    }
+
+    final currentUserId = state.currentUser.id;
+    var hasNewIncomingAlert = false;
+
+    for (final n in remoteList) {
+      final isBrandNew = knownNotificationIds.add(n.id) &&
+          !state.notifications.any((existing) => existing.id == n.id);
+      if (isBrandNew && !n.isRead && n.isVisibleTo(currentUserId)) {
+        hasNewIncomingAlert = true;
+        LocalNotificationService.showInstantNotification(
+          idKey: n.id,
+          title: n.title,
+          body: n.description,
+          tone: LmtNotificationTone.fromString(n.tone),
+          payloadData: {
+            'notifId': n.id,
+            'tab': ?n.targetTabIndex,
+            'groupId': ?n.targetGroupId,
+            'eventId': ?n.targetEventId,
+            'route': ?n.targetRoute,
+          },
+        );
+      }
+    }
+
+    if (isSuppressingRemoteNotifSync && !hasNewIncomingAlert) {
+      return;
+    }
+
+    if (hasNewIncomingAlert ||
+        remoteList.length != state.notifications.length) {
+      emit(state.copyWith(notifications: remoteList));
+    }
+    if (hasNewIncomingAlert && !state.isSyncing) {
+      syncNow();
+    }
+  }
+
   @override
   Future<void> close() {
     cancelKhelwaTimer();
     cancelCalendarTimers();
     cancelTypingWatchers();
     _connectivitySubscription?.cancel();
+    _notificationsSubscription?.cancel();
     return super.close();
   }
 }

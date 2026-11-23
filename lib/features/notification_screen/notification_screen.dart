@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'cubit/notifications_cubit.dart';
 import '../../core/models/lmt_models.dart';
 import '../../core/routes/app_router.dart';
+import '../../core/services/local_notification_service.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/typography.dart';
 import '../../core/widgets/adaptive_layout.dart';
@@ -132,21 +134,28 @@ class NotificationScreen extends StatelessWidget {
               ],
             ],
           ),
-          body: visibleNotifications.isEmpty
-              ? Center(
-                  child: Text(
-                    isArabic
-                        ? 'لا توجد إشعارات حالياً'
-                        : 'No notifications yet',
-                    style: TextStyle(color: textSecondary),
-                  ),
-                )
-              : AdaptiveContentBox(
-                  maxWidth: 760,
-                  child: ListView.builder(
-                    padding: EdgeInsets.all(14.w),
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: visibleNotifications.length,
+          body: Column(
+            children: [
+              if (kIsWeb &&
+                  LocalNotificationService.isWebNotificationsSupported &&
+                  LocalNotificationService.webPermissionStatus != 'granted')
+                _WebNotificationsBanner(isArabic: isArabic),
+              Expanded(
+                child: visibleNotifications.isEmpty
+                    ? Center(
+                        child: Text(
+                          isArabic
+                              ? 'لا توجد إشعارات حالياً'
+                              : 'No notifications yet',
+                          style: TextStyle(color: textSecondary),
+                        ),
+                      )
+                    : AdaptiveContentBox(
+                        maxWidth: 820,
+                        child: ListView.builder(
+                          padding: EdgeInsets.all(14.w),
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: visibleNotifications.length,
                   itemBuilder: (context, index) {
                     final notif = visibleNotifications[index];
                     final isUnread = !notif.isRead;
@@ -314,6 +323,9 @@ class NotificationScreen extends StatelessWidget {
                   },
                   ),
                 ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -332,5 +344,103 @@ class NotificationScreen extends StatelessWidget {
       case NotificationCategory.system:
         return Icons.notifications_active_rounded;
     }
+  }
+}
+
+class _WebNotificationsBanner extends StatefulWidget {
+  final bool isArabic;
+
+  const _WebNotificationsBanner({required this.isArabic});
+
+  @override
+  State<_WebNotificationsBanner> createState() =>
+      _WebNotificationsBannerState();
+}
+
+class _WebNotificationsBannerState extends State<_WebNotificationsBanner> {
+  String _status = LocalNotificationService.webPermissionStatus;
+
+  Future<void> _enable() async {
+    final next = await LocalNotificationService.requestWebPermission();
+    if (!mounted) return;
+    setState(() => _status = next);
+    if (next == 'granted') {
+      await LocalNotificationService.showInstantNotification(
+        idKey: 'web_notif_enabled_${DateTime.now().millisecondsSinceEpoch}',
+        title: widget.isArabic
+            ? 'تم تفعيل إشعارات المتصفح 🔔'
+            : 'Browser Notifications Enabled 🔔',
+        body: widget.isArabic
+            ? 'ستصلك الآن تنبيهات الرسائل والمنشورات والفعاليات بالأصوات المخصصة.'
+            : 'You will now receive real-time alerts with custom chimes.',
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_status == 'granted' || _status == 'unsupported') {
+      return const SizedBox.shrink();
+    }
+    final primary = AppColors.primaryOf(context);
+    final denied = _status == 'denied';
+
+    return AdaptiveContentBox(
+      maxWidth: 820,
+      child: Container(
+        margin: EdgeInsets.fromLTRB(14.w, 12.h, 14.w, 2.h),
+        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+        decoration: BoxDecoration(
+          color: primary.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(14.r),
+          border: Border.all(color: primary.withValues(alpha: 0.28)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              denied
+                  ? Icons.notifications_off_rounded
+                  : Icons.notifications_active_rounded,
+              color: primary,
+            ),
+            SizedBox(width: 10.w),
+            Expanded(
+              child: Text(
+                denied
+                    ? (widget.isArabic
+                        ? 'إشعارات المتصفح محظورة حالياً — اسمح بالإشعارات من أيقونة القفل بجانب رابط الموقع.'
+                        : 'Browser notifications are blocked — allow them from the address-bar lock icon.')
+                    : (widget.isArabic
+                        ? 'فعّل إشعارات المتصفح لاستلام التنبيهات الفورية بالصوت المخصص حتى أثناء تصفح تبويبات أخرى.'
+                        : 'Enable browser notifications to get instant alerts with custom sounds across tabs.'),
+                style: TextStyle(
+                  fontSize: 11.5.sp,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimaryOf(context),
+                ),
+              ),
+            ),
+            if (!denied) ...[
+              SizedBox(width: 10.w),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primary,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 12.w,
+                    vertical: 8.h,
+                  ),
+                ),
+                onPressed: _enable,
+                child: Text(
+                  widget.isArabic ? 'تفعيل الآن' : 'Enable',
+                  style: TextStyle(fontSize: 11.5.sp),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

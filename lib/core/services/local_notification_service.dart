@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show Color;
 
@@ -6,7 +7,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
-/// Custom audio channels for L.M.T OS notifications.
+import 'web_notification_bridge.dart';
+
+/// Custom audio channels for L.M.T OS & Web notifications.
 enum LmtNotificationTone {
   /// Standard chime for posts, shared files, and general alerts.
   normal,
@@ -23,6 +26,20 @@ enum LmtNotificationTone {
   /// Custom chime (`message_reacts`) for emoji reactions on user's chat messages.
   messageReacts;
 
+  /// Bundled MP3 asset path used on Web browsers to play each custom tone.
+  String get webAssetPath => switch (this) {
+        LmtNotificationTone.normal =>
+          'assets/notifications_tones/Normal_Notfications.mp3',
+        LmtNotificationTone.calendar =>
+          'assets/notifications_tones/Calendar_Reminder.mp3',
+        LmtNotificationTone.chatMessage =>
+          'assets/notifications_tones/Chat_Message_Tone.mp3',
+        LmtNotificationTone.postInteractions =>
+          'assets/notifications_tones/Post_Interactions.mp3',
+        LmtNotificationTone.messageReacts =>
+          'assets/notifications_tones/Message_Reacts.mp3',
+      };
+
   /// Parses [value] or falls back cleanly when reading legacy stored notifications.
   static LmtNotificationTone fromString(String? value) {
     if (value == null || value.trim().isEmpty) {
@@ -35,14 +52,49 @@ enum LmtNotificationTone {
   }
 }
 
-/// Real Mobile Notification & Background Lock-Screen Reminder Service for
-/// both Android and iOS (`flutter_local_notifications`).
+/// Payload emitted when a notification arrives in-app (especially on Web).
+class ForegroundNotificationEvent {
+  final String idKey;
+  final String title;
+  final String body;
+  final LmtNotificationTone tone;
+  final String? payload;
+
+  const ForegroundNotificationEvent({
+    required this.idKey,
+    required this.title,
+    required this.body,
+    required this.tone,
+    this.payload,
+  });
+}
+
+/// Real Mobile & Web Notification + Scheduled Reminder Service across
+/// Android, iOS (`flutter_local_notifications`), and Web Browsers.
 class LocalNotificationService {
   LocalNotificationService._();
 
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
+  static final Map<String, Timer> _webScheduledTimers = <String, Timer>{};
+  static final StreamController<ForegroundNotificationEvent>
+      _foregroundController =
+      StreamController<ForegroundNotificationEvent>.broadcast();
+
+  /// Broadcast stream of foreground notifications (used for rich Web banners).
+  static Stream<ForegroundNotificationEvent> get foregroundStream =>
+      _foregroundController.stream;
+
+  /// Whether browser Desktop Notifications are supported on this runtime.
+  static bool get isWebNotificationsSupported => WebNotificationBridge.isSupported;
+
+  /// Current browser notification permission (`granted`, `denied`, `default`, `unsupported`).
+  static String get webPermissionStatus => WebNotificationBridge.permissionStatus;
+
+  /// Prompts the browser user (should be triggered from a user gesture on Web).
+  static Future<String> requestWebPermission() =>
+      WebNotificationBridge.requestPermission();
 
   /// Optional callback invoked when the user taps any OS notification banner.
   static void Function(String? payload)? onNotificationTapped;
@@ -207,11 +259,19 @@ class LocalNotificationService {
   }
 
   /// Initializes notification channels on Android, permissions on iOS, and
-  /// deep-link tap handlers for both foreground and cold-start launches.
+  /// browser support on Web cleanly without throwing on unsupported targets.
   static Future<void> init() async {
     if (_initialized) return;
     try {
       tz.initializeTimeZones();
+    } catch (_) {}
+
+    if (kIsWeb) {
+      _initialized = true;
+      return;
+    }
+
+    try {
 
       const androidInit =
           AndroidInitializationSettings('@drawable/ic_notification');
@@ -340,8 +400,8 @@ class LocalNotificationService {
     return key.hashCode.abs() % 2147483647;
   }
 
-  /// Displays a real mobile status-bar / lock-screen notification immediately
-  /// using either [LmtNotificationTone.normal] or [LmtNotificationTone.calendar].
+  /// Displays a real mobile status-bar / lock-screen notification (or browser
+  /// notification + custom MP3 chime on Web) using [tone].
   static Future<void> showInstantNotification({
     required String idKey,
     required String title,
@@ -349,6 +409,31 @@ class LocalNotificationService {
     LmtNotificationTone tone = LmtNotificationTone.normal,
     Map<String, dynamic>? payloadData,
   }) async {
+    final encodedPayload = payloadData != null ? jsonEncode(payloadData) : null;
+    if (!_foregroundController.isClosed) {
+      _foregroundController.add(
+        ForegroundNotificationEvent(
+          idKey: idKey,
+          title: title,
+          body: body,
+          tone: tone,
+          payload: encodedPayload,
+        ),
+      );
+    }
+
+    if (kIsWeb) {
+      await WebNotificationBridge.showNotification(
+        idKey: idKey,
+        title: title,
+        body: body,
+        toneAssetPath: tone.webAssetPath,
+        payload: encodedPayload,
+        onTap: onNotificationTapped,
+      );
+      return;
+    }
+
     try {
       await init();
       await _plugin.show(
@@ -356,11 +441,35 @@ class LocalNotificationService {
         title,
         body,
         _detailsFor(tone),
-        payload: payloadData != null ? jsonEncode(payloadData) : null,
+        payload: encodedPayload,
       );
     } catch (e) {
       debugPrint('showInstantNotification error: $e');
     }
+  }
+
+  static void _scheduleWebTimer({
+    required String timerKey,
+    required DateTime scheduledAt,
+    required String idKey,
+    required String title,
+    required String body,
+    required Map<String, dynamic> payload,
+  }) {
+    _webScheduledTimers.remove(timerKey)?.cancel();
+    final diff = scheduledAt.difference(DateTime.now());
+    // Avoid 32-bit JS timer overflow (~24.8 days max).
+    if (diff <= Duration.zero || diff > const Duration(days: 20)) return;
+    _webScheduledTimers[timerKey] = Timer(diff, () {
+      _webScheduledTimers.remove(timerKey);
+      showInstantNotification(
+        idKey: idKey,
+        title: title,
+        body: body,
+        tone: LmtNotificationTone.calendar,
+        payloadData: payload,
+      );
+    });
   }
 
   /// Schedules the custom reminder alarm for a Calendar event using the
@@ -372,27 +481,41 @@ class LocalNotificationService {
     String? location,
     required DateTime reminderDateTime,
   }) async {
+    final now = DateTime.now();
+    final hasLoc = location != null && location.trim().isNotEmpty;
+    final bodyText =
+        hasLoc ? '$description • المكان: ${location.trim()}' : description;
+    final payload = <String, dynamic>{
+      'tab': 3,
+      'eventId': eventId,
+      'notifId': 'notif_rem_$eventId',
+    };
+    final notifTitle = 'تذكير فعالية L.M.T 🗓️: $title';
+
+    if (kIsWeb) {
+      if (reminderDateTime.isAfter(now)) {
+        _scheduleWebTimer(
+          timerKey: 'evt_rem_$eventId',
+          scheduledAt: reminderDateTime,
+          idKey: 'notif_rem_$eventId',
+          title: notifTitle,
+          body: bodyText,
+          payload: payload,
+        );
+      }
+      return;
+    }
+
     try {
       await init();
       final notifId = _stableIdFromString('evt_rem_$eventId');
       await _plugin.cancel(notifId);
 
-      final now = DateTime.now();
-      final hasLoc = location != null && location.trim().isNotEmpty;
-      final bodyText = hasLoc
-          ? '$description • المكان: ${location.trim()}'
-          : description;
-      final payload = <String, dynamic>{
-        'tab': 3,
-        'eventId': eventId,
-        'notifId': 'notif_rem_$eventId',
-      };
-
       if (reminderDateTime.isAfter(now)) {
         final scheduledTz = tz.TZDateTime.from(reminderDateTime, tz.local);
         await _plugin.zonedSchedule(
           notifId,
-          'تذكير فعالية L.M.T 🗓️: $title',
+          notifTitle,
           bodyText,
           scheduledTz,
           _detailsFor(LmtNotificationTone.calendar),
@@ -414,28 +537,41 @@ class LocalNotificationService {
     String? location,
     required DateTime eventDateTime,
   }) async {
+    final oneDayBefore = eventDateTime.subtract(const Duration(days: 1));
+    if (!oneDayBefore.isAfter(DateTime.now())) return;
+
+    final hasLoc = location != null && location.trim().isNotEmpty;
+    final bodyText = hasLoc
+        ? 'موعدنا غداً: $description • المكان: ${location.trim()}'
+        : 'موعدنا غداً: $description';
+    final payload = <String, dynamic>{
+      'tab': 3,
+      'eventId': eventId,
+      'notifId': 'notif_1day_$eventId',
+    };
+    final notifTitle = 'تذكير تلقائي قبل الموعد بيوم 🗓️🔔: $title';
+
+    if (kIsWeb) {
+      _scheduleWebTimer(
+        timerKey: 'evt_1day_$eventId',
+        scheduledAt: oneDayBefore,
+        idKey: 'notif_1day_$eventId',
+        title: notifTitle,
+        body: bodyText,
+        payload: payload,
+      );
+      return;
+    }
+
     try {
       await init();
       final notifId = _stableIdFromString('evt_1day_$eventId');
       await _plugin.cancel(notifId);
 
-      final oneDayBefore = eventDateTime.subtract(const Duration(days: 1));
-      if (!oneDayBefore.isAfter(DateTime.now())) return;
-
-      final hasLoc = location != null && location.trim().isNotEmpty;
-      final bodyText = hasLoc
-          ? 'موعدنا غداً: $description • المكان: ${location.trim()}'
-          : 'موعدنا غداً: $description';
-      final payload = <String, dynamic>{
-        'tab': 3,
-        'eventId': eventId,
-        'notifId': 'notif_1day_$eventId',
-      };
-
       final scheduledTz = tz.TZDateTime.from(oneDayBefore, tz.local);
       await _plugin.zonedSchedule(
         notifId,
-        'تذكير تلقائي قبل الموعد بيوم 🗓️🔔: $title',
+        notifTitle,
         bodyText,
         scheduledTz,
         _detailsFor(LmtNotificationTone.calendar),
@@ -450,6 +586,10 @@ class LocalNotificationService {
   /// Cancels both the custom reminder and the automatic 1-day-before reminder
   /// for [eventId].
   static Future<void> cancelEventReminder(String eventId) async {
+    _webScheduledTimers.remove('evt_rem_$eventId')?.cancel();
+    _webScheduledTimers.remove('evt_1day_$eventId')?.cancel();
+    if (kIsWeb) return;
+
     try {
       await init();
       await _plugin.cancel(_stableIdFromString('evt_rem_$eventId'));

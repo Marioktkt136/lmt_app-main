@@ -170,7 +170,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           onPointerDown: (_) => _scheduleIdleReset(),
           onPointerMove: (_) => _scheduleIdleReset(),
           child: AdaptiveContentBox(
-            maxWidth: 860,
+            maxWidth: AdaptiveBreakpoints.wideDesktopMaxWidth,
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -287,19 +287,61 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         ),
                       ),
                     )
-                  : ListView.builder(
-                      physics: const BouncingScrollPhysics(),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 2.w,
-                        vertical: 4.h,
-                      ),
-                      itemCount: filteredEvents.length,
-                      itemBuilder: (context, index) {
-                        final evt = filteredEvents[index];
-                        return CalendarEventCard(
-                          evt: evt,
-                          canManageCalendar: canManageCalendar,
-                          accentGreen: accentGreen,
+                  : LayoutBuilder(
+                      builder: (context, listConstraints) {
+                        if (listConstraints.maxWidth >= 820) {
+                          final rowCount = (filteredEvents.length + 1) ~/ 2;
+                          return ListView.builder(
+                            physics: const BouncingScrollPhysics(),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 2.w,
+                              vertical: 4.h,
+                            ),
+                            itemCount: rowCount,
+                            itemBuilder: (context, rowIndex) {
+                              final leftIdx = rowIndex * 2;
+                              final rightIdx = leftIdx + 1;
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: CalendarEventCard(
+                                      evt: filteredEvents[leftIdx],
+                                      canManageCalendar: canManageCalendar,
+                                      accentGreen: accentGreen,
+                                    ),
+                                  ),
+                                  SizedBox(width: 12.w),
+                                  Expanded(
+                                    child: rightIdx < filteredEvents.length
+                                        ? CalendarEventCard(
+                                            evt: filteredEvents[rightIdx],
+                                            canManageCalendar:
+                                                canManageCalendar,
+                                            accentGreen: accentGreen,
+                                          )
+                                        : const SizedBox.shrink(),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        }
+                        return ListView.builder(
+                          physics: const BouncingScrollPhysics(),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 2.w,
+                            vertical: 4.h,
+                          ),
+                          itemCount: filteredEvents.length,
+                          itemBuilder: (context, index) {
+                            final evt = filteredEvents[index];
+                            return CalendarEventCard(
+                              evt: evt,
+                              canManageCalendar: canManageCalendar,
+                              accentGreen: accentGreen,
+                            );
+                          },
                         );
                       },
                     ),

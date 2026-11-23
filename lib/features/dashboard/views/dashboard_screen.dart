@@ -58,7 +58,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .toList();
 
         return AdaptiveContentBox(
-          maxWidth: 960,
+          maxWidth: AdaptiveBreakpoints.wideDesktopMaxWidth,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

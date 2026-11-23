@@ -472,10 +472,17 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
           child: Column(
             children: [
             if (widget.showInlineHeader) ...[
-              ConversationHeaderBar(
-                group: widget.group,
-                state: state,
-                onBack: widget.onBack,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18.r),
+                child: SizedBox(
+                  height: 62.h,
+                  child: ConversationHeaderBar(
+                    group: widget.group,
+                    state: state,
+                    onBack: widget.onBack,
+                    showBackButton: false,
+                  ),
+                ),
               ),
               SizedBox(height: 8.h),
             ],

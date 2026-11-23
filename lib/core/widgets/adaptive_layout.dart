@@ -13,6 +13,12 @@ class AdaptiveBreakpoints {
   /// Width at or above which the side navigation rail shows extended labels.
   static const double navRailExtendedMinWidth = 980.0;
 
+  /// Width at or above which master-detail split views activate on desktop/web.
+  static const double desktopSplitMinWidth = 960.0;
+
+  /// Maximum width for wide desktop multi-column views (Calendar, Files, Members).
+  static const double wideDesktopMaxWidth = 1140.0;
+
   /// Maximum readable content width for feed, forms, settings, and profile views.
   static const double readableMaxWidth = 740.0;
 

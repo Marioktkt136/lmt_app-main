@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 
@@ -46,6 +47,9 @@ class BiometricAuthService {
 
   /// Shows the system biometric prompt using [localizedReason].
   Future<BiometricResult> authenticate({required String localizedReason}) async {
+    if (kIsWeb) {
+      return const BiometricResult(BiometricStatus.notEnrolled);
+    }
     try {
       final isSupported = await _localAuth.isDeviceSupported();
       final canCheck = await _localAuth.canCheckBiometrics;

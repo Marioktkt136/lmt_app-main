@@ -1,8 +1,12 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../cubit/layout_cubit.dart';
+import '../../../core/services/local_notification_service.dart';
 import '../../../core/services/shorebird_update_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/widgets/adaptive_layout.dart';
@@ -42,6 +46,7 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   late int _selectedIndex;
   PageController? _pageController;
   bool _hasShownUpdateWelcome = false;
+  StreamSubscription<ForegroundNotificationEvent>? _foregroundNotifSub;
 
   @override
   void initState() {
@@ -49,6 +54,48 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _selectedIndex = widget.initialIndex.clamp(0, _pages.length - 1);
     _pageController = PageController(initialPage: _selectedIndex);
+    _foregroundNotifSub =
+        LocalNotificationService.foregroundStream.listen((event) {
+      if (!mounted || !kIsWeb) return;
+      if (LocalNotificationService.webPermissionStatus == 'granted') return;
+      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 5),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.title,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                if (event.body.trim().isNotEmpty)
+                  Text(
+                    event.body,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+            action: event.payload != null
+                ? SnackBarAction(
+                    label: isArabic ? 'فتح' : 'Open',
+                    onPressed: () {
+                      if (mounted) {
+                        context
+                            .read<LmtCubit>()
+                            .handleNotificationPayload(event.payload);
+                      }
+                    },
+                  )
+                : null,
+          ),
+        );
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final cubit = context.read<LmtCubit>();
@@ -91,6 +138,7 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _foregroundNotifSub?.cancel();
     _pageController?.dispose();
     _pageController = null;
     super.dispose();
@@ -312,31 +360,46 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(26.r),
-                              child: NavigationRail(
-                                selectedIndex: _selectedIndex,
-                                onDestinationSelected: _onTabChanged,
-                                extended: isExtendedRail,
-                                backgroundColor: Colors.transparent,
-                                selectedIconTheme:
-                                    IconThemeData(color: primary),
-                                selectedLabelTextStyle: TextStyle(
-                                  color: primary,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12.sp,
-                                ),
-                                unselectedIconTheme: IconThemeData(
-                                  color: AppColors.textSecondaryOf(context),
-                                ),
-                                unselectedLabelTextStyle: TextStyle(
-                                  color: AppColors.textSecondaryOf(context),
-                                  fontSize: 11.5.sp,
-                                ),
-                                indicatorColor:
-                                    primary.withValues(alpha: 0.14),
-                                labelType: isExtendedRail
-                                    ? NavigationRailLabelType.none
-                                    : NavigationRailLabelType.all,
-                                destinations: railDestinations,
+                              child: LayoutBuilder(
+                                builder: (context, railConstraints) {
+                                  return SingleChildScrollView(
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        minHeight: railConstraints.maxHeight,
+                                      ),
+                                      child: IntrinsicHeight(
+                                        child: NavigationRail(
+                                          selectedIndex: _selectedIndex,
+                                          onDestinationSelected: _onTabChanged,
+                                          extended: isExtendedRail,
+                                          backgroundColor: Colors.transparent,
+                                          selectedIconTheme:
+                                              IconThemeData(color: primary),
+                                          selectedLabelTextStyle: TextStyle(
+                                            color: primary,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12.sp,
+                                          ),
+                                          unselectedIconTheme: IconThemeData(
+                                            color: AppColors.textSecondaryOf(
+                                                context),
+                                          ),
+                                          unselectedLabelTextStyle: TextStyle(
+                                            color: AppColors.textSecondaryOf(
+                                                context),
+                                            fontSize: 11.5.sp,
+                                          ),
+                                          indicatorColor:
+                                              primary.withValues(alpha: 0.14),
+                                          labelType: isExtendedRail
+                                              ? NavigationRailLabelType.none
+                                              : NavigationRailLabelType.all,
+                                          destinations: railDestinations,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                           ),

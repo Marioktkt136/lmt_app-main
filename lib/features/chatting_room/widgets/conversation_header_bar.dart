@@ -26,12 +26,16 @@ class ConversationHeaderBar extends StatelessWidget
   /// Callback invoked when the back button is tapped.
   final VoidCallback onBack;
 
+  /// Whether to render the back arrow leading button (hidden in desktop split view).
+  final bool showBackButton;
+
   /// Creates a [ConversationHeaderBar].
   const ConversationHeaderBar({
     super.key,
     required this.group,
     required this.state,
     required this.onBack,
+    this.showBackButton = true,
   });
 
   @override
@@ -70,15 +74,18 @@ class ConversationHeaderBar extends StatelessWidget
               ),
             )
           : null,
-      leading: IconButton(
-        tooltip: isArabic ? 'رجوع للمجموعات' : 'Back to groups',
-        onPressed: onBack,
-        icon: Icon(
-          Icons.arrow_back_ios_new_rounded,
-          size: 19.sp,
-          color: fgColor,
-        ),
-      ),
+      leading: showBackButton
+          ? IconButton(
+              tooltip: isArabic ? 'رجوع للمجموعات' : 'Back to groups',
+              onPressed: onBack,
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                size: 19.sp,
+                color: fgColor,
+              ),
+            )
+          : const SizedBox.shrink(),
+      leadingWidth: showBackButton ? null : 12,
       title: InkWell(
         borderRadius: BorderRadius.circular(12.r),
         onTap: canEditGroup

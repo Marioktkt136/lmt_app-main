@@ -2,7 +2,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/models/lmt_models.dart';
@@ -137,10 +136,8 @@ class _TimelinePostCardState extends State<TimelinePostCard> {
     if (post.mediaPath != null &&
         post.mediaPath!.isNotEmpty &&
         !DeviceFileHelper.isAssetPath(post.mediaPath!)) {
-      try {
-        await OpenFilex.open(post.mediaPath!);
-        return;
-      } catch (_) {}
+      final err = await DeviceFileHelper.openPath(post.mediaPath!);
+      if (err == null) return;
     }
     if (post.videoUrl != null && post.videoUrl!.isNotEmpty) {
       final uri = Uri.parse(post.videoUrl!);

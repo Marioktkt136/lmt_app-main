@@ -1,9 +1,11 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../../core/routes/routes.dart';
+import '../../../core/services/local_notification_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_preferences.dart';
 import '../../../core/widgets/adaptive_layout.dart';
@@ -53,7 +55,8 @@ class LoginScreenState extends State<LoginScreen> {
     final biometricPrefEnabled = await AppPreferences.isBiometricEnabled();
     final hasValidPrevious =
         hasLoggedInBefore && savedUser != null && savedUser.trim().isNotEmpty;
-    final canAutoPromptBiometrics = hasValidPrevious && biometricPrefEnabled;
+    final canAutoPromptBiometrics =
+        !kIsWeb && hasValidPrevious && biometricPrefEnabled;
 
     if (!mounted) return;
     setState(() {
@@ -104,6 +107,11 @@ class LoginScreenState extends State<LoginScreen> {
   /// Validates and submits the username/password form.
   Future<void> submit() async {
     if (_isSubmitting || !formKey.currentState!.validate()) return;
+
+    if (kIsWeb && LocalNotificationService.webPermissionStatus == 'default') {
+      // Request browser notification permission inside the login tap gesture.
+      LocalNotificationService.requestWebPermission();
+    }
 
     final isArabic = context.locale.languageCode == 'ar';
     setState(() => _isSubmitting = true);
