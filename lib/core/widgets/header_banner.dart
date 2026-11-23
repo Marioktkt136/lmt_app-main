@@ -18,26 +18,31 @@ class HeaderBanner extends StatelessWidget {
       builder: (context, state) {
         final primary = AppColors.primaryOf(context);
         final textPrimary = AppColors.textPrimaryOf(context);
+        final isShortHeight = MediaQuery.sizeOf(context).height < 500;
+        final logoSize = isShortHeight ? 32.w : 46.w;
 
         return Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 2.h),
+          padding: EdgeInsets.symmetric(
+            horizontal: 4.w,
+            vertical: isShortHeight ? 0 : 2.h,
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
-                width: 46.w,
-                height: 46.w,
+                width: logoSize,
+                height: logoSize,
                 child: Image.asset(AppAssets.appLogo, fit: BoxFit.contain),
               ),
               SizedBox(width: 10.w),
               Expanded(
                 child: Text(
                   state.verseOfYear,
-                  maxLines: 2,
+                  maxLines: isShortHeight ? 1 : 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 11.5.sp,
+                    fontSize: isShortHeight ? 10.5.sp : 11.5.sp,
                     height: 1.35,
                     fontWeight: FontWeight.w800,
                     fontFamily: 'Cairo',

@@ -19,10 +19,13 @@ class KhelwaCounterCircle extends StatelessWidget {
     return Semantics(
       label: 'آخر مرة أخدت الخلوة: $daysDifference يوم. $statusText',
       excludeSemantics: true,
-      child: Container(
-        width: 240.w,
-        height: 240.w,
-        decoration: BoxDecoration(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final diameter = (constraints.maxWidth * 0.68).clamp(190.0, 260.0);
+          return Container(
+            width: diameter,
+            height: diameter,
+            decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: _blue,
           boxShadow: [
@@ -59,6 +62,8 @@ class KhelwaCounterCircle extends StatelessWidget {
             ),
           ),
         ),
+          );
+        },
       ),
     );
   }

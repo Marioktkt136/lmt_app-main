@@ -1,11 +1,13 @@
 /// Member roles classified according to the L.M.T specification.
 ///
-/// - [UserRole.admin]: Can create, add, delete, and update any resource.
-/// - [UserRole.editor]: Can manage member accounts, promote/demote between
-///   [UserRole.member] and [UserRole.editor], and manage shared files, posts,
-///   chatting groups, and calendar events.
-/// - [UserRole.member]: Can view and interact with chats, shared files, posts,
-///   and the calendar.
+/// - [UserRole.admin]: Full authority to create, edit, and delete users, posts,
+///   chat groups, calendar events, and shared files.
+/// - [UserRole.editor]: Can create and edit posts, chat groups, calendar events,
+///   and shared files, and edit non-admin member roles/details, but CANNOT
+///   create users or delete users, posts, chat groups, events, or shared files.
+/// - [UserRole.member]: View and interact only (chatting, reacting, liking,
+///   commenting, voting in polls) without creating, editing, or deleting
+///   structural resources.
 enum UserRole {
   admin,
   editor,
@@ -50,7 +52,10 @@ enum UserRole {
   /// Whether this role has full unrestricted administrator privileges.
   bool get canDoAnything => this == UserRole.admin;
 
-  /// Whether this role can create and edit member accounts.
+  /// Whether this role can create new member accounts (Administrator only).
+  bool get canCreateMembers => this == UserRole.admin;
+
+  /// Whether this role can open member account management to edit roles/info.
   bool get canManageMembers =>
       this == UserRole.admin || this == UserRole.editor;
 
@@ -61,20 +66,37 @@ enum UserRole {
   /// and committees (`اللجنة`). Restricted strictly to [UserRole.admin].
   bool get canEditDepartmentsAndCommittees => this == UserRole.admin;
 
-  /// Whether this role can create, update, or delete chatting groups.
+  /// Whether this role can create or edit chatting groups.
   bool get canManageGroups =>
       this == UserRole.admin || this == UserRole.editor;
 
-  /// Whether this role can upload, update, or delete shared files and cards.
+  /// Whether this role can permanently delete chatting groups.
+  bool get canDeleteGroups => this == UserRole.admin;
+
+  /// Whether this role can upload or edit shared files and cards.
   bool get canManageFiles =>
       this == UserRole.admin || this == UserRole.editor;
 
-  /// Whether this role can create, update, or delete calendar events.
+  /// Whether this role can permanently delete shared files and cards.
+  bool get canDeleteFiles => this == UserRole.admin;
+
+  /// Whether this role can create or edit calendar events.
   bool get canManageCalendar =>
       this == UserRole.admin || this == UserRole.editor;
 
-  /// Whether this role can publish posts in the timeline.
-  bool get canCreatePosts => true;
+  /// Whether this role can permanently delete calendar events.
+  bool get canDeleteCalendar => this == UserRole.admin;
+
+  /// Whether this role can create or edit posts in the timeline.
+  bool get canCreatePosts =>
+      this == UserRole.admin || this == UserRole.editor;
+
+  /// Whether this role can edit existing posts in the timeline.
+  bool get canEditPosts =>
+      this == UserRole.admin || this == UserRole.editor;
+
+  /// Whether this role can permanently delete posts in the timeline.
+  bool get canDeletePosts => this == UserRole.admin;
 
   /// Determines whether this role is authorized to change a member from
   /// [targetCurrentRole] to [newRole].

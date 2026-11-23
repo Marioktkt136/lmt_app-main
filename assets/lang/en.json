@@ -35,7 +35,7 @@
   "login_title": "The Last Message Team",
   "login_subtitle": "فريق الرسالة الأخيرة (L.M.T)",
   "username_label": "Username / ID",
-  "username_hint": "Enter your username (e.g. admin, editor, member)",
+  "username_hint": "Enter your username or Member ID",
   "password_label": "Password",
   "password_hint": "Enter your password",
   "remember_me": "Remember me",

@@ -198,15 +198,24 @@ mixin CalendarCubitMixin on LmtBaseCubit {
     final updatedEvents = [...state.calendarEvents, newEvent]
       ..sort((a, b) => a.eventDateTime.compareTo(b.eventDateTime));
 
-    pushNotification(
-      title: 'فعالية جديدة في التقويم 🗓️',
-      description: cleanedLocation != null
-          ? '${newEvent.title} - المكان: $cleanedLocation'
-          : newEvent.title,
-      category: NotificationCategory.calendar,
-      targetTabIndex: 3,
-      targetEventId: newEvent.id,
-    );
+    final otherMemberIds = state.members
+        .where((m) => m.id != state.currentUser.id)
+        .map((m) => m.id)
+        .toList();
+    if (otherMemberIds.isNotEmpty) {
+      pushNotification(
+        title: 'فعالية جديدة في التقويم 🗓️',
+        description: cleanedLocation != null
+            ? '${newEvent.title} - المكان: $cleanedLocation'
+            : newEvent.title,
+        category: NotificationCategory.calendar,
+        tone: LmtNotificationTone.calendar,
+        targetTabIndex: 3,
+        targetEventId: newEvent.id,
+        targetMemberIds: otherMemberIds,
+        excludedMemberIds: [state.currentUser.id],
+      );
+    }
 
     emit(state.copyWith(calendarEvents: updatedEvents));
     await _scheduleBothEventReminders(newEvent);
@@ -232,9 +241,9 @@ mixin CalendarCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Deletes a calendar event and cancels all scheduled reminders for it.
+  /// Deletes a calendar event and cancels all scheduled reminders for it (Admin only).
   Future<void> deleteCalendarEvent(String eventId) async {
-    if (!state.currentUser.role.canManageCalendar) return;
+    if (!state.currentUser.role.canDeleteCalendar) return;
     await LocalNotificationService.cancelEventReminder(eventId);
     _calendarReminderTimers.remove('rem_$eventId')?.cancel();
     _calendarReminderTimers.remove('1day_$eventId')?.cancel();

@@ -6,6 +6,7 @@ import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_assets.dart';
 import '../../../core/utils/device_file_helper.dart';
+import '../../../core/widgets/expandable_text.dart';
 import '../views/chat_media_viewer_page.dart';
 import 'voice_note_player_widget.dart';
 
@@ -142,8 +143,8 @@ class ChatMessageBody extends StatelessWidget {
               ),
               if (msg.content.isNotEmpty) ...[
                 SizedBox(height: 6.h),
-                Text(
-                  msg.content,
+                LmtExpandableText(
+                  text: msg.content,
                   style: TextStyle(fontSize: 13.sp, color: textPrimary),
                 ),
               ],
@@ -194,8 +195,8 @@ class ChatMessageBody extends StatelessWidget {
             ),
             if (msg.content.isNotEmpty) ...[
               SizedBox(height: 6.h),
-              Text(
-                msg.content,
+              LmtExpandableText(
+                text: msg.content,
                 style: TextStyle(fontSize: 13.sp, color: textPrimary),
               ),
             ],
@@ -333,8 +334,8 @@ class ChatMessageBody extends StatelessWidget {
         );
 
       case MessageType.text:
-        return Text(
-          msg.content,
+        return LmtExpandableText(
+          text: msg.content,
           style: TextStyle(fontSize: 13.5.sp, color: textPrimary, height: 1.4),
         );
     }

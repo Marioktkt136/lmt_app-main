@@ -47,8 +47,13 @@ class LoginBody extends StatelessWidget {
   /// Submits the login form.
   final VoidCallback submit;
 
-  /// Whether biometric authentication is enabled (true only after first login).
+  /// Whether biometric authentication is enabled (true only after first login
+  /// AND enabled in Settings).
   final bool isBiometricEnabled;
+
+  /// True when the user previously logged in, but disabled biometrics in
+  /// Settings.
+  final bool isBiometricDisabledBySettings;
 
   /// Triggers the biometric authentication prompt.
   final VoidCallback onBiometricLogin;
@@ -71,6 +76,7 @@ class LoginBody extends StatelessWidget {
     required this.onRememberMeChanged,
     required this.submit,
     required this.isBiometricEnabled,
+    this.isBiometricDisabledBySettings = false,
     required this.onBiometricLogin,
     this.isLoading = false,
   });
@@ -143,6 +149,7 @@ class LoginBody extends StatelessWidget {
                   SizedBox(height: 14.h),
                   LoginBiometricButton(
                     isEnabled: isBiometricEnabled,
+                    isDisabledBySettings: isBiometricDisabledBySettings,
                     onPressed: onBiometricLogin,
                   ),
                   SizedBox(height: 16.h),

@@ -20,7 +20,10 @@ void showManageMemberSheet(
   final canEditDeptsAndComms = currentUserRole.canEditDepartmentsAndCommittees;
   final selectedDepartments = Set<String>.from(member.departments);
   final selectedCommittees = Set<String>.from(member.committees);
+  final resetPasswordCtrl = TextEditingController(text: member.password);
   UserRole selectedRole = member.role;
+  var obscureResetPassword = true;
+  String? manageError;
 
   showModalBottomSheet<void>(
     context: context,
@@ -198,11 +201,60 @@ void showManageMemberSheet(
                           : null,
                     );
                   }),
+                  if (currentUserRole == UserRole.admin) ...[
+                    SizedBox(height: 10.h),
+                    TextField(
+                      controller: resetPasswordCtrl,
+                      obscureText: obscureResetPassword,
+                      decoration: InputDecoration(
+                        labelText: isArabic
+                            ? 'كلمة مرور الحساب (للمسؤول فقط)'
+                            : 'Account Password (Admin Only)',
+                        hintText: isArabic
+                            ? 'اضغط أيقونة العين لعرض كلمة المرور أو اكتب جديدة'
+                            : 'Tap the eye icon to reveal or enter a new password',
+                        prefixIcon: const Icon(Icons.vpn_key_outlined),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscureResetPassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () => setModalState(
+                            () => obscureResetPassword = !obscureResetPassword,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (manageError != null) ...[
+                    SizedBox(height: 10.h),
+                    Text(
+                      manageError!,
+                      style: TextStyle(
+                        color: AppColors.error,
+                        fontSize: 12.sp,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                   SizedBox(height: 12.h),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: () async {
+                        final newPassword = resetPasswordCtrl.text.trim();
+                        final passwordChanged =
+                            currentUserRole == UserRole.admin &&
+                                newPassword != member.password;
+                        if (passwordChanged && newPassword.length < 6) {
+                          setModalState(() {
+                            manageError = isArabic
+                                ? 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل'
+                                : 'New password must be at least 6 characters';
+                          });
+                          return;
+                        }
                         final cubit = context.read<LmtCubit>();
                         if (selectedRole != member.role) {
                           await cubit.changeMemberRole(
@@ -217,6 +269,19 @@ void showManageMemberSheet(
                             committees: selectedCommittees.toList(),
                           ),
                         );
+                        if (passwordChanged) {
+                          final resetErr = await cubit.resetMemberPassword(
+                            memberId: member.id,
+                            newPassword: newPassword,
+                            isArabic: isArabic,
+                          );
+                          if (resetErr != null) {
+                            if (ctx.mounted) {
+                              setModalState(() => manageError = resetErr);
+                            }
+                            return;
+                          }
+                        }
                         if (ctx.mounted) Navigator.pop(ctx);
                       },
                       icon: const Icon(Icons.check_circle_outline_rounded),
@@ -264,7 +329,7 @@ void showAddMemberSheet(BuildContext context, LmtState state) {
       state.currentUser.role.canEditDepartmentsAndCommittees;
   final nameCtrl = TextEditingController();
   final usernameCtrl = TextEditingController();
-  final passwordCtrl = TextEditingController(text: 'password123');
+  final passwordCtrl = TextEditingController();
   final selectedDepartments = <String>{
     MemberModel.availableDepartments.first,
   };
@@ -272,6 +337,9 @@ void showAddMemberSheet(BuildContext context, LmtState state) {
     MemberModel.availableCommittees.first,
   };
   UserRole selectedRole = UserRole.member;
+  var obscurePassword = true;
+  var isSubmitting = false;
+  String? errorMessage;
 
   showModalBottomSheet<void>(
     context: context,
@@ -321,15 +389,32 @@ void showAddMemberSheet(BuildContext context, LmtState state) {
                     decoration: InputDecoration(
                       labelText:
                           isArabic ? 'اسم المستخدم للدخول' : 'Username',
+                      hintText: isArabic
+                          ? 'مثال: mina_adel (3 أحرف على الأقل)'
+                          : 'e.g. mina_adel (min 3 characters)',
                       prefixIcon: const Icon(Icons.alternate_email_rounded),
                     ),
                   ),
                   SizedBox(height: 10.h),
                   TextField(
                     controller: passwordCtrl,
+                    obscureText: obscurePassword,
                     decoration: InputDecoration(
                       labelText: isArabic ? 'كلمة المرور' : 'Password',
+                      hintText: isArabic
+                          ? '6 أحرف على الأقل'
+                          : 'Minimum 6 characters',
                       prefixIcon: const Icon(Icons.lock_outline),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                        ),
+                        onPressed: () => setModalState(
+                          () => obscurePassword = !obscurePassword,
+                        ),
+                      ),
                     ),
                   ),
                   SizedBox(height: 12.h),
@@ -421,31 +506,94 @@ void showAddMemberSheet(BuildContext context, LmtState state) {
                       );
                     }).toList(),
                   ),
+                  if (errorMessage != null) ...[
+                    SizedBox(height: 12.h),
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(10.w),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10.r),
+                        border: Border.all(
+                          color: AppColors.error.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Text(
+                        errorMessage!,
+                        style: TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12.sp,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                   SizedBox(height: 16.h),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () {
-                        if (nameCtrl.text.trim().isEmpty) return;
-                        context.read<LmtCubit>().addMember(
-                              name: nameCtrl.text,
-                              username: usernameCtrl.text.trim().isEmpty
-                                  ? nameCtrl.text
-                                      .trim()
-                                      .toLowerCase()
-                                      .replaceAll(' ', '_')
-                                  : usernameCtrl.text,
-                              password: passwordCtrl.text,
-                              role: selectedRole,
-                              departments: selectedDepartments.toList(),
-                              committees: selectedCommittees.toList(),
-                              groups: const [
-                                'فريق الرسالة الاخيرة - العام',
-                                'بروفات مسرحية تغيروا 2026',
-                              ],
-                            );
-                        Navigator.pop(ctx);
-                      },
+                      onPressed: isSubmitting
+                          ? null
+                          : () async {
+                              final cleanName = nameCtrl.text.trim();
+                              final cleanUsername = usernameCtrl.text.trim();
+                              final cleanPassword = passwordCtrl.text.trim();
+
+                              if (cleanName.isEmpty) {
+                                setModalState(() {
+                                  errorMessage = isArabic
+                                      ? 'يرجى إدخال الاسم بالكامل.'
+                                      : 'Full name is required.';
+                                });
+                                return;
+                              }
+                              if (cleanUsername.length < 3) {
+                                setModalState(() {
+                                  errorMessage = isArabic
+                                      ? 'اسم المستخدم يجب أن يكون 3 أحرف على الأقل.'
+                                      : 'Username must be at least 3 characters.';
+                                });
+                                return;
+                              }
+                              if (cleanPassword.length < 6) {
+                                setModalState(() {
+                                  errorMessage = isArabic
+                                      ? 'كلمة المرور يجب أن تكون 6 أحرف على الأقل.'
+                                      : 'Password must be at least 6 characters.';
+                                });
+                                return;
+                              }
+
+                              setModalState(() {
+                                errorMessage = null;
+                                isSubmitting = true;
+                              });
+
+                              final error =
+                                  await context.read<LmtCubit>().addMember(
+                                        name: cleanName,
+                                        username: cleanUsername,
+                                        password: cleanPassword,
+                                        role: selectedRole,
+                                        departments:
+                                            selectedDepartments.toList(),
+                                        committees:
+                                            selectedCommittees.toList(),
+                                        groups: const [
+                                          'جروب الخلوة اليومية 🙏',
+                                        ],
+                                        isArabic: isArabic,
+                                      );
+                              if (!ctx.mounted) return;
+                              if (error != null) {
+                                setModalState(() {
+                                  isSubmitting = false;
+                                  errorMessage = error;
+                                });
+                                return;
+                              }
+                              Navigator.pop(ctx);
+                            },
                       icon: const Icon(Icons.person_add_alt_1_rounded),
                       label: Text(
                         isArabic ? 'إنشاء الحساب' : 'Create Account',

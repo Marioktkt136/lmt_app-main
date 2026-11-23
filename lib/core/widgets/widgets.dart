@@ -1,10 +1,12 @@
 /// Barrel file exporting all global reusable L.M.T widgets.
 library;
 
+export 'adaptive_layout.dart';
 export 'app_bar.dart';
 export 'bottom_nav_bar.dart';
 export 'custom_button.dart';
 export 'custom_text_field.dart';
+export 'expandable_text.dart';
 export 'header_banner.dart';
 export 'lmt_avatar.dart';
 export 'lmt_card.dart';

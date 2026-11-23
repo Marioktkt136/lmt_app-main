@@ -8,8 +8,27 @@ typedef MembersCubit = LmtCubit;
 
 /// Encapsulates Member List CRUD and Role Authority operations (Admin & Editor).
 mixin MembersCubitMixin on LmtBaseCubit {
-  /// Adds a new team member respecting role-based permissions.
-  Future<void> addMember({
+  String _generateNextMemberId() {
+    var maxSuffix = 0;
+    final regex = RegExp(r'(\d+)$');
+    for (final m in state.members) {
+      final match = regex.firstMatch(m.id.trim());
+      if (match != null) {
+        final parsed = int.tryParse(match.group(1)!) ?? 0;
+        if (parsed > maxSuffix) {
+          maxSuffix = parsed;
+        }
+      }
+    }
+    final nextIndex = maxSuffix + 1;
+    return 'LMT-2026-${nextIndex.toString().padLeft(3, '0')}';
+  }
+
+  /// Adds a new team member respecting role-based permissions, username
+  /// uniqueness, and minimum password length.
+  ///
+  /// Returns `null` on success or a localized validation/permission error.
+  Future<String?> addMember({
     required String name,
     required String username,
     required String password,
@@ -17,26 +36,54 @@ mixin MembersCubitMixin on LmtBaseCubit {
     required List<String> departments,
     required List<String> committees,
     required List<String> groups,
+    bool isArabic = true,
   }) async {
-    if (!state.currentUser.role.canManageMembers) return;
+    if (!state.currentUser.role.canCreateMembers) {
+      return isArabic
+          ? 'إنشاء حسابات جديدة متاح للمسؤول (Administrator) فقط.'
+          : 'Only Administrators can create new member accounts.';
+    }
+
+    final cleanName = name.trim();
+    final cleanUsername = username.trim();
+    final cleanPassword = password.trim();
+
+    if (cleanName.isEmpty) {
+      return isArabic ? 'يرجى إدخال الاسم بالكامل.' : 'Full name is required.';
+    }
+    if (cleanUsername.length < 3) {
+      return isArabic
+          ? 'اسم المستخدم يجب أن يكون 3 أحرف على الأقل.'
+          : 'Username must be at least 3 characters.';
+    }
+    if (cleanPassword.length < 6) {
+      return isArabic
+          ? 'كلمة المرور يجب أن تكون 6 أحرف على الأقل.'
+          : 'Password must be at least 6 characters.';
+    }
+
+    final normalizedUsername = cleanUsername.toLowerCase();
+    final usernameExists = state.members.any(
+      (m) => m.username.trim().toLowerCase() == normalizedUsername,
+    );
+    if (usernameExists) {
+      return isArabic
+          ? 'اسم المستخدم ($cleanUsername) مستخدم بالفعل. يرجى اختيار اسم آخر.'
+          : 'Username ($cleanUsername) is already taken. Choose another one.';
+    }
 
     final effectiveRole =
         (state.currentUser.role == UserRole.editor && role == UserRole.admin)
             ? UserRole.editor
             : role;
 
-    final nextIndex = state.members.length + 1;
-    final newId = 'LMT-2026-${nextIndex.toString().padLeft(3, '0')}';
-
     final newMember = MemberModel(
-      id: newId,
-      username: username.trim(),
-      password: password.trim().isEmpty ? 'password123' : password.trim(),
-      name: name.trim(),
+      id: _generateNextMemberId(),
+      username: cleanUsername,
+      password: cleanPassword,
+      name: cleanName,
       role: effectiveRole,
-      groups: groups.isEmpty
-          ? const ['فريق الرسالة الاخيرة - العام']
-          : groups,
+      groups: groups.isEmpty ? const ['جروب الخلوة اليومية 🙏'] : groups,
       departments: departments.isEmpty
           ? [MemberModel.availableDepartments.first]
           : departments,
@@ -59,10 +106,55 @@ mixin MembersCubitMixin on LmtBaseCubit {
           'تمت إضافة ${newMember.name} (${newMember.id}) في ${newMember.committee}.',
       category: NotificationCategory.system,
       targetTabIndex: 4,
+      excludedMemberIds: [state.currentUser.id],
     );
 
     emit(state.copyWith(members: updatedMembers, chatGroups: updatedGroups));
     await persistState();
+    return null;
+  }
+
+  /// Resets an account's password (Admin only).
+  Future<String?> resetMemberPassword({
+    required String memberId,
+    required String newPassword,
+    bool isArabic = true,
+  }) async {
+    if (!state.currentUser.role.canDeleteMembers) {
+      return isArabic
+          ? 'إعادة تعيين كلمة المرور متاحة للمسؤول (Administrator) فقط.'
+          : 'Resetting member passwords is restricted to Administrator only.';
+    }
+
+    final cleanPassword = newPassword.trim();
+    if (cleanPassword.length < 6) {
+      return isArabic
+          ? 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.'
+          : 'New password must be at least 6 characters.';
+    }
+
+    final targetIndex = state.members.indexWhere((m) => m.id == memberId);
+    if (targetIndex == -1) {
+      return isArabic ? 'العضو غير موجود.' : 'Member not found.';
+    }
+
+    final updatedMember =
+        state.members[targetIndex].copyWith(password: cleanPassword);
+    final updatedMembers = List<MemberModel>.from(state.members);
+    updatedMembers[targetIndex] = updatedMember;
+
+    final updatedCurrentUser = state.currentUser.id == memberId
+        ? updatedMember
+        : state.currentUser;
+
+    emit(
+      state.copyWith(
+        members: updatedMembers,
+        currentUser: updatedCurrentUser,
+      ),
+    );
+    await persistState();
+    return null;
   }
 
   /// Changes a member's role if the current user has sufficient authority.
@@ -92,6 +184,10 @@ mixin MembersCubitMixin on LmtBaseCubit {
           'تم تحديث صلاحية ${updatedMember.name} إلى ${newRole.shortLabel(true)}.',
       category: NotificationCategory.system,
       targetTabIndex: 4,
+      targetMemberIds: [memberId],
+      excludedMemberIds: state.currentUser.id == memberId
+          ? [state.currentUser.id]
+          : const [],
     );
 
     emit(
@@ -138,14 +234,26 @@ mixin MembersCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Deletes a member (Admin only).
+  /// Deletes a member (Admin only) and removes them from all group memberships.
   Future<void> deleteMember(String memberId) async {
     if (!state.currentUser.role.canDeleteMembers) return;
     if (memberId == state.currentUser.id) return;
 
     final updatedMembers =
         state.members.where((m) => m.id != memberId).toList();
-    emit(state.copyWith(members: updatedMembers));
+    final updatedGroups = state.chatGroups.map((g) {
+      if (!g.memberIds.contains(memberId)) return g;
+      return g.copyWith(
+        memberIds: g.memberIds.where((id) => id != memberId).toList(),
+      );
+    }).toList();
+
+    emit(
+      state.copyWith(
+        members: updatedMembers,
+        chatGroups: updatedGroups,
+      ),
+    );
     await persistState();
   }
 }

@@ -47,6 +47,7 @@ class ConversationHeaderBar extends StatelessWidget
     final subColor = isDark
         ? AppColors.textSecondaryDark
         : Colors.white.withValues(alpha: 0.88);
+    final canEditGroup = state.currentUser.role.canManageGroups;
 
     return AppBar(
       backgroundColor: appBarBg,
@@ -80,11 +81,13 @@ class ConversationHeaderBar extends StatelessWidget
       ),
       title: InkWell(
         borderRadius: BorderRadius.circular(12.r),
-        onTap: () => showChatGroupFormSheet(
-          context,
-          state,
-          existingGroup: group,
-        ),
+        onTap: canEditGroup
+            ? () => showChatGroupFormSheet(
+                  context,
+                  state,
+                  existingGroup: group,
+                )
+            : null,
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: 6.h, horizontal: 4.w),
           child: Row(
@@ -114,12 +117,14 @@ class ConversationHeaderBar extends StatelessWidget
                             ),
                           ),
                         ),
-                        SizedBox(width: 4.w),
-                        Icon(
-                          Icons.edit_outlined,
-                          size: 13.sp,
-                          color: subColor,
-                        ),
+                        if (canEditGroup) ...[
+                          SizedBox(width: 4.w),
+                          Icon(
+                            Icons.edit_outlined,
+                            size: 13.sp,
+                            color: subColor,
+                          ),
+                        ],
                       ],
                     ),
                     SizedBox(height: 1.h),

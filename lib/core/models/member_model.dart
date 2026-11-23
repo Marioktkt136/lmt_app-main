@@ -67,7 +67,7 @@ class MemberModel extends Equatable {
   const MemberModel({
     required this.id,
     required this.username,
-    required this.password,
+    this.password = '',
     required this.name,
     required this.role,
     this.avatarPath = AppAssets.accountIcon,
@@ -99,6 +99,11 @@ class MemberModel extends Equatable {
       departments: departments ?? this.departments,
       committees: committees ?? this.committees,
     );
+  }
+
+  /// Verifies [inputPassword] strictly against this member's stored [password].
+  bool verifyPassword(String inputPassword) {
+    return password.isNotEmpty && password == inputPassword;
   }
 
   /// Serializes this member to a JSON map.
@@ -136,22 +141,10 @@ class MemberModel extends Equatable {
       return matchedFromSingle;
     }
 
-    switch (memberId) {
-      case 'LMT-2026-001':
-        return const ['إضاءة', 'مزيكا وميكسر'];
-      case 'LMT-2026-002':
-        return const ['ديكور', 'ملابس وإكسسوار'];
-      case 'LMT-2026-003':
-        return const ['إضاءة', 'مزيكا وميكسر'];
-      case 'LMT-2026-004':
-        return const ['ملابس وإكسسوار', 'ميك اب'];
-      case 'LMT-2026-005':
-        return const ['ديكور', 'إضاءة'];
-      case 'LMT-2026-006':
-        return const ['ميك اب', 'ملابس وإكسسوار'];
-      default:
-        return const ['ديكور'];
+    if (memberId == 'LMT-2026-001') {
+      return const ['إضاءة', 'مزيكا وميكسر'];
     }
+    return const ['ديكور'];
   }
 
   static List<String> _parseCommittees(
@@ -174,31 +167,19 @@ class MemberModel extends Equatable {
       return matchedFromSingle;
     }
 
-    switch (memberId) {
-      case 'LMT-2026-001':
-        return const ['اللجنة الفنية', 'اللجنة الإدارية'];
-      case 'LMT-2026-002':
-        return const ['اللجنة الفنية', 'اللجنة العامة'];
-      case 'LMT-2026-003':
-        return const ['اللجنة الفنية'];
-      case 'LMT-2026-004':
-        return const ['اللجنة الفنية', 'اللجنة الروحية'];
-      case 'LMT-2026-005':
-        return const ['اللجنة الإدارية', 'اللجنة العامة'];
-      case 'LMT-2026-006':
-        return const ['اللجنة الروحية', 'اللجنة العامة'];
-      default:
-        return const ['اللجنة الفنية'];
+    if (memberId == 'LMT-2026-001') {
+      return const ['اللجنة الفنية', 'اللجنة الإدارية'];
     }
+    return const ['اللجنة الفنية'];
   }
 
   /// Deserializes a [MemberModel] from a JSON map.
   factory MemberModel.fromJson(Map<String, dynamic> json) {
-    final id = json['id'] as String? ?? 'LMT-001';
+    final id = json['id'] as String? ?? 'LMT-2026-001';
     return MemberModel(
       id: id,
-      username: json['username'] as String? ?? 'member',
-      password: json['password'] as String? ?? '12345678',
+      username: json['username'] as String? ?? '',
+      password: json['password'] as String? ?? '',
       name: json['name'] as String? ?? 'Member',
       role: UserRole.fromString(json['role'] as String? ?? 'member'),
       avatarPath: json['avatarPath'] as String? ?? AppAssets.accountIcon,

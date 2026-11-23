@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../../core/models/user_role.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../cubit/khelwa_cubit.dart';
 import '../data/khelwa_repository.dart';
 import '../widgets/khelwa_attendees_card.dart';
@@ -171,28 +172,32 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
       body: SafeArea(
         child: _isLoading
             ? Center(child: CircularProgressIndicator(color: primary))
-            : SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 24.h),
-                child: Column(
-                  children: [
-                    SizedBox(height: 16.h),
-                    KhelwaCounterCircle(daysDifference: _daysDifference),
-                    SizedBox(height: 36.h),
-                    KhelwaTakeButton(
-                      canTakeToday: _daysDifference > 0,
-                      isSaving: _isSaving,
-                      onPressed: _record,
-                    ),
-                    SizedBox(height: 32.h),
-                    KhelwaAttendeesCard(
-                      attendees: _attendees,
-                      isAdmin: context.watch<LmtCubit>().state.currentUser.role ==
-                          UserRole.admin,
-                      onResetToday: _confirmAndResetToday,
-                    ),
-                    SizedBox(height: 20.h),
-                  ],
+            : AdaptiveContentBox(
+                maxWidth: 680,
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 24.h),
+                  child: Column(
+                    children: [
+                      SizedBox(height: 16.h),
+                      KhelwaCounterCircle(daysDifference: _daysDifference),
+                      SizedBox(height: 36.h),
+                      KhelwaTakeButton(
+                        canTakeToday: _daysDifference > 0,
+                        isSaving: _isSaving,
+                        onPressed: _record,
+                      ),
+                      SizedBox(height: 32.h),
+                      KhelwaAttendeesCard(
+                        attendees: _attendees,
+                        isAdmin:
+                            context.watch<LmtCubit>().state.currentUser.role ==
+                                UserRole.admin,
+                        onResetToday: _confirmAndResetToday,
+                      ),
+                      SizedBox(height: 20.h),
+                    ],
+                  ),
                 ),
               ),
       ),

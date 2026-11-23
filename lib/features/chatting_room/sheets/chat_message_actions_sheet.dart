@@ -7,7 +7,9 @@ import 'package:material_ui/material_ui.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
+import '../../../core/utils/app_assets.dart';
 import '../../../core/utils/device_file_helper.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../cubit/chat_cubit.dart';
 
 const List<String> _quickEmojis = [
@@ -38,12 +40,19 @@ void showChatMessageActionsSheet({
 }) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
   final isSender = message.senderId == state.currentUser.id;
-  final isGroupAdmin = group.adminId == state.currentUser.id ||
-      state.currentUser.role == UserRole.admin;
-  final canDelete = isSender || isGroupAdmin;
+  final canDelete = isSender || state.currentUser.role == UserRole.admin;
+  final viewers =
+      message.seenBy.where((s) => s.memberId != message.senderId).toList();
+  final elapsedSinceSent = DateTime.now().difference(message.sentAt);
+  final canEditWithinTimeLimit =
+      elapsedSinceSent <= ChatCubitMixin.messageEditTimeLimit;
+  final remainingEditMinutes =
+      (ChatCubitMixin.messageEditTimeLimit.inMinutes - elapsedSinceSent.inMinutes)
+          .clamp(1, ChatCubitMixin.messageEditTimeLimit.inMinutes);
 
   showModalBottomSheet<void>(
     context: context,
+    constraints: AdaptiveBreakpoints.bottomSheetConstraints(context),
     backgroundColor: AppColors.surfaceOf(context),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
@@ -186,44 +195,71 @@ void showChatMessageActionsSheet({
                   showChatForwardDialog(context, state, message);
                 },
               ),
-              ListTile(
-                dense: true,
-                leading: Icon(
-                  Icons.done_all_rounded,
-                  color: AppColors.accentGreenOf(ctx),
-                ),
-                title: Text(
-                  message.type == MessageType.voiceNote
-                      ? (isArabic
-                          ? 'من قرأ واستمع للرسالة الصوتية (${message.seenBy.length})'
-                          : 'Who Seen & Listened (${message.seenBy.length})')
-                      : (isArabic
-                          ? 'من قرأ الرسالة (${message.seenBy.length})'
-                          : 'Seen By (${message.seenBy.length})'),
-                  style: TextStyle(color: textPrimary),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  showChatSeenBySheet(context, message);
-                },
-              ),
               if (isSender)
                 ListTile(
                   dense: true,
-                  leading: const Icon(
-                    Icons.edit_outlined,
-                    color: Color(0xFFF59E0B),
+                  leading: Icon(
+                    Icons.done_all_rounded,
+                    color: AppColors.accentGreenOf(ctx),
                   ),
                   title: Text(
-                    isArabic
-                        ? 'تعديل الرسالة (مرسل الرسالة فقط)'
-                        : 'Edit Message (Sender only)',
+                    message.type == MessageType.voiceNote
+                        ? (isArabic
+                            ? 'من قرأ واستمع للرسالة الصوتية (${viewers.length})'
+                            : 'Who Seen & Listened (${viewers.length})')
+                        : (isArabic
+                            ? 'من قرأ الرسالة (${viewers.length})'
+                            : 'Seen By (${viewers.length})'),
                     style: TextStyle(color: textPrimary),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
-                    onEdit(message);
+                    showChatSeenBySheet(context, message);
                   },
+                ),
+              if (isSender)
+                ListTile(
+                  dense: true,
+                  enabled: canEditWithinTimeLimit,
+                  leading: Icon(
+                    canEditWithinTimeLimit
+                        ? Icons.edit_outlined
+                        : Icons.timer_off_outlined,
+                    color: canEditWithinTimeLimit
+                        ? const Color(0xFFF59E0B)
+                        : AppColors.textSecondaryOf(ctx),
+                  ),
+                  title: Text(
+                    canEditWithinTimeLimit
+                        ? (isArabic
+                            ? 'تعديل الرسالة (متاح لمدة $remainingEditMinutes د)'
+                            : 'Edit Message (${remainingEditMinutes}m left)')
+                        : (isArabic
+                            ? 'انتهى وقت تعديل الرسالة (الحد الأقصى 15 دقيقة)'
+                            : 'Edit window expired (15-min limit)'),
+                    style: TextStyle(
+                      color: canEditWithinTimeLimit
+                          ? textPrimary
+                          : AppColors.textSecondaryOf(ctx),
+                    ),
+                  ),
+                  subtitle: canEditWithinTimeLimit
+                      ? null
+                      : Text(
+                          isArabic
+                              ? 'لا يمكن التعديل بعد مرور 15 دقيقة من الإرسال'
+                              : 'Messages can only be edited within 15 minutes',
+                          style: TextStyle(
+                            fontSize: 10.5.sp,
+                            color: AppColors.textSecondaryOf(ctx),
+                          ),
+                        ),
+                  onTap: canEditWithinTimeLimit
+                      ? () {
+                          Navigator.pop(ctx);
+                          onEdit(message);
+                        }
+                      : null,
                 ),
               if (canDelete)
                 ListTile(
@@ -370,6 +406,8 @@ void showChatSeenBySheet(BuildContext context, ChatMessageModel message) {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
   final isVoice = message.type == MessageType.voiceNote;
   final accentGreen = AppColors.accentGreenOf(context);
+  final viewers =
+      message.seenBy.where((s) => s.memberId != message.senderId).toList();
 
   showModalBottomSheet<void>(
     context: context,
@@ -380,70 +418,89 @@ void showChatSeenBySheet(BuildContext context, ChatMessageModel message) {
     builder: (ctx) {
       return Padding(
         padding: EdgeInsets.all(20.w),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.done_all_rounded, color: accentGreen),
-                SizedBox(width: 8.w),
-                Text(
-                  isVoice
-                      ? (isArabic
-                          ? 'من قرأ واستمع للرسالة الصوتية 🎤'
-                          : 'Seen & Listened By 🎤')
-                      : (isArabic
-                          ? 'من قرأ الرسالة (Seen By) 👀'
-                          : 'Seen By 👀'),
-                  style: AppTypography.h5.copyWith(
-                    color: AppColors.textPrimaryOf(ctx),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 12.h),
-            ...message.seenBy.map(
-              (seen) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  backgroundImage: AssetImage(seen.avatarPath),
-                ),
-                title: Text(
-                  seen.memberName,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimaryOf(ctx),
-                  ),
-                ),
-                subtitle: Text(
-                  DateFormat('dd/MM/yyyy • hh:mm a').format(seen.timestamp),
-                  style: TextStyle(
-                    fontSize: 11.sp,
-                    color: AppColors.textSecondaryOf(ctx),
-                  ),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isVoice && seen.hasListened) ...[
-                      Icon(
-                        Icons.headphones_rounded,
-                        color: accentGreen,
-                        size: 18.sp,
-                      ),
-                      SizedBox(width: 4.w),
-                    ],
-                    Icon(
-                      Icons.done_all_rounded,
-                      color: accentGreen,
-                      size: 18.sp,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.done_all_rounded, color: accentGreen),
+                  SizedBox(width: 8.w),
+                  Text(
+                    isVoice
+                        ? (isArabic
+                            ? 'من قرأ واستمع للرسالة الصوتية 🎤'
+                            : 'Seen & Listened By 🎤')
+                        : (isArabic
+                            ? 'من قرأ الرسالة (Seen By) 👀'
+                            : 'Seen By 👀'),
+                    style: AppTypography.h5.copyWith(
+                      color: AppColors.textPrimaryOf(ctx),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ),
-          ],
+              SizedBox(height: 12.h),
+              if (viewers.isEmpty)
+                Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12.h),
+                  child: Text(
+                    isArabic
+                        ? 'لم يشاهد هذه الرسالة أي عضو آخر بعد.'
+                        : 'No other group members have seen this message yet.',
+                    style: TextStyle(
+                      color: AppColors.textSecondaryOf(ctx),
+                      fontSize: 13.sp,
+                    ),
+                  ),
+                )
+              else
+                ...viewers.map(
+                  (seen) => ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundImage: DeviceFileHelper.imageProviderFor(
+                        seen.avatarPath,
+                        fallbackAsset: AppAssets.accountIcon,
+                      ),
+                    ),
+                    title: Text(
+                      seen.memberName,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimaryOf(ctx),
+                      ),
+                    ),
+                    subtitle: Text(
+                      DateFormat('dd/MM/yyyy • hh:mm a').format(seen.timestamp),
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        color: AppColors.textSecondaryOf(ctx),
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isVoice && seen.hasListened) ...[
+                          Icon(
+                            Icons.headphones_rounded,
+                            color: accentGreen,
+                            size: 18.sp,
+                          ),
+                          SizedBox(width: 4.w),
+                        ],
+                        Icon(
+                          Icons.done_all_rounded,
+                          color: accentGreen,
+                          size: 18.sp,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       );
     },

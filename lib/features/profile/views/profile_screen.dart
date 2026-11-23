@@ -6,7 +6,7 @@ import '../../../core/routes/app_router.dart';
 import '../../../core/routes/routes.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
-import '../../../core/utils/app_preferences.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/lmt_avatar.dart';
 import '../../../core/widgets/lmt_card.dart';
 import '../cubit/profile_cubit.dart';
@@ -50,7 +50,7 @@ class ProfileScreen extends StatelessWidget {
     );
 
     if (confirmed == true && context.mounted) {
-      await AppPreferences.clearLogin();
+      await context.read<LmtCubit>().logout();
       if (!context.mounted) return;
       AppRouter.navigateAndRemoveUntil(context, Routes.login);
     }
@@ -63,53 +63,91 @@ class ProfileScreen extends StatelessWidget {
         final isArabic = Localizations.localeOf(context).languageCode == 'ar';
         final user = state.currentUser;
         final primary = AppColors.primaryOf(context);
-        final accentGreen = AppColors.accentGreenOf(context);
         final textPrimary = AppColors.textPrimaryOf(context);
         final textSecondary = AppColors.textSecondaryOf(context);
         final border = AppColors.borderOf(context);
 
-        return SingleChildScrollView(
-          padding: EdgeInsets.all(16.w),
-          physics: const BouncingScrollPhysics(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // User Avatar & Identity Card
-              LmtCard(
-                padding: EdgeInsets.all(20.w),
-                borderRadius: 22.r,
-                accentColor: primary,
-                child: Column(
-                  children: [
-                    LmtAvatar(
-                      imagePath: user.avatarPath,
-                      radius: 46,
-                      badge: Container(
-                        padding: EdgeInsets.all(6.w),
-                        decoration: BoxDecoration(
-                          color: accentGreen,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: AppColors.surfaceOf(context),
-                            width: 2.2,
-                          ),
-                          boxShadow: AppColors.cardShadows(
-                            context,
-                            accent: accentGreen,
-                            intensity: 0.6,
-                          ),
+        return AdaptiveContentBox(
+          maxWidth: 720,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(16.w),
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // User Avatar & Identity Card (tap avatar to change photo)
+                LmtCard(
+                  padding: EdgeInsets.all(20.w),
+                  borderRadius: 22.r,
+                  accentColor: primary,
+                  child: Column(
+                    children: [
+                      GestureDetector(
+                        onTap: () => showPickProfileAvatarSheet(
+                          context,
+                          user: user,
                         ),
-                        child: Text(
-                          user.role.badgeEmoji,
-                          style: TextStyle(fontSize: 13.sp),
+                        child: LmtAvatar(
+                          imagePath: user.avatarPath,
+                          radius: 48,
+                          badge: Container(
+                            padding: EdgeInsets.all(7.w),
+                            decoration: BoxDecoration(
+                              color: primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: AppColors.surfaceOf(context),
+                                width: 2.2,
+                              ),
+                              boxShadow: AppColors.cardShadows(
+                                context,
+                                accent: primary,
+                                intensity: 0.7,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.camera_alt_rounded,
+                              size: 15.sp,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                    SizedBox(height: 12.h),
-                    Text(
-                      user.name,
-                      style: AppTypography.h3.copyWith(color: textPrimary),
-                    ),
+                      SizedBox(height: 8.h),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 12.w,
+                            vertical: 4.h,
+                          ),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () => showPickProfileAvatarSheet(
+                          context,
+                          user: user,
+                        ),
+                        icon: Icon(
+                          Icons.add_a_photo_outlined,
+                          size: 16.sp,
+                          color: primary,
+                        ),
+                        label: Text(
+                          isArabic
+                              ? 'تغيير الصورة الشخصية'
+                              : 'Change Profile Photo',
+                          style: TextStyle(
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.bold,
+                            color: primary,
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 6.h),
+                      Text(
+                        user.name,
+                        style: AppTypography.h3.copyWith(color: textPrimary),
+                      ),
                     SizedBox(height: 6.h),
                     Container(
                       padding: EdgeInsets.symmetric(
@@ -323,6 +361,7 @@ class ProfileScreen extends StatelessWidget {
               SizedBox(height: 8.h),
             ],
           ),
+        ),
         );
       },
     );

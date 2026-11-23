@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../../core/routes/routes.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_preferences.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../main.dart';
 import '../cubit/auth_cubit.dart';
 import '../services/biometric_auth_service.dart';
@@ -38,6 +39,7 @@ class LoginScreenState extends State<LoginScreen> {
   bool _isSubmitting = false;
   bool _isBiometricAuthenticating = false;
   bool _hasPreviousLogin = false;
+  bool _isBiometricPrefEnabled = true;
 
   @override
   void initState() {
@@ -48,18 +50,21 @@ class LoginScreenState extends State<LoginScreen> {
   Future<void> _loadSavedCredentialsAndAutoPromptBiometrics() async {
     final hasLoggedInBefore = await AppPreferences.isLoggedIn();
     final savedUser = await AppPreferences.getSavedUsername();
-    final canUseBiometrics =
+    final biometricPrefEnabled = await AppPreferences.isBiometricEnabled();
+    final hasValidPrevious =
         hasLoggedInBefore && savedUser != null && savedUser.trim().isNotEmpty;
+    final canAutoPromptBiometrics = hasValidPrevious && biometricPrefEnabled;
 
     if (!mounted) return;
     setState(() {
-      _hasPreviousLogin = canUseBiometrics;
-      if (canUseBiometrics) {
+      _hasPreviousLogin = hasValidPrevious;
+      _isBiometricPrefEnabled = biometricPrefEnabled;
+      if (hasValidPrevious) {
         usernameController.text = savedUser;
       }
     });
 
-    if (canUseBiometrics) {
+    if (canAutoPromptBiometrics) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           authenticateWithBiometrics();
@@ -100,6 +105,7 @@ class LoginScreenState extends State<LoginScreen> {
   Future<void> submit() async {
     if (_isSubmitting || !formKey.currentState!.validate()) return;
 
+    final isArabic = context.locale.languageCode == 'ar';
     setState(() => _isSubmitting = true);
     try {
       await context.read<LmtCubit>().login(
@@ -109,6 +115,17 @@ class LoginScreenState extends State<LoginScreen> {
           );
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, Routes.home);
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      _showSnackBar(e.localized(isArabic), AppColors.error);
+    } catch (_) {
+      if (!mounted) return;
+      _showSnackBar(
+        isArabic
+            ? 'تعذر تسجيل الدخول. يرجى المحاولة مرة أخرى.'
+            : 'Unable to sign in. Please try again.',
+        AppColors.error,
+      );
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
@@ -124,6 +141,15 @@ class LoginScreenState extends State<LoginScreen> {
         isArabic
             ? 'يرجى تسجيل الدخول باسم المستخدم وكلمة المرور أولاً لتفعيل الدخول بالبصمة أو الوجه.'
             : 'Please log in with your username and password first to enable Fingerprint / Face ID.',
+        AppColors.warning,
+      );
+      return;
+    }
+    if (!_isBiometricPrefEnabled) {
+      _showSnackBar(
+        isArabic
+            ? 'الدخول بالبصمة والوجه معطل حالياً من الإعدادات.'
+            : 'Fingerprint / Face ID login is currently disabled in Settings.',
         AppColors.warning,
       );
       return;
@@ -180,22 +206,41 @@ class LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _completeBiometricLogin() async {
+    final isArabic = context.locale.languageCode == 'ar';
     final accentGreen = AppColors.accentGreenOf(context);
-    final enteredUsername = usernameController.text.trim();
-    if (enteredUsername.isNotEmpty) {
-      await context.read<LmtCubit>().login(
-            username: enteredUsername,
-            password: passwordController.text.trim().isEmpty
-                ? 'biometric_verified'
-                : passwordController.text.trim(),
-            rememberMe: rememberMe,
-          );
-    } else {
-      await context.read<LmtCubit>().loginWithBiometrics();
-    }
+    final savedUsername = await AppPreferences.getSavedUsername();
     if (!mounted) return;
-    _showSnackBar('biometric_success'.tr(), accentGreen);
-    Navigator.pushReplacementNamed(context, Routes.home);
+
+    final enteredUsername = usernameController.text.trim();
+    if (enteredUsername.isNotEmpty &&
+        savedUsername != null &&
+        enteredUsername.toLowerCase() != savedUsername.trim().toLowerCase()) {
+      _showSnackBar(
+        isArabic
+            ? 'البصمة مرتبطة بالحساب المسجل ($savedUsername) فقط. أدخل كلمة المرور للدخول بحساب آخر.'
+            : 'Biometrics are bound to ($savedUsername). Enter password to sign in with another account.',
+        AppColors.error,
+      );
+      return;
+    }
+
+    try {
+      await context.read<LmtCubit>().loginWithBiometrics();
+      if (!mounted) return;
+      _showSnackBar('biometric_success'.tr(), accentGreen);
+      Navigator.pushReplacementNamed(context, Routes.home);
+    } on AuthException catch (e) {
+      final stillLoggedIn = await AppPreferences.isLoggedIn();
+      if (!mounted) return;
+      setState(() {
+        _hasPreviousLogin = stillLoggedIn;
+        if (!stillLoggedIn) {
+          usernameController.clear();
+          passwordController.clear();
+        }
+      });
+      _showSnackBar(e.localized(isArabic), AppColors.error);
+    }
   }
 
   void _showSnackBar(String message, Color backgroundColor) {
@@ -224,23 +269,28 @@ class LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundOf(context),
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 12.h),
-          child: LoginBody(
-            isDark: isDark,
-            toggleTheme: toggleTheme,
-            toggleLanguage: toggleLanguage,
-            usernameController: usernameController,
-            passwordController: passwordController,
-            obscurePassword: obscurePassword,
-            toggleObscurePassword: toggleObscurePassword,
-            formKey: formKey,
-            rememberMe: rememberMe,
-            onRememberMeChanged: setRememberMe,
-            submit: submit,
-            isBiometricEnabled: _hasPreviousLogin,
-            onBiometricLogin: authenticateWithBiometrics,
-            isLoading: _isSubmitting,
+        child: AdaptiveContentBox(
+          maxWidth: 480,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 12.h),
+            child: LoginBody(
+              isDark: isDark,
+              toggleTheme: toggleTheme,
+              toggleLanguage: toggleLanguage,
+              usernameController: usernameController,
+              passwordController: passwordController,
+              obscurePassword: obscurePassword,
+              toggleObscurePassword: toggleObscurePassword,
+              formKey: formKey,
+              rememberMe: rememberMe,
+              onRememberMeChanged: setRememberMe,
+              submit: submit,
+              isBiometricEnabled: _hasPreviousLogin && _isBiometricPrefEnabled,
+              isBiometricDisabledBySettings:
+                  _hasPreviousLogin && !_isBiometricPrefEnabled,
+              onBiometricLogin: authenticateWithBiometrics,
+              isLoading: _isSubmitting,
+            ),
           ),
         ),
       ),

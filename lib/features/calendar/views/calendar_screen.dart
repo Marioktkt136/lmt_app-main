@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
@@ -5,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
 import '../cubit/calendar_cubit.dart';
 import '../widgets/calendar_days_strip.dart';
@@ -17,8 +20,15 @@ import 'full_months_calendar_page.dart';
 /// Main Calendar View displaying the quick horizontal days strip,
 /// the [FullCalendarLauncherCard], and scheduled team events.
 class CalendarScreen extends StatefulWidget {
+  /// Duration of inactivity after which the calendar automatically resets to
+  /// Today and the current month.
+  final Duration idleResetDuration;
+
   /// Creates a [CalendarScreen].
-  const CalendarScreen({super.key});
+  const CalendarScreen({
+    super.key,
+    this.idleResetDuration = const Duration(seconds: 15),
+  });
 
   @override
   State<CalendarScreen> createState() => _CalendarScreenState();
@@ -27,10 +37,16 @@ class CalendarScreen extends StatefulWidget {
 class _CalendarScreenState extends State<CalendarScreen> {
   DateTime? _selectedDateFilter;
   DateTime? _selectedMonthFilter;
+  Timer? _idleResetTimer;
+  bool _isModalOrSubpageOpen = false;
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _selectedDateFilter = DateTime(now.year, now.month, now.day);
+    _selectedMonthFilter = DateTime(now.year, now.month, 1);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final cubit = context.read<LmtCubit>();
@@ -39,6 +55,38 @@ class _CalendarScreenState extends State<CalendarScreen> {
         _openTargetedEvent(cubit.state, targetEventId);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _idleResetTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleIdleReset() {
+    _idleResetTimer?.cancel();
+    if (_isModalOrSubpageOpen) return;
+    _idleResetTimer = Timer(widget.idleResetDuration, _resetToToday);
+  }
+
+  void _resetToToday() {
+    if (!mounted || _isModalOrSubpageOpen) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final currentMonth = DateTime(now.year, now.month, 1);
+    final isAlreadyToday = _selectedDateFilter != null &&
+        _selectedDateFilter!.year == today.year &&
+        _selectedDateFilter!.month == today.month &&
+        _selectedDateFilter!.day == today.day &&
+        _selectedMonthFilter != null &&
+        _selectedMonthFilter!.year == currentMonth.year &&
+        _selectedMonthFilter!.month == currentMonth.month;
+    if (!isAlreadyToday) {
+      setState(() {
+        _selectedDateFilter = today;
+        _selectedMonthFilter = currentMonth;
+      });
+    }
   }
 
   void _openTargetedEvent(LmtState state, String eventId) {
@@ -50,11 +98,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
         _selectedDateFilter = null;
         _selectedMonthFilter = null;
       });
+      _idleResetTimer?.cancel();
       showCalendarEventDetailsSheet(context, evt);
     }
   }
 
   Future<void> _openFullCalendarPage(BuildContext context) async {
+    _isModalOrSubpageOpen = true;
+    _idleResetTimer?.cancel();
     final result = await Navigator.push<Map<String, DateTime?>>(
       context,
       MaterialPageRoute(
@@ -64,6 +115,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         ),
       ),
     );
+    _isModalOrSubpageOpen = false;
 
     if (result != null && mounted) {
       setState(() {
@@ -71,6 +123,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         _selectedMonthFilter = result['month'];
       });
     }
+    if (mounted) _scheduleIdleReset();
   }
 
   @override
@@ -112,9 +165,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
           return true;
         }).toList();
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _scheduleIdleReset(),
+          onPointerMove: (_) => _scheduleIdleReset(),
+          child: AdaptiveContentBox(
+            maxWidth: 860,
+            child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -178,14 +237,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
               selectedDateFilter: _selectedDateFilter,
               selectedMonthFilter: _selectedMonthFilter,
               calendarEvents: state.calendarEvents,
-              onSelectAll: () => setState(() {
-                _selectedDateFilter = null;
-                _selectedMonthFilter = null;
-              }),
-              onSelectDay: (day) => setState(() {
-                _selectedDateFilter = day;
-                _selectedMonthFilter = null;
-              }),
+              onSelectAll: () {
+                setState(() {
+                  _selectedDateFilter = null;
+                  _selectedMonthFilter = null;
+                });
+                _scheduleIdleReset();
+              },
+              onSelectDay: (day) {
+                setState(() {
+                  _selectedDateFilter = day;
+                  _selectedMonthFilter = DateTime(day.year, day.month, 1);
+                });
+                _scheduleIdleReset();
+              },
             ),
             SizedBox(height: 10.h),
             FullCalendarLauncherCard(
@@ -193,10 +258,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
               hasActiveFilter:
                   _selectedDateFilter != null || _selectedMonthFilter != null,
               onOpenFullCalendar: () => _openFullCalendarPage(context),
-              onClearFilter: () => setState(() {
-                _selectedDateFilter = null;
-                _selectedMonthFilter = null;
-              }),
+              onClearFilter: () {
+                setState(() {
+                  _selectedDateFilter = null;
+                  _selectedMonthFilter = null;
+                });
+                _scheduleIdleReset();
+              },
             ),
             SizedBox(height: 12.h),
             Expanded(
@@ -237,6 +305,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     ),
             ),
           ],
+        ),
+        ),
         );
       },
     );

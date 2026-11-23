@@ -7,19 +7,25 @@ import '../../../core/utils/device_file_helper.dart';
 import '../../../core/widgets/lmt_card.dart';
 
 /// Displays a compact, easy-to-scan shared document tile with preview,
-/// direct download, and optional delete actions.
+/// direct download, edit (Admin & Editor), and delete (Admin only) actions.
 class SharedDocumentTile extends StatelessWidget {
   /// The shared document model to render.
   final SharedFileModel doc;
 
-  /// Whether the current user has permission to delete shared files.
-  final bool canManageFiles;
+  /// Whether the current user can edit shared file metadata (Admin & Editor).
+  final bool canEditFiles;
+
+  /// Whether the current user can permanently delete shared files (Admin only).
+  final bool canDeleteFiles;
 
   /// Callback invoked when the tile is tapped for preview.
   final VoidCallback onTap;
 
   /// Callback invoked when the direct download button is tapped.
   final VoidCallback onDownload;
+
+  /// Callback invoked when the edit button is tapped.
+  final VoidCallback onEdit;
 
   /// Callback invoked when the delete button is tapped.
   final VoidCallback onDelete;
@@ -28,9 +34,11 @@ class SharedDocumentTile extends StatelessWidget {
   const SharedDocumentTile({
     super.key,
     required this.doc,
-    required this.canManageFiles,
+    required this.canEditFiles,
+    required this.canDeleteFiles,
     required this.onTap,
     required this.onDownload,
+    required this.onEdit,
     required this.onDelete,
   });
 
@@ -146,7 +154,20 @@ class SharedDocumentTile extends StatelessWidget {
               ),
             ),
           ),
-          if (canManageFiles)
+          if (canEditFiles)
+            InkWell(
+              borderRadius: BorderRadius.circular(10.r),
+              onTap: onEdit,
+              child: Padding(
+                padding: EdgeInsets.all(6.w),
+                child: Icon(
+                  Icons.edit_outlined,
+                  color: primary,
+                  size: 18.sp,
+                ),
+              ),
+            ),
+          if (canDeleteFiles)
             InkWell(
               borderRadius: BorderRadius.circular(10.r),
               onTap: onDelete,

@@ -326,3 +326,95 @@ void showUploadSharedFileSheet(BuildContext context) {
     },
   );
 }
+
+/// Displays a bottom sheet for Admin/Editor users to edit an existing shared
+/// file or hyperlink card's title, description, or URL.
+void showEditSharedFileSheet(
+  BuildContext context,
+  SharedFileModel existingFile,
+) {
+  final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+  final titleCtrl = TextEditingController(text: existingFile.title);
+  final descCtrl = TextEditingController(text: existingFile.description);
+  final urlCtrl = TextEditingController(text: existingFile.externalUrl ?? '');
+  final isLinkCard = existingFile.category == SharedFileType.card;
+
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.surfaceOf(context),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+    ),
+    builder: (ctx) {
+      return Padding(
+        padding: EdgeInsets.only(
+          left: 20.w,
+          right: 20.w,
+          top: 18.h,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 20.h,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isArabic ? 'تعديل بيانات الملف / الرابط ✏️' : 'Edit Shared Item ✏️',
+                style: AppTypography.h5.copyWith(
+                  color: AppColors.textPrimaryOf(ctx),
+                ),
+              ),
+              SizedBox(height: 12.h),
+              TextField(
+                controller: titleCtrl,
+                decoration: InputDecoration(
+                  labelText: isArabic ? 'العنوان' : 'Title',
+                  prefixIcon: const Icon(Icons.title_rounded),
+                ),
+              ),
+              SizedBox(height: 10.h),
+              TextField(
+                controller: descCtrl,
+                maxLines: 2,
+                decoration: InputDecoration(
+                  labelText: isArabic ? 'الوصف' : 'Description',
+                  prefixIcon: const Icon(Icons.description_outlined),
+                ),
+              ),
+              if (isLinkCard) ...[
+                SizedBox(height: 10.h),
+                TextField(
+                  controller: urlCtrl,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(
+                    labelText: isArabic ? 'الرابط الخارجي' : 'External URL',
+                    prefixIcon: const Icon(Icons.link_rounded),
+                  ),
+                ),
+              ],
+              SizedBox(height: 16.h),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    if (titleCtrl.text.trim().isEmpty) return;
+                    await context.read<LmtCubit>().updateSharedFile(
+                          fileId: existingFile.id,
+                          title: titleCtrl.text,
+                          description: descCtrl.text,
+                          externalUrl: isLinkCard ? urlCtrl.text : null,
+                        );
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  },
+                  icon: const Icon(Icons.check_circle_outline_rounded),
+                  label: Text(isArabic ? 'حفظ التعديلات' : 'Save Changes'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}

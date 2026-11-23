@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "688051545067",
+    "project_id": "lmt-temp-cloud-2026",
+    "storage_bucket": "lmt-temp-cloud-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:688051545067:android:5330474d85a5a04d1b2fae",
+        "android_client_info": {
+          "package_name": "com.example.lmt"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3g6uNTC3QLnORGQwFQA02Q0jiaFMyoxs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

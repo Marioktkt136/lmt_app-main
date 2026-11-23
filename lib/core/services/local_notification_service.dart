@@ -8,11 +8,31 @@ import 'package:timezone/timezone.dart' as tz;
 
 /// Custom audio channels for L.M.T OS notifications.
 enum LmtNotificationTone {
-  /// Standard chime for chat messages, posts, shared files, and general alerts.
+  /// Standard chime for posts, shared files, and general alerts.
   normal,
 
   /// Distinct chime for calendar events and scheduled event reminders.
   calendar,
+
+  /// Custom chime (`chat_message_tone`) for incoming chat group messages.
+  chatMessage,
+
+  /// Custom chime (`post_interactions`) for likes and comments on user's posts.
+  postInteractions,
+
+  /// Custom chime (`message_reacts`) for emoji reactions on user's chat messages.
+  messageReacts;
+
+  /// Parses [value] or falls back cleanly when reading legacy stored notifications.
+  static LmtNotificationTone fromString(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return LmtNotificationTone.normal;
+    }
+    for (final tone in LmtNotificationTone.values) {
+      if (tone.name == value.trim()) return tone;
+    }
+    return LmtNotificationTone.normal;
+  }
 }
 
 /// Real Mobile Notification & Background Lock-Screen Reminder Service for
@@ -32,13 +52,16 @@ class LocalNotificationService {
 
   static const String _normalChannelId = 'lmt_normal_notifications_v2';
   static const String _calendarChannelId = 'lmt_calendar_notifications_v2';
+  static const String _chatMessageChannelId = 'lmt_chat_message_tone_v1';
+  static const String _postInteractionsChannelId = 'lmt_post_interactions_v1';
+  static const String _messageReactsChannelId = 'lmt_message_reacts_v1';
 
   static const AndroidNotificationDetails _normalAndroidDetails =
       AndroidNotificationDetails(
     _normalChannelId,
     'L.M.T Normal Notifications',
     channelDescription:
-        'إشعارات المحادثات والمنشورات والملفات لفريق الرسالة الاخيرة (L.M.T App)',
+        'إشعارات المنشورات والملفات لفريق الرسالة الاخيرة (L.M.T App)',
     importance: Importance.max,
     priority: Priority.high,
     visibility: NotificationVisibility.public,
@@ -73,6 +96,65 @@ class LocalNotificationService {
     color: Color(0xFF1E88E5),
   );
 
+  static const AndroidNotificationDetails _chatMessageAndroidDetails =
+      AndroidNotificationDetails(
+    _chatMessageChannelId,
+    'L.M.T Chat Messages',
+    channelDescription: 'نغمة إشعارات رسائل الشات في المجموعات (Chat_Message_Tone)',
+    importance: Importance.max,
+    priority: Priority.high,
+    visibility: NotificationVisibility.public,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound('chat_message_tone'),
+    enableVibration: true,
+    enableLights: true,
+    fullScreenIntent: false,
+    ticker: 'L.M.T Chat Message',
+    icon: '@drawable/ic_notification',
+    largeIcon: DrawableResourceAndroidBitmap('ic_notification_large'),
+    color: Color(0xFF1E88E5),
+  );
+
+  static const AndroidNotificationDetails _postInteractionsAndroidDetails =
+      AndroidNotificationDetails(
+    _postInteractionsChannelId,
+    'L.M.T Post Interactions',
+    channelDescription:
+        'نغمة إشعارات الإعجاب والتعليقات على منشوراتك (Post_Interactions)',
+    importance: Importance.max,
+    priority: Priority.high,
+    visibility: NotificationVisibility.public,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound('post_interactions'),
+    enableVibration: true,
+    enableLights: true,
+    fullScreenIntent: false,
+    ticker: 'L.M.T Post Interaction',
+    icon: '@drawable/ic_notification',
+    largeIcon: DrawableResourceAndroidBitmap('ic_notification_large'),
+    color: Color(0xFF1E88E5),
+  );
+
+  static const AndroidNotificationDetails _messageReactsAndroidDetails =
+      AndroidNotificationDetails(
+    _messageReactsChannelId,
+    'L.M.T Message Reactions',
+    channelDescription:
+        'نغمة إشعارات التفاعل بالإيموجي على رسائلك (Message_Reacts)',
+    importance: Importance.max,
+    priority: Priority.high,
+    visibility: NotificationVisibility.public,
+    playSound: true,
+    sound: RawResourceAndroidNotificationSound('message_reacts'),
+    enableVibration: true,
+    enableLights: true,
+    fullScreenIntent: false,
+    ticker: 'L.M.T Message React',
+    icon: '@drawable/ic_notification',
+    largeIcon: DrawableResourceAndroidBitmap('ic_notification_large'),
+    color: Color(0xFF1E88E5),
+  );
+
   static const DarwinNotificationDetails _normalIosDetails =
       DarwinNotificationDetails(
     presentAlert: true,
@@ -100,6 +182,21 @@ class LocalNotificationService {
         return const NotificationDetails(
           android: _calendarAndroidDetails,
           iOS: _calendarIosDetails,
+        );
+      case LmtNotificationTone.chatMessage:
+        return const NotificationDetails(
+          android: _chatMessageAndroidDetails,
+          iOS: _normalIosDetails,
+        );
+      case LmtNotificationTone.postInteractions:
+        return const NotificationDetails(
+          android: _postInteractionsAndroidDetails,
+          iOS: _normalIosDetails,
+        );
+      case LmtNotificationTone.messageReacts:
+        return const NotificationDetails(
+          android: _messageReactsAndroidDetails,
+          iOS: _normalIosDetails,
         );
       case LmtNotificationTone.normal:
         return const NotificationDetails(
@@ -179,6 +276,45 @@ class LocalNotificationService {
             importance: Importance.max,
             playSound: true,
             sound: RawResourceAndroidNotificationSound('calendar_notifications'),
+            enableVibration: true,
+          ),
+        );
+
+        await androidImpl.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _chatMessageChannelId,
+            'L.M.T Chat Messages',
+            description:
+                'نغمة إشعارات رسائل الشات في المجموعات (Chat_Message_Tone)',
+            importance: Importance.max,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('chat_message_tone'),
+            enableVibration: true,
+          ),
+        );
+
+        await androidImpl.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _postInteractionsChannelId,
+            'L.M.T Post Interactions',
+            description:
+                'نغمة إشعارات الإعجاب والتعليقات على منشوراتك (Post_Interactions)',
+            importance: Importance.max,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('post_interactions'),
+            enableVibration: true,
+          ),
+        );
+
+        await androidImpl.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _messageReactsChannelId,
+            'L.M.T Message Reactions',
+            description:
+                'نغمة إشعارات التفاعل بالإيموجي على رسائلك (Message_Reacts)',
+            importance: Importance.max,
+            playSound: true,
+            sound: RawResourceAndroidNotificationSound('message_reacts'),
             enableVibration: true,
           ),
         );

@@ -7,6 +7,7 @@ import '../../../core/routes/app_router.dart';
 import '../../../core/routes/routes.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_preferences.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../main.dart';
 import '../cubit/settings_cubit.dart';
 import '../widgets/settings_appearance_card.dart';
@@ -73,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirmed == true && mounted) {
-      await AppPreferences.clearLogin();
+      await context.read<LmtCubit>().logout();
       if (!mounted) return;
       AppRouter.navigateAndRemoveUntil(context, Routes.login);
     }
@@ -101,52 +102,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             centerTitle: true,
           ),
-          body: ListView(
-            padding: EdgeInsets.all(16.w),
-            physics: const BouncingScrollPhysics(),
-            children: [
-              SettingsIdentityCard(sloganOfYear: state.sloganOfYear),
-              SizedBox(height: 14.h),
-              SettingsAppearanceCard(
-                isArabic: isArabic,
-                isDark: isDark,
-                onToggleTheme: _toggleTheme,
-                onSwitchLocale: _switchLocale,
-              ),
-              SizedBox(height: 14.h),
-              SettingsSecuritySyncCard(
-                state: state,
-                isArabic: isArabic,
-              ),
-              SizedBox(height: 14.h),
-              SettingsBrandingCard(
-                state: state,
-                isArabic: isArabic,
-              ),
-              SizedBox(height: 20.h),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.error,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: 15.h),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16.r),
+          body: AdaptiveContentBox(
+            maxWidth: 720,
+            child: ListView(
+              padding: EdgeInsets.all(16.w),
+              physics: const BouncingScrollPhysics(),
+              children: [
+                SettingsIdentityCard(sloganOfYear: state.sloganOfYear),
+                SizedBox(height: 14.h),
+                SettingsAppearanceCard(
+                  isArabic: isArabic,
+                  isDark: isDark,
+                  onToggleTheme: _toggleTheme,
+                  onSwitchLocale: _switchLocale,
+                ),
+                SizedBox(height: 14.h),
+                SettingsSecuritySyncCard(
+                  state: state,
+                  isArabic: isArabic,
+                ),
+                SizedBox(height: 14.h),
+                SettingsBrandingCard(
+                  state: state,
+                  isArabic: isArabic,
+                ),
+                SizedBox(height: 20.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 15.h),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16.r),
+                      ),
                     ),
-                  ),
-                  onPressed: _handleLogout,
-                  icon: const Icon(Icons.logout_rounded),
-                  label: Text(
-                    isArabic ? 'تسجيل الخروج (Log-out)' : 'Log-out',
-                    style: TextStyle(
-                      fontSize: 15.sp,
-                      fontWeight: FontWeight.bold,
+                    onPressed: _handleLogout,
+                    icon: const Icon(Icons.logout_rounded),
+                    label: Text(
+                      isArabic ? 'تسجيل الخروج (Log-out)' : 'Log-out',
+                      style: TextStyle(
+                        fontSize: 15.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

@@ -71,6 +71,17 @@ abstract class LmtRepository {
 
   /// Clears all cached state data and restores factory seed defaults.
   Future<void> clearCachedState();
+
+  /// Publishes or clears the live typing indicator status for [member] in [groupId].
+  Future<void> setGroupTypingStatus({
+    required String groupId,
+    required MemberModel member,
+    required bool isTyping,
+  }) async {}
+
+  /// Streams active typing members inside [groupId].
+  Stream<List<TypingMemberStatus>> watchGroupTyping(String groupId) =>
+      const Stream.empty();
 }
 
 /// Concrete local-first implementation of [LmtRepository].
@@ -115,19 +126,17 @@ class LmtLocalRepositoryImpl implements LmtRepository {
               .map((e) => ChatMessageModel.fromJson(e as Map<String, dynamic>))
               .toList();
         }
-        if (decoded['posts'] is List && (decoded['posts'] as List).isNotEmpty) {
+        if (decoded['posts'] is List) {
           posts = (decoded['posts'] as List)
               .map((e) => PostModel.fromJson(e as Map<String, dynamic>))
               .toList();
         }
-        if (decoded['sharedFiles'] is List &&
-            (decoded['sharedFiles'] as List).isNotEmpty) {
+        if (decoded['sharedFiles'] is List) {
           sharedFiles = (decoded['sharedFiles'] as List)
               .map((e) => SharedFileModel.fromJson(e as Map<String, dynamic>))
               .toList();
         }
-        if (decoded['calendarEvents'] is List &&
-            (decoded['calendarEvents'] as List).isNotEmpty) {
+        if (decoded['calendarEvents'] is List) {
           calendarEvents = (decoded['calendarEvents'] as List)
               .map((e) =>
                   CalendarEventModel.fromJson(e as Map<String, dynamic>))
@@ -149,10 +158,13 @@ class LmtLocalRepositoryImpl implements LmtRepository {
       }
     }
 
-    if (savedUserId != null) {
+    final isLoggedIn = await AppPreferences.isLoggedIn();
+    if (savedUserId != null && savedUserId.isNotEmpty) {
       final found = members.where((m) => m.id == savedUserId).toList();
       if (found.isNotEmpty) {
         currentUser = found.first;
+      } else if (isLoggedIn) {
+        await AppPreferences.clearLogin();
       }
     }
 
@@ -179,7 +191,9 @@ class LmtLocalRepositoryImpl implements LmtRepository {
     try {
       final encoded = jsonEncode(stateJson);
       await AppPreferences.setCachedStateJson(encoded);
-      await AppPreferences.setCurrentUserId(currentUserId);
+      if (currentUserId.isNotEmpty) {
+        await AppPreferences.setCurrentUserId(currentUserId);
+      }
     } catch (_) {}
   }
 
@@ -187,4 +201,15 @@ class LmtLocalRepositoryImpl implements LmtRepository {
   Future<void> clearCachedState() async {
     await AppPreferences.clearCachedState();
   }
+
+  @override
+  Future<void> setGroupTypingStatus({
+    required String groupId,
+    required MemberModel member,
+    required bool isTyping,
+  }) async {}
+
+  @override
+  Stream<List<TypingMemberStatus>> watchGroupTyping(String groupId) =>
+      const Stream.empty();
 }

@@ -10,6 +10,7 @@ import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
 import '../../../core/utils/app_assets.dart';
 import '../../../core/utils/device_file_helper.dart';
+import '../../../core/widgets/expandable_text.dart';
 import '../../../core/widgets/lmt_avatar.dart';
 import '../../../core/widgets/lmt_card.dart';
 import '../cubit/posts_cubit.dart';
@@ -17,9 +18,10 @@ import '../sheets/post_interactions_sheet.dart';
 import '../views/post_image_viewer_page.dart';
 
 /// Displays an individual timeline post card supporting Simple text, Poll voting
-/// (with toggle-to-unvote and "Who Voted" inspection), Image/Video media
+/// (with toggle-to-unvote, fade/expand for long option lists, and "Who Voted"
+/// inspection), collapsible long post text (>200 chars), Image/Video media
 /// uploaded from the device gallery, and "Who Liked" inspection.
-class TimelinePostCard extends StatelessWidget {
+class TimelinePostCard extends StatefulWidget {
   /// The post model to render.
   final PostModel post;
 
@@ -36,6 +38,14 @@ class TimelinePostCard extends StatelessWidget {
     required this.currentUser,
     required this.onShowComments,
   });
+
+  @override
+  State<TimelinePostCard> createState() => _TimelinePostCardState();
+}
+
+class _TimelinePostCardState extends State<TimelinePostCard> {
+  static const int _collapsedPollOptionsLimit = 3;
+  bool _isPollExpanded = false;
 
   Future<void> _confirmDeletePost(BuildContext context, bool isArabic) async {
     final confirmed = await showDialog<bool>(
@@ -64,12 +74,53 @@ class TimelinePostCard extends StatelessWidget {
       ),
     );
     if (confirmed == true && context.mounted) {
-      await context.read<LmtCubit>().deletePost(post.id);
+      await context.read<LmtCubit>().deletePost(widget.post.id);
+    }
+  }
+
+  Future<void> _showEditPostDialog(BuildContext context, bool isArabic) async {
+    final editCtrl = TextEditingController(text: widget.post.content);
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isArabic ? 'تعديل المنشور' : 'Edit Post'),
+        content: TextField(
+          controller: editCtrl,
+          maxLines: 5,
+          minLines: 2,
+          decoration: InputDecoration(
+            labelText: isArabic ? 'محتوى المنشور' : 'Post Content',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final text = editCtrl.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.pop(ctx, text);
+              }
+            },
+            child: Text(isArabic ? 'حفظ' : 'Save'),
+          ),
+        ],
+      ),
+    );
+    editCtrl.dispose();
+    if (saved != null && context.mounted) {
+      await context.read<LmtCubit>().editPost(
+            postId: widget.post.id,
+            content: saved,
+          );
     }
   }
 
   String _categoryBadgeLabel(bool isArabic) {
-    return switch (post.type) {
+    return switch (widget.post.type) {
       PostCategoryType.simple => isArabic ? '📢 منشور' : '📢 Post',
       PostCategoryType.poll => isArabic ? '📊 استطلاع رأي' : '📊 Poll',
       PostCategoryType.media => isArabic ? '🎬 وسائط' : '🎬 Media',
@@ -82,6 +133,7 @@ class TimelinePostCard extends StatelessWidget {
   }
 
   Future<void> _handleOpenVideo(BuildContext context, bool isArabic) async {
+    final post = widget.post;
     if (post.mediaPath != null &&
         post.mediaPath!.isNotEmpty &&
         !DeviceFileHelper.isAssetPath(post.mediaPath!)) {
@@ -96,8 +148,152 @@ class TimelinePostCard extends StatelessWidget {
     }
   }
 
+  Widget _buildPollOptionCard({
+    required BuildContext context,
+    required PostModel post,
+    required PollOptionModel option,
+    required List<MemberModel> allMembers,
+    required bool isArabic,
+    required Color primary,
+    required Color accentGreen,
+    required Color textPrimary,
+    required Color textSecondary,
+    required Color border,
+  }) {
+    final totalVotes = post.totalPollVotes;
+    final optionVotes = option.voterIds.length;
+    final ratio = totalVotes == 0 ? 0.0 : (optionVotes / totalVotes);
+    final isSelectedByMe = option.voterIds.contains(widget.currentUser.id);
+    final voterNames = option.voterIds
+        .map((id) => _memberNameById(id, allMembers))
+        .join('، ');
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: 10.h),
+      child: LmtCard(
+        padding: EdgeInsets.all(11.w),
+        borderRadius: 14.r,
+        accentColor: isSelectedByMe ? accentGreen : primary,
+        isHighlighted: isSelectedByMe,
+        shadowIntensity: isSelectedByMe ? 0.85 : 0.45,
+        onTap: () => context.read<LmtCubit>().voteOnPoll(
+              postId: post.id,
+              optionId: option.id,
+            ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  post.allowMultiplePollChoices
+                      ? (isSelectedByMe
+                          ? Icons.check_box_rounded
+                          : Icons.check_box_outline_blank_rounded)
+                      : (isSelectedByMe
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded),
+                  size: 18.sp,
+                  color: isSelectedByMe ? accentGreen : textSecondary,
+                ),
+                SizedBox(width: 8.w),
+                Expanded(
+                  child: Text(
+                    option.text,
+                    style: TextStyle(
+                      fontSize: 12.5.sp,
+                      fontWeight:
+                          isSelectedByMe ? FontWeight.bold : FontWeight.w500,
+                      color: textPrimary,
+                    ),
+                  ),
+                ),
+                Text(
+                  '$optionVotes (${(ratio * 100).round()}%)',
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.bold,
+                    color: isSelectedByMe ? accentGreen : textSecondary,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 6.h),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6.r),
+              child: LinearProgressIndicator(
+                value: ratio,
+                minHeight: 6.h,
+                color: isSelectedByMe ? accentGreen : primary,
+                backgroundColor: border,
+              ),
+            ),
+            if (option.voterIds.isNotEmpty) ...[
+              SizedBox(height: 6.h),
+              InkWell(
+                onTap: () => showPollVotersSheet(
+                  context,
+                  post: post,
+                  allMembers: allMembers,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.people_alt_outlined,
+                      size: 13.sp,
+                      color: primary,
+                    ),
+                    SizedBox(width: 4.w),
+                    Expanded(
+                      child: Text(
+                        '${isArabic ? 'المصوتون:' : 'Voters:'} $voterNames',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5.sp,
+                          color: primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (isSelectedByMe) ...[
+              SizedBox(height: 4.h),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Icon(
+                    Icons.touch_app_rounded,
+                    size: 12.sp,
+                    color: accentGreen,
+                  ),
+                  SizedBox(width: 3.w),
+                  Text(
+                    isArabic
+                        ? 'تم التصويت • اضغط مرة أخرى لإلغاء صوتك'
+                        : 'Voted • Tap again to remove your vote',
+                    style: TextStyle(
+                      fontSize: 10.sp,
+                      fontWeight: FontWeight.w600,
+                      color: accentGreen,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final post = widget.post;
+    final currentUser = widget.currentUser;
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final primary = AppColors.primaryOf(context);
     final accentGreen = AppColors.accentGreenOf(context);
@@ -106,9 +302,8 @@ class TimelinePostCard extends StatelessWidget {
     final border = AppColors.borderOf(context);
     final allMembers = context.read<LmtCubit>().state.members;
     final isLiked = post.likedByIds.contains(currentUser.id);
-    final canDelete = post.creatorId == currentUser.id ||
-        currentUser.role == UserRole.admin ||
-        currentUser.role == UserRole.editor;
+    final canEdit = currentUser.role.canEditPosts;
+    final canDelete = currentUser.role.canDeletePosts;
 
     return LmtCard(
       padding: EdgeInsets.all(15.w),
@@ -176,13 +371,23 @@ class TimelinePostCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (canEdit)
+                IconButton(
+                  tooltip: isArabic ? 'تعديل المنشور' : 'Edit Post',
+                  icon: Icon(
+                    Icons.edit_outlined,
+                    size: 19.sp,
+                    color: primary,
+                  ),
+                  onPressed: () => _showEditPostDialog(context, isArabic),
+                ),
               if (canDelete)
                 IconButton(
                   tooltip: isArabic ? 'حذف المنشور' : 'Delete Post',
                   icon: Icon(
                     Icons.delete_outline_rounded,
                     size: 19.sp,
-                    color: textSecondary,
+                    color: AppColors.error,
                   ),
                   onPressed: () => _confirmDeletePost(context, isArabic),
                 ),
@@ -190,9 +395,9 @@ class TimelinePostCard extends StatelessWidget {
           ),
           SizedBox(height: 10.h),
 
-          // Post Text Content
-          Text(
-            post.content,
+          // Post Text Content (Collapses automatically with Read more if >200 chars)
+          LmtExpandableText(
+            text: post.content,
             style: AppTypography.bodyMedium.copyWith(
               color: textPrimary,
               fontWeight: FontWeight.w600,
@@ -200,7 +405,7 @@ class TimelinePostCard extends StatelessWidget {
             ),
           ),
 
-          // Poll Section (Single-choice or Multi-choice based on post setting)
+          // Poll Section (Single-choice or Multi-choice, with Fade & More when >3 options)
           if (post.type == PostCategoryType.poll &&
               post.pollOptions.isNotEmpty) ...[
             SizedBox(height: 8.h),
@@ -219,139 +424,143 @@ class TimelinePostCard extends StatelessWidget {
               ),
             ),
             SizedBox(height: 8.h),
-            ...post.pollOptions.map((option) {
-              final totalVotes = post.totalPollVotes;
-              final optionVotes = option.voterIds.length;
-              final ratio = totalVotes == 0 ? 0.0 : (optionVotes / totalVotes);
-              final isSelectedByMe = option.voterIds.contains(currentUser.id);
-              final voterNames = option.voterIds
-                  .map((id) => _memberNameById(id, allMembers))
-                  .join('، ');
+            Builder(
+              builder: (context) {
+                final hasExtraOptions =
+                    post.pollOptions.length > _collapsedPollOptionsLimit;
+                final visibleOptions = (!hasExtraOptions || _isPollExpanded)
+                    ? post.pollOptions
+                    : post.pollOptions.take(_collapsedPollOptionsLimit).toList();
+                final hiddenOptions = hasExtraOptions
+                    ? post.pollOptions.skip(_collapsedPollOptionsLimit).toList()
+                    : const <PollOptionModel>[];
 
-              return Padding(
-                padding: EdgeInsets.only(bottom: 10.h),
-                child: LmtCard(
-                  padding: EdgeInsets.all(11.w),
-                  borderRadius: 14.r,
-                  accentColor: isSelectedByMe ? accentGreen : primary,
-                  isHighlighted: isSelectedByMe,
-                  shadowIntensity: isSelectedByMe ? 0.85 : 0.45,
-                  onTap: () => context.read<LmtCubit>().voteOnPoll(
-                        postId: post.id,
-                        optionId: option.id,
-                      ),
+                return AnimatedSize(
+                  duration: const Duration(milliseconds: 240),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(
-                            post.allowMultiplePollChoices
-                                ? (isSelectedByMe
-                                    ? Icons.check_box_rounded
-                                    : Icons.check_box_outline_blank_rounded)
-                                : (isSelectedByMe
-                                    ? Icons.check_circle_rounded
-                                    : Icons.radio_button_unchecked_rounded),
-                            size: 18.sp,
-                            color:
-                                isSelectedByMe ? accentGreen : textSecondary,
-                          ),
-                          SizedBox(width: 8.w),
-                          Expanded(
-                            child: Text(
-                              option.text,
-                              style: TextStyle(
-                                fontSize: 12.5.sp,
-                                fontWeight: isSelectedByMe
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                color: textPrimary,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            '$optionVotes (${(ratio * 100).round()}%)',
-                            style: TextStyle(
-                              fontSize: 11.sp,
-                              fontWeight: FontWeight.bold,
-                              color:
-                                  isSelectedByMe ? accentGreen : textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 6.h),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6.r),
-                        child: LinearProgressIndicator(
-                          value: ratio,
-                          minHeight: 6.h,
-                          color: isSelectedByMe ? accentGreen : primary,
-                          backgroundColor: border,
+                      ...visibleOptions.map(
+                        (option) => _buildPollOptionCard(
+                          context: context,
+                          post: post,
+                          option: option,
+                          allMembers: allMembers,
+                          isArabic: isArabic,
+                          primary: primary,
+                          accentGreen: accentGreen,
+                          textPrimary: textPrimary,
+                          textSecondary: textSecondary,
+                          border: border,
                         ),
                       ),
-                      if (option.voterIds.isNotEmpty) ...[
-                        SizedBox(height: 6.h),
-                        InkWell(
-                          onTap: () => showPollVotersSheet(
-                            context,
-                            post: post,
-                            allMembers: allMembers,
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.people_alt_outlined,
-                                size: 13.sp,
-                                color: primary,
-                              ),
-                              SizedBox(width: 4.w),
-                              Expanded(
-                                child: Text(
-                                  '${isArabic ? 'المصوتون:' : 'Voters:'} $voterNames',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 10.5.sp,
-                                    color: primary,
-                                    fontWeight: FontWeight.w600,
+                      if (hasExtraOptions && !_isPollExpanded)
+                        Stack(
+                          alignment: Alignment.bottomCenter,
+                          children: [
+                            ClipRect(
+                              child: Align(
+                                alignment: Alignment.topCenter,
+                                heightFactor: 0.72,
+                                child: IgnorePointer(
+                                  child: ShaderMask(
+                                    blendMode: BlendMode.dstIn,
+                                    shaderCallback: (bounds) =>
+                                        const LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      stops: [0.0, 0.55, 1.0],
+                                      colors: [
+                                        Colors.white,
+                                        Color(0x55FFFFFF),
+                                        Colors.transparent,
+                                      ],
+                                    ).createShader(bounds),
+                                    child: _buildPollOptionCard(
+                                      context: context,
+                                      post: post,
+                                      option: hiddenOptions.first,
+                                      allMembers: allMembers,
+                                      isArabic: isArabic,
+                                      primary: primary,
+                                      accentGreen: accentGreen,
+                                      textPrimary: textPrimary,
+                                      textSecondary: textSecondary,
+                                      border: border,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      if (isSelectedByMe) ...[
-                        SizedBox(height: 4.h),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Icon(
-                              Icons.touch_app_rounded,
-                              size: 12.sp,
-                              color: accentGreen,
                             ),
-                            SizedBox(width: 3.w),
-                            Text(
-                              isArabic
-                                  ? 'تم التصويت • اضغط مرة أخرى لإلغاء صوتك'
-                                  : 'Voted • Tap again to remove your vote',
-                              style: TextStyle(
-                                fontSize: 10.sp,
-                                fontWeight: FontWeight.w600,
-                                color: accentGreen,
+                            Padding(
+                              padding: EdgeInsets.only(bottom: 4.h),
+                              child: FilledButton.tonalIcon(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor:
+                                      primary.withValues(alpha: 0.16),
+                                  foregroundColor: primary,
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 14.w,
+                                    vertical: 6.h,
+                                  ),
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                onPressed: () =>
+                                    setState(() => _isPollExpanded = true),
+                                icon: Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  size: 18.sp,
+                                ),
+                                label: Text(
+                                  isArabic
+                                      ? 'عرض باقي الاختيارات (+${hiddenOptions.length})'
+                                      : 'More options (+${hiddenOptions.length})',
+                                  style: TextStyle(
+                                    fontSize: 11.5.sp,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                             ),
                           ],
                         ),
-                      ],
+                      if (hasExtraOptions && _isPollExpanded)
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: TextButton.icon(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 10.w,
+                                vertical: 4.h,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: () =>
+                                setState(() => _isPollExpanded = false),
+                            icon: Icon(
+                              Icons.keyboard_arrow_up_rounded,
+                              size: 18.sp,
+                              color: primary,
+                            ),
+                            label: Text(
+                              isArabic ? 'عرض خيارات أقل' : 'Show less options',
+                              style: TextStyle(
+                                fontSize: 11.5.sp,
+                                fontWeight: FontWeight.bold,
+                                color: primary,
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
-                ),
-              );
-            }),
+                );
+              },
+            ),
 
             // Button to view full "Who Voted" breakdown sheet
             Align(
@@ -623,7 +832,7 @@ class TimelinePostCard extends StatelessWidget {
               Expanded(
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14.r),
-                  onTap: onShowComments,
+                  onTap: widget.onShowComments,
                   child: Container(
                     padding: EdgeInsets.symmetric(vertical: 9.h),
                     decoration: BoxDecoration(

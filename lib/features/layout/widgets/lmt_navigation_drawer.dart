@@ -8,7 +8,8 @@ import '../../../core/routes/app_router.dart';
 import '../../../core/routes/routes.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
-import '../../../core/utils/app_preferences.dart';
+import '../../../core/utils/app_assets.dart';
+import '../../../core/utils/device_file_helper.dart';
 
 /// Side navigation drawer providing quick access to Khelwa, YouTube, Settings, and Log-out.
 class LmtNavigationDrawer extends StatelessWidget {
@@ -44,7 +45,7 @@ class LmtNavigationDrawer extends StatelessWidget {
     );
 
     if (confirmed == true && context.mounted) {
-      await AppPreferences.clearLogin();
+      await context.read<LmtCubit>().logout();
       if (!context.mounted) return;
       AppRouter.navigateAndRemoveUntil(context, Routes.login);
     }
@@ -78,7 +79,10 @@ class LmtNavigationDrawer extends StatelessWidget {
                       CircleAvatar(
                         radius: 30.r,
                         backgroundColor: Colors.white,
-                        backgroundImage: AssetImage(user.avatarPath),
+                        backgroundImage: DeviceFileHelper.imageProviderFor(
+                          user.avatarPath,
+                          fallbackAsset: AppAssets.accountIcon,
+                        ),
                       ),
                       SizedBox(width: 12.w),
                       Expanded(

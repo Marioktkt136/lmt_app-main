@@ -19,8 +19,11 @@ class ChatGroupTile extends StatelessWidget {
   /// Total number of messages in this group.
   final int messageCount;
 
-  /// Whether the current user has permission to edit or delete groups.
-  final bool canManageGroups;
+  /// Whether the current user has permission to edit groups (Admin & Editor).
+  final bool canEditGroups;
+
+  /// Whether the current user has permission to delete groups (Admin only).
+  final bool canDeleteGroups;
 
   /// Callback invoked when the group card is tapped.
   final VoidCallback onTap;
@@ -40,7 +43,8 @@ class ChatGroupTile extends StatelessWidget {
     required this.group,
     required this.lastMessage,
     required this.messageCount,
-    required this.canManageGroups,
+    required this.canEditGroups,
+    required this.canDeleteGroups,
     required this.onTap,
     required this.onTogglePin,
     required this.onEdit,
@@ -197,7 +201,7 @@ class ChatGroupTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (canManageGroups) ...[
+              if (canEditGroups)
                 PopupMenuItem(
                   value: 'edit',
                   child: Row(
@@ -210,6 +214,7 @@ class ChatGroupTile extends StatelessWidget {
                     ],
                   ),
                 ),
+              if (canDeleteGroups)
                 PopupMenuItem(
                   value: 'delete',
                   child: Row(
@@ -229,7 +234,6 @@ class ChatGroupTile extends StatelessWidget {
                     ],
                   ),
                 ),
-              ],
             ],
           ),
         ],

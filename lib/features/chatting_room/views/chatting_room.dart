@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../../core/theme/colors.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
 import '../../../core/widgets/lmt_search_bar.dart';
 import '../cubit/chat_cubit.dart';
@@ -82,6 +83,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
     final primary = AppColors.primaryOf(context);
     final textSecondary = AppColors.textSecondaryOf(context);
     final canManageGroups = state.currentUser.role.canManageGroups;
+    final canDeleteGroups = state.currentUser.role.canDeleteGroups;
 
     final groups = state.sortedChatGroups.where((g) {
       if (!g.memberIds.contains(state.currentUser.id)) return false;
@@ -93,8 +95,10 @@ class _ChattingRoomState extends State<ChattingRoom> {
           g.adminName.toLowerCase().contains(q);
     }).toList();
 
-    return Column(
-      children: [
+    return AdaptiveContentBox(
+      maxWidth: 820,
+      child: Column(
+        children: [
         // Top Search & Action Bar
         LmtSearchBar(
           hintText: isArabic
@@ -152,7 +156,8 @@ class _ChattingRoomState extends State<ChattingRoom> {
                       group: group,
                       lastMessage: lastMsg,
                       messageCount: msgCount,
-                      canManageGroups: canManageGroups,
+                      canEditGroups: canManageGroups,
+                      canDeleteGroups: canDeleteGroups,
                       onTap: () => _openGroupScreen(group.id),
                       onTogglePin: () => context
                           .read<LmtCubit>()
@@ -169,6 +174,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
                 ),
         ),
       ],
+    ),
     );
   }
 }

@@ -3,12 +3,16 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../../core/services/shorebird_update_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
+import '../../../core/widgets/shorebird_welcome_dialog.dart';
+import '../../auth/services/biometric_auth_service.dart';
+import '../../auth/widgets/biometric_fallback_dialog.dart';
 import '../cubit/settings_cubit.dart';
 
 /// Security, Biometric Login, and Offline/Online Sync section card.
-class SettingsSecuritySyncCard extends StatelessWidget {
+class SettingsSecuritySyncCard extends StatefulWidget {
   /// The current application state.
   final LmtState state;
 
@@ -23,7 +27,151 @@ class SettingsSecuritySyncCard extends StatelessWidget {
   });
 
   @override
+  State<SettingsSecuritySyncCard> createState() =>
+      _SettingsSecuritySyncCardState();
+}
+
+class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
+  final BiometricAuthService _biometricService = BiometricAuthService();
+  bool _isCheckingBiometric = false;
+  bool _isCheckingUpdates = false;
+  String _versionLabel = 'v1.0.0+1';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrentVersion();
+  }
+
+  Future<void> _loadCurrentVersion() async {
+    final result = await ShorebirdUpdateService.instance.checkAndSyncUpdates();
+    if (!mounted) return;
+    setState(() => _versionLabel = result.versionLabel);
+  }
+
+  Future<void> _handleCheckForUpdates() async {
+    if (_isCheckingUpdates) return;
+    final isArabic = widget.isArabic;
+    final accentGreen = AppColors.accentGreenOf(context);
+    setState(() => _isCheckingUpdates = true);
+    try {
+      final result =
+          await ShorebirdUpdateService.instance.checkAndSyncUpdates();
+      if (!mounted) return;
+      setState(() => _versionLabel = result.versionLabel);
+      if (result.welcomeMessage != null) {
+        await ShorebirdWelcomeDialog.show(context, result.welcomeMessage!);
+      } else {
+        _showFeedback(
+          isArabic
+              ? 'التطبيق على أحدث إصدار (${result.versionLabel}) ✅'
+              : 'App is up to date (${result.versionLabel}) ✅',
+          accentGreen,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingUpdates = false);
+      }
+    }
+  }
+
+  void _showFeedback(String message, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _handleBiometricToggle(bool enable) async {
+    if (_isCheckingBiometric) return;
+    final cubit = context.read<LmtCubit>();
+    final accentGreen = AppColors.accentGreenOf(context);
+    final isArabic = widget.isArabic;
+
+    if (!enable) {
+      await cubit.setBiometricEnabled(false);
+      _showFeedback(
+        isArabic
+            ? 'تم إيقاف قفل البصمة والوجه — سيتم الدخول مباشرة بدون طلب البصمة 🔓'
+            : 'Fingerprint & Face ID disabled 🔓',
+        AppColors.warning,
+      );
+      return;
+    }
+
+    setState(() => _isCheckingBiometric = true);
+    try {
+      final result = await _biometricService.authenticate(
+        localizedReason: isArabic
+            ? 'تأكيد بصمة الإصبع أو الوجه لتفعيل الحماية البيومترية في L.M.T'
+            : 'Verify your Fingerprint or Face ID to enable biometric login in L.M.T',
+      );
+      if (!mounted) return;
+
+      switch (result.status) {
+        case BiometricStatus.success:
+          await cubit.setBiometricEnabled(true);
+          _showFeedback(
+            isArabic
+                ? 'تم تفعيل الدخول بالبصمة والوجه بنجاح ✅'
+                : 'Fingerprint & Face ID enabled ✅',
+            accentGreen,
+          );
+        case BiometricStatus.pluginMissing:
+          final confirmed = await BiometricFallbackDialog.show(
+            context,
+            isArabic: isArabic,
+          );
+          if (confirmed == true && mounted) {
+            await cubit.setBiometricEnabled(true);
+            _showFeedback(
+              isArabic
+                  ? 'تم تفعيل الدخول بالبصمة والوجه بنجاح ✅'
+                  : 'Fingerprint & Face ID enabled ✅',
+              accentGreen,
+            );
+          }
+        case BiometricStatus.notEnrolled:
+          await cubit.setBiometricEnabled(false);
+          _showFeedback(
+            isArabic
+                ? 'لا توجد بصمة أو Face ID مسجل على هذا الجهاز. قم بإعدادها من إعدادات الهاتف أولاً.'
+                : 'No Fingerprint or Face ID enrolled on this device.',
+            AppColors.error,
+          );
+        case BiometricStatus.cancelled:
+          await cubit.setBiometricEnabled(false);
+          _showFeedback(
+            isArabic
+                ? 'لم يكتمل التحقق من البصمة لتفعيل الميزة'
+                : 'Biometric verification cancelled',
+            AppColors.warning,
+          );
+        case BiometricStatus.error:
+          await cubit.setBiometricEnabled(false);
+          _showFeedback(
+            isArabic
+                ? 'تعذر تشغيل البصمة: ${result.message ?? ''}'
+                : 'Biometric error: ${result.message ?? ''}',
+            AppColors.error,
+          );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingBiometric = false);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isArabic = widget.isArabic;
+    final state = widget.state;
     final primary = AppColors.primaryOf(context);
     final accentGreen = AppColors.accentGreenOf(context);
     final textPrimary = AppColors.textPrimaryOf(context);
@@ -54,11 +202,24 @@ class SettingsSecuritySyncCard extends StatelessWidget {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               secondary: CircleAvatar(
-                backgroundColor: accentGreen.withValues(alpha: 0.12),
-                child: Icon(
-                  Icons.fingerprint_rounded,
-                  color: accentGreen,
-                ),
+                backgroundColor: (state.biometricEnabled
+                        ? accentGreen
+                        : textSecondary)
+                    .withValues(alpha: 0.14),
+                child: _isCheckingBiometric
+                    ? SizedBox(
+                        width: 18.w,
+                        height: 18.w,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: accentGreen,
+                        ),
+                      )
+                    : Icon(
+                        Icons.fingerprint_rounded,
+                        color:
+                            state.biometricEnabled ? accentGreen : textSecondary,
+                      ),
               ),
               title: Text(
                 isArabic
@@ -71,18 +232,21 @@ class SettingsSecuritySyncCard extends StatelessWidget {
                 ),
               ),
               subtitle: Text(
-                isArabic
-                    ? 'تفعيل المصادقة البيومترية السريعة (Android / iOS)'
-                    : 'Enable biometric authentication (Android / iOS)',
+                state.biometricEnabled
+                    ? (isArabic
+                        ? 'مفعلة ✅ — يطلب البصمة أو Face ID تلقائياً عند فتح التطبيق والدخول'
+                        : 'Active ✅ — Requires Fingerprint / Face ID when opening the app')
+                    : (isArabic
+                        ? 'متوقفة 🔓 — يدخل مباشرة للجلسة المحفوظة بدون طلب البصمة/الوجه'
+                        : 'Off 🔓 — Opens remembered session directly without biometric prompt'),
                 style: TextStyle(
                   fontSize: 11.sp,
-                  color: textSecondary,
+                  color: state.biometricEnabled ? accentGreen : textSecondary,
                 ),
               ),
               value: state.biometricEnabled,
               activeTrackColor: accentGreen,
-              onChanged: (v) =>
-                  context.read<LmtCubit>().setBiometricEnabled(v),
+              onChanged: _isCheckingBiometric ? null : _handleBiometricToggle,
             ),
             const Divider(),
             ListTile(
@@ -131,6 +295,45 @@ class SettingsSecuritySyncCard extends StatelessWidget {
                       )
                     : const Icon(Icons.sync_rounded, size: 16),
                 label: Text(isArabic ? 'مزامنة' : 'Sync'),
+              ),
+            ),
+            const Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(
+                backgroundColor: primary.withValues(alpha: 0.14),
+                child: Icon(
+                  Icons.system_update_alt_rounded,
+                  color: primary,
+                ),
+              ),
+              title: Text(
+                isArabic
+                    ? 'التحديث التلقائي (Shorebird OTA)'
+                    : 'Auto Updates (Shorebird OTA)',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13.sp,
+                  color: textPrimary,
+                ),
+              ),
+              subtitle: Text(
+                '${isArabic ? 'الإصدار الحالي:' : 'Current Version:'} $_versionLabel',
+                style: TextStyle(
+                  fontSize: 11.sp,
+                  color: textSecondary,
+                ),
+              ),
+              trailing: OutlinedButton.icon(
+                onPressed: _isCheckingUpdates ? null : _handleCheckForUpdates,
+                icon: _isCheckingUpdates
+                    ? SizedBox(
+                        width: 14.w,
+                        height: 14.w,
+                        child: const CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_download_outlined, size: 16),
+                label: Text(isArabic ? 'تحديثات' : 'Check'),
               ),
             ),
           ],

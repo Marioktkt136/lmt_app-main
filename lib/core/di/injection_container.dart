@@ -7,6 +7,7 @@ import '../api/api_interceptors.dart';
 import '../config/app_config.dart';
 import '../cubit/lmt_cubit.dart';
 import '../network/network_info.dart';
+import '../repositories/lmt_firestore_repository.dart';
 import '../repositories/lmt_repository.dart';
 import '../utils/app_preferences.dart';
 
@@ -14,10 +15,10 @@ final sl = GetIt.instance;
 
 /// Initializes Dependency Injection following SOLID & Clean Architecture principles.
 Future<void> init() async {
-  //! Repositories
+  //! Repositories (Temp Cloud Firestore DB; swap cleanly with ASP.NET Core API later)
   if (!sl.isRegistered<LmtRepository>()) {
     sl.registerLazySingleton<LmtRepository>(
-      () => const LmtLocalRepositoryImpl(),
+      () => LmtFirestoreRepositoryImpl(),
     );
   }
 

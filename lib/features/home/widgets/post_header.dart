@@ -2,6 +2,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:lmt/core/theme/colors.dart';
 import 'package:lmt/core/theme/typography.dart';
+import 'package:lmt/core/utils/app_assets.dart';
+import 'package:lmt/core/utils/device_file_helper.dart';
 
 class PostHeader extends StatelessWidget {
   final String name;
@@ -21,7 +23,10 @@ class PostHeader extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 18.r,
-          backgroundImage: AssetImage(avatarPath),
+          backgroundImage: DeviceFileHelper.imageProviderFor(
+            avatarPath,
+            fallbackAsset: AppAssets.accountIcon,
+          ),
           backgroundColor: AppColors.background,
         ),
         SizedBox(width: 8.w),

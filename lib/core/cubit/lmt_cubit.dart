@@ -151,6 +151,7 @@ class LmtCubit extends LmtBaseCubit
   Future<void> close() {
     cancelKhelwaTimer();
     cancelCalendarTimers();
+    cancelTypingWatchers();
     _connectivitySubscription?.cancel();
     return super.close();
   }

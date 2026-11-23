@@ -7,16 +7,22 @@ import '../../../core/utils/device_file_helper.dart';
 import '../../../core/widgets/lmt_card.dart';
 
 /// Displays a compact, easy-to-use horizontal quick-link card with an icon,
-/// title, link type badge, and optional delete button.
+/// title, link type badge, edit (Admin & Editor), and delete (Admin only) actions.
 class HyperlinkCardWidget extends StatelessWidget {
   /// The shared file/card model to render.
   final SharedFileModel file;
 
-  /// Whether the current user has permission to delete cards.
+  /// Whether the current user can edit card metadata (Admin & Editor).
+  final bool canEdit;
+
+  /// Whether the current user has permission to delete cards (Admin only).
   final bool canDelete;
 
   /// Callback invoked when the card is tapped.
   final VoidCallback onTap;
+
+  /// Callback invoked when the edit icon is tapped.
+  final VoidCallback onEdit;
 
   /// Callback invoked when the delete icon is tapped.
   final VoidCallback onDelete;
@@ -25,8 +31,10 @@ class HyperlinkCardWidget extends StatelessWidget {
   const HyperlinkCardWidget({
     super.key,
     required this.file,
+    required this.canEdit,
     required this.canDelete,
     required this.onTap,
+    required this.onEdit,
     required this.onDelete,
   });
 
@@ -120,7 +128,20 @@ class HyperlinkCardWidget extends StatelessWidget {
             ),
           ),
 
-          // Delete or Open indicator
+          // Edit, Delete or Open indicator
+          if (canEdit)
+            InkWell(
+              borderRadius: BorderRadius.circular(10.r),
+              onTap: onEdit,
+              child: Padding(
+                padding: EdgeInsets.all(3.w),
+                child: Icon(
+                  Icons.edit_outlined,
+                  size: 15.sp,
+                  color: primary,
+                ),
+              ),
+            ),
           if (canDelete)
             InkWell(
               borderRadius: BorderRadius.circular(10.r),
@@ -134,7 +155,7 @@ class HyperlinkCardWidget extends StatelessWidget {
                 ),
               ),
             )
-          else
+          else if (!canEdit)
             Icon(
               Icons.open_in_new_rounded,
               size: 14.sp,

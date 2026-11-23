@@ -105,6 +105,27 @@ class PostCommentModel extends Equatable {
     required this.createdAt,
   });
 
+  /// Creates a copy of this comment with updated fields.
+  PostCommentModel copyWith({
+    String? id,
+    String? authorId,
+    String? authorName,
+    String? authorAvatar,
+    UserRole? authorRole,
+    String? content,
+    DateTime? createdAt,
+  }) {
+    return PostCommentModel(
+      id: id ?? this.id,
+      authorId: authorId ?? this.authorId,
+      authorName: authorName ?? this.authorName,
+      authorAvatar: authorAvatar ?? this.authorAvatar,
+      authorRole: authorRole ?? this.authorRole,
+      content: content ?? this.content,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
   /// Serializes this comment to a JSON map.
   Map<String, dynamic> toJson() => {
         'id': id,

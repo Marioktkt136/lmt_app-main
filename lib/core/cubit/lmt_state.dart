@@ -27,6 +27,7 @@ class LmtState extends Equatable {
   final List<SharedFileModel> sharedFiles;
   final List<CalendarEventModel> calendarEvents;
   final List<AppNotificationModel> notifications;
+  final Map<String, List<TypingMemberStatus>> typingByGroup;
 
   const LmtState({
     this.isInitialized = false,
@@ -47,7 +48,25 @@ class LmtState extends Equatable {
     required this.sharedFiles,
     required this.calendarEvents,
     required this.notifications,
+    this.typingByGroup = const {},
   });
+
+  /// Returns active members currently typing in [groupId], EXCLUDING
+  /// [currentUser.id], and filtering out stale heartbeats older than 8 seconds.
+  List<TypingMemberStatus> visibleTypingMembersForGroup(
+    String groupId, {
+    DateTime? now,
+  }) {
+    final ref = now ?? DateTime.now();
+    final entries = typingByGroup[groupId] ?? const [];
+    return entries
+        .where(
+          (t) =>
+              t.memberId != currentUser.id &&
+              ref.difference(t.updatedAt).inSeconds.abs() <= 8,
+        )
+        .toList();
+  }
 
   /// Returns only notifications intended for the currently logged-in user.
   List<AppNotificationModel> get visibleNotifications =>
@@ -102,6 +121,7 @@ class LmtState extends Equatable {
     List<SharedFileModel>? sharedFiles,
     List<CalendarEventModel>? calendarEvents,
     List<AppNotificationModel>? notifications,
+    Map<String, List<TypingMemberStatus>>? typingByGroup,
   }) {
     return LmtState(
       isInitialized: isInitialized ?? this.isInitialized,
@@ -126,10 +146,13 @@ class LmtState extends Equatable {
       sharedFiles: sharedFiles ?? this.sharedFiles,
       calendarEvents: calendarEvents ?? this.calendarEvents,
       notifications: notifications ?? this.notifications,
+      typingByGroup: typingByGroup ?? this.typingByGroup,
     );
   }
 
   Map<String, dynamic> toJson() => {
+        'sloganOfYear': sloganOfYear,
+        'verseOfYear': verseOfYear,
         'currentUser': currentUser.toJson(),
         'members': members.map((e) => e.toJson()).toList(),
         'chatGroups': chatGroups.map((e) => e.toJson()).toList(),
@@ -160,12 +183,14 @@ class LmtState extends Equatable {
         sharedFiles,
         calendarEvents,
         notifications,
+        typingByGroup,
       ];
 }
 
 /// Abstract Base Cubit providing shared persistence and notification dispatch
 /// to all modular Feature Cubits.
 abstract class LmtBaseCubit extends Cubit<LmtState> {
+  static int _notificationSeq = 0;
   final LmtRepository repository;
 
   LmtBaseCubit({required this.repository})
@@ -191,25 +216,36 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     );
   }
 
-  /// Dispatches an in-app and OS-level notification with category-matched
-  /// custom tone (`Calendar_Notifications` vs `Normal_Notifications`) and
-  /// optional [targetMemberIds] audience scoping.
+  /// Dispatches an in-app and OS-level notification with category-matched or
+  /// explicit custom [tone] (`Chat_Message_Tone`, `Post_Interactions`,
+  /// `Message_Reacts`, `Calendar_Notifications`, `Normal_Notifications`) and
+  /// optional [targetMemberIds] / [excludedMemberIds] audience scoping.
   void pushNotification({
     String? id,
     required String title,
     required String description,
     required NotificationCategory category,
+    LmtNotificationTone? tone,
     int? targetTabIndex,
     String? targetGroupId,
     String? targetEventId,
     String? targetRoute,
     List<String> targetMemberIds = const [],
+    List<String> excludedMemberIds = const [],
     bool showOsBanner = true,
   }) {
-    final resolvedId = id ?? 'notif_${DateTime.now().millisecondsSinceEpoch}';
+    final resolvedId = id ??
+        'notif_${DateTime.now().microsecondsSinceEpoch}_${++_notificationSeq}';
     if (state.notifications.any((n) => n.id == resolvedId)) {
       return;
     }
+
+    final resolvedTone = tone ??
+        (category == NotificationCategory.calendar
+            ? LmtNotificationTone.calendar
+            : (category == NotificationCategory.chat
+                ? LmtNotificationTone.chatMessage
+                : LmtNotificationTone.normal));
 
     final notif = AppNotificationModel(
       id: resolvedId,
@@ -223,17 +259,16 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
       targetEventId: targetEventId,
       targetRoute: targetRoute,
       targetMemberIds: targetMemberIds,
+      excludedMemberIds: excludedMemberIds,
+      tone: resolvedTone.name,
     );
 
     if (showOsBanner && notif.isVisibleTo(state.currentUser.id)) {
-      final tone = category == NotificationCategory.calendar
-          ? LmtNotificationTone.calendar
-          : LmtNotificationTone.normal;
       LocalNotificationService.showInstantNotification(
         idKey: notif.id,
         title: title,
         body: description,
-        tone: tone,
+        tone: resolvedTone,
         payloadData: {
           'notifId': notif.id,
           'tab': ?targetTabIndex,

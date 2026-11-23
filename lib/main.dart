@@ -1,4 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -12,19 +13,22 @@ import 'core/routes/routes.dart';
 import 'core/services/local_notification_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/app_preferences.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await EasyLocalization.ensureInitialized();
   await LocalNotificationService.init();
 
-  // Set preferred orientations
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+  // Initialize temporary Firebase backend (non-blocking if offline).
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (_) {}
 
-  // Set system UI overlay style
+  // Set system UI overlay style (do not lock orientation so phones, foldables,
+  // and tablets adapt smoothly across portrait and landscape windows).
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -83,26 +87,46 @@ class LMTAppState extends State<LMTApp> {
   Widget build(BuildContext context) {
     return BlocProvider<LmtCubit>.value(
       value: di.sl<LmtCubit>(),
-      child: ScreenUtilInit(
-        designSize: const Size(375, 812),
-        minTextAdapt: true,
-        splitScreenMode: true,
-        builder: (context, child) {
-          return MaterialApp(
-            navigatorKey: AppRouter.navigatorKey,
-            title: 'L.M.T - The Last Message Team',
-            debugShowCheckedModeBanner: false,
-            theme: AppTheme.lightTheme,
-            darkTheme: AppTheme.darkTheme,
-            themeMode: _themeMode,
-            initialRoute: Routes.splash,
-            onGenerateRoute: AppRouter.generateRoute,
-            localizationsDelegates: [
-              ...GlobalMaterialLocalizations.delegates,
-              ...context.localizationDelegates,
-            ],
-            supportedLocales: context.supportedLocales,
-            locale: context.locale,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.hasBoundedWidth && constraints.maxWidth > 0
+              ? constraints.maxWidth
+              : 375.0;
+          final height =
+              constraints.hasBoundedHeight && constraints.maxHeight > 0
+                  ? constraints.maxHeight
+                  : 812.0;
+          final isWideOrLandscape = width >= 540 || width > height;
+          final designSize = isWideOrLandscape
+              ? Size(
+                  width / (width / 390).clamp(0.92, 1.16),
+                  height / (height / 812).clamp(0.90, 1.12),
+                )
+              : const Size(375, 812);
+
+          return ScreenUtilInit(
+            designSize: designSize,
+            minTextAdapt: true,
+            splitScreenMode: true,
+            rebuildFactor: RebuildFactors.size,
+            builder: (context, child) {
+              return MaterialApp(
+                navigatorKey: AppRouter.navigatorKey,
+                title: 'L.M.T - The Last Message Team',
+                debugShowCheckedModeBanner: false,
+                theme: AppTheme.lightTheme,
+                darkTheme: AppTheme.darkTheme,
+                themeMode: _themeMode,
+                initialRoute: Routes.splash,
+                onGenerateRoute: AppRouter.generateRoute,
+                localizationsDelegates: [
+                  ...GlobalMaterialLocalizations.delegates,
+                  ...context.localizationDelegates,
+                ],
+                supportedLocales: context.supportedLocales,
+                locale: context.locale,
+              );
+            },
           );
         },
       ),

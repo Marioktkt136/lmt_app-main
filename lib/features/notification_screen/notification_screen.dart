@@ -8,6 +8,7 @@ import '../../core/models/lmt_models.dart';
 import '../../core/routes/app_router.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/typography.dart';
+import '../../core/widgets/adaptive_layout.dart';
 
 /// Notifications and Reminders View
 /// - Title
@@ -47,36 +48,88 @@ class NotificationScreen extends StatelessWidget {
             ),
             centerTitle: true,
             actions: [
-              TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
-                onPressed: () {
-                  context.read<LmtCubit>().markAllNotificationsRead();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        isArabic
-                            ? 'تم تحديد جميع الإشعارات كمقروءة ✅'
-                            : 'All notifications marked as read ✅',
+              if (visibleNotifications.isNotEmpty) ...[
+                IconButton(
+                  tooltip: isArabic ? 'قراءة الكل' : 'Mark All Read',
+                  onPressed: () {
+                    context.read<LmtCubit>().markAllNotificationsRead();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isArabic
+                              ? 'تم تحديد جميع الإشعارات كمقروءة ✅'
+                              : 'All notifications marked as read ✅',
+                        ),
+                        backgroundColor: accentGreen,
+                        behavior: SnackBarBehavior.floating,
                       ),
-                      backgroundColor: accentGreen,
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
-                icon: const Icon(
-                  Icons.done_all_rounded,
-                  color: Colors.white,
-                  size: 18,
-                ),
-                label: Text(
-                  isArabic ? 'قراءة الكل' : 'Mark All Read',
-                  style: TextStyle(
+                    );
+                  },
+                  icon: const Icon(
+                    Icons.done_all_rounded,
                     color: Colors.white,
-                    fontSize: 11.5.sp,
-                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  onPressed: () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text(
+                          isArabic ? 'مسح كل الإشعارات؟' : 'Clean All Notifications?',
+                        ),
+                        content: Text(
+                          isArabic
+                              ? 'سيتم حذف جميع الإشعارات الظاهرة في هذه الصفحة.'
+                              : 'All notifications visible on this page will be cleared.',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.error,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: Text(isArabic ? 'مسح الكل' : 'Clean All'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed == true && context.mounted) {
+                      await context.read<LmtCubit>().clearAllNotifications();
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            isArabic
+                                ? 'تم مسح جميع الإشعارات 🧹'
+                                : 'All notifications cleared 🧹',
+                          ),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(
+                    Icons.delete_sweep_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                  label: Text(
+                    isArabic ? 'مسح الكل' : 'Clean All',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5.sp,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
           body: visibleNotifications.isEmpty
@@ -88,138 +141,178 @@ class NotificationScreen extends StatelessWidget {
                     style: TextStyle(color: textSecondary),
                   ),
                 )
-              : ListView.builder(
-                  padding: EdgeInsets.all(14.w),
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: visibleNotifications.length,
+              : AdaptiveContentBox(
+                  maxWidth: 760,
+                  child: ListView.builder(
+                    padding: EdgeInsets.all(14.w),
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: visibleNotifications.length,
                   itemBuilder: (context, index) {
                     final notif = visibleNotifications[index];
                     final isUnread = !notif.isRead;
 
-                    return Container(
-                      margin: EdgeInsets.only(bottom: 12.h),
-                      decoration: AppColors.cardDecoration(
-                        context,
-                        radius: 18.r,
-                        accentColor: isUnread ? primary : border,
-                        isHighlighted: isUnread,
+                    return Dismissible(
+                      key: ValueKey(notif.id),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        margin: EdgeInsets.only(bottom: 12.h),
+                        padding: EdgeInsets.symmetric(horizontal: 20.w),
+                        alignment: AlignmentDirectional.centerEnd,
+                        decoration: BoxDecoration(
+                          color: AppColors.error,
+                          borderRadius: BorderRadius.circular(18.r),
+                        ),
+                        child: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: Colors.white,
+                        ),
                       ),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: ListTile(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16.r),
-                          ),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 14.w,
-                            vertical: 8.h,
-                          ),
-                        leading: CircleAvatar(
-                          backgroundColor: isUnread
-                              ? primary
-                              : textSecondary.withValues(alpha: 0.2),
-                          child: Icon(
-                            _iconForCategory(notif.category),
-                            color: isUnread ? Colors.white : textSecondary,
-                          ),
+                      onDismissed: (_) =>
+                          context.read<LmtCubit>().deleteNotification(notif.id),
+                      child: Container(
+                        margin: EdgeInsets.only(bottom: 12.h),
+                        decoration: AppColors.cardDecoration(
+                          context,
+                          radius: 18.r,
+                          accentColor: isUnread ? primary : border,
+                          isHighlighted: isUnread,
                         ),
-                        title: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                notif.title,
-                                style: TextStyle(
-                                  fontWeight: isUnread
-                                      ? FontWeight.bold
-                                      : FontWeight.w600,
-                                  fontSize: 13.5.sp,
-                                  color: textPrimary,
-                                ),
-                              ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: ListTile(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16.r),
                             ),
-                            if (isUnread)
-                              Container(
-                                width: 9.w,
-                                height: 9.w,
-                                decoration: BoxDecoration(
-                                  color: accentGreen,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                          ],
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(height: 5.h),
-                            Text(
-                              notif.description,
-                              style: TextStyle(
-                                fontSize: 12.sp,
-                                color: textSecondary,
-                                height: 1.35,
-                              ),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 14.w,
+                              vertical: 8.h,
                             ),
-                            SizedBox(height: 6.h),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  DateFormat('EEE, dd/MM/yyyy • hh:mm a')
-                                      .format(notif.dateTime),
+                          leading: CircleAvatar(
+                            backgroundColor: isUnread
+                                ? primary
+                                : textSecondary.withValues(alpha: 0.2),
+                            child: Icon(
+                              _iconForCategory(notif.category),
+                              color: isUnread ? Colors.white : textSecondary,
+                            ),
+                          ),
+                          title: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  notif.title,
                                   style: TextStyle(
-                                    fontSize: 10.5.sp,
-                                    color: primary,
-                                    fontWeight: FontWeight.w600,
+                                    fontWeight: isUnread
+                                        ? FontWeight.bold
+                                        : FontWeight.w600,
+                                    fontSize: 13.5.sp,
+                                    color: textPrimary,
                                   ),
                                 ),
-                                Row(
-                                  children: [
-                                    Text(
-                                      isArabic
-                                          ? 'انتقل للقسم'
-                                          : 'Open View',
-                                      style: TextStyle(
-                                        fontSize: 10.5.sp,
-                                        color: accentGreen,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    Icon(
-                                      Icons.arrow_forward_ios_rounded,
-                                      size: 11.sp,
-                                      color: accentGreen,
-                                    ),
-                                  ],
+                              ),
+                              if (isUnread)
+                                Container(
+                                  width: 9.w,
+                                  height: 9.w,
+                                  margin: EdgeInsetsDirectional.only(end: 4.w),
+                                  decoration: BoxDecoration(
+                                    color: accentGreen,
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        onTap: () {
-                          final cubit = context.read<LmtCubit>();
-                          cubit.markNotificationRead(notif.id);
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 30,
+                                  minHeight: 30,
+                                ),
+                                tooltip: isArabic ? 'حذف الإشعار' : 'Delete',
+                                icon: Icon(
+                                  Icons.delete_outline_rounded,
+                                  size: 18.sp,
+                                  color: AppColors.error,
+                                ),
+                                onPressed: () => context
+                                    .read<LmtCubit>()
+                                    .deleteNotification(notif.id),
+                              ),
+                            ],
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(height: 5.h),
+                              Text(
+                                notif.description,
+                                style: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: textSecondary,
+                                  height: 1.35,
+                                ),
+                              ),
+                              SizedBox(height: 6.h),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    DateFormat('EEE, dd/MM/yyyy • hh:mm a')
+                                        .format(notif.dateTime),
+                                    style: TextStyle(
+                                      fontSize: 10.5.sp,
+                                      color: primary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        isArabic
+                                            ? 'انتقل للقسم'
+                                            : 'Open View',
+                                        style: TextStyle(
+                                          fontSize: 10.5.sp,
+                                          color: accentGreen,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.arrow_forward_ios_rounded,
+                                        size: 11.sp,
+                                        color: accentGreen,
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          onTap: () {
+                            final cubit = context.read<LmtCubit>();
+                            cubit.markNotificationRead(notif.id);
 
-                          if (notif.targetRoute != null) {
+                            if (notif.targetRoute != null) {
+                              Navigator.pop(context);
+                              AppRouter.navigateTo(context, notif.targetRoute!);
+                              return;
+                            }
+
+                            if (notif.targetTabIndex != null) {
+                              cubit.setActiveLayoutTab(
+                                notif.targetTabIndex!,
+                                openGroupId: notif.targetGroupId,
+                                openEventId: notif.targetEventId,
+                              );
+                            }
                             Navigator.pop(context);
-                            AppRouter.navigateTo(context, notif.targetRoute!);
-                            return;
-                          }
-
-                          if (notif.targetTabIndex != null) {
-                            cubit.setActiveLayoutTab(
-                              notif.targetTabIndex!,
-                              openGroupId: notif.targetGroupId,
-                              openEventId: notif.targetEventId,
-                            );
-                          }
-                          Navigator.pop(context);
-                        },
+                          },
+                          ),
                         ),
                       ),
                     );
                   },
+                  ),
                 ),
         );
       },

@@ -47,6 +47,23 @@ class SeenStatusModel extends Equatable {
     this.hasListened = false,
   });
 
+  /// Creates a copy of this status with updated fields.
+  SeenStatusModel copyWith({
+    String? memberId,
+    String? memberName,
+    String? avatarPath,
+    DateTime? timestamp,
+    bool? hasListened,
+  }) {
+    return SeenStatusModel(
+      memberId: memberId ?? this.memberId,
+      memberName: memberName ?? this.memberName,
+      avatarPath: avatarPath ?? this.avatarPath,
+      timestamp: timestamp ?? this.timestamp,
+      hasListened: hasListened ?? this.hasListened,
+    );
+  }
+
   /// Serializes this status to a JSON map.
   Map<String, dynamic> toJson() => {
         'memberId': memberId,
@@ -70,6 +87,58 @@ class SeenStatusModel extends Equatable {
   @override
   List<Object?> get props =>
       [memberId, memberName, avatarPath, timestamp, hasListened];
+}
+
+/// Tracks an active member typing in a group chat (synced for other members).
+class TypingMemberStatus extends Equatable {
+  /// The chat group ID where typing is active.
+  final String groupId;
+
+  /// The typing member's ID.
+  final String memberId;
+
+  /// The typing member's display name.
+  final String memberName;
+
+  /// The typing member's circular avatar path.
+  final String avatarPath;
+
+  /// Timestamp of the latest typing heartbeat.
+  final DateTime updatedAt;
+
+  /// Creates a [TypingMemberStatus].
+  const TypingMemberStatus({
+    required this.groupId,
+    required this.memberId,
+    required this.memberName,
+    this.avatarPath = AppAssets.accountIcon,
+    required this.updatedAt,
+  });
+
+  /// Serializes this typing heartbeat to JSON.
+  Map<String, dynamic> toJson() => {
+        'id': '${groupId}_$memberId',
+        'groupId': groupId,
+        'memberId': memberId,
+        'memberName': memberName,
+        'avatarPath': avatarPath,
+        'updatedAt': updatedAt.toIso8601String(),
+      };
+
+  /// Deserializes a [TypingMemberStatus] from JSON.
+  factory TypingMemberStatus.fromJson(Map<String, dynamic> json) =>
+      TypingMemberStatus(
+        groupId: json['groupId'] as String? ?? '',
+        memberId: json['memberId'] as String? ?? '',
+        memberName: json['memberName'] as String? ?? '',
+        avatarPath: json['avatarPath'] as String? ?? AppAssets.accountIcon,
+        updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+      );
+
+  @override
+  List<Object?> get props =>
+      [groupId, memberId, memberName, avatarPath, updatedAt];
 }
 
 /// Represents an individual message inside a chatting group.

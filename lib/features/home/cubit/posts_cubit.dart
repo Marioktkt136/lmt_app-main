@@ -1,5 +1,6 @@
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/models/lmt_models.dart';
+import '../../../core/services/local_notification_service.dart';
 import '../../../core/utils/app_preferences.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
@@ -17,9 +18,10 @@ mixin PostsCubitMixin on LmtBaseCubit {
     await AppPreferences.setSloganOfYear(slogan);
     await AppPreferences.setVerseOfYear(verse);
     emit(state.copyWith(sloganOfYear: slogan, verseOfYear: verse));
+    await persistState();
   }
 
-  /// Creates and publishes a new post (Simple, Poll, or Media).
+  /// Creates and publishes a new post (Admin & Editor only).
   Future<void> createPost({
     required PostCategoryType type,
     required String content,
@@ -29,6 +31,8 @@ mixin PostsCubitMixin on LmtBaseCubit {
     List<String> pollOptionsText = const [],
     bool allowMultiplePollChoices = false,
   }) async {
+    if (!state.currentUser.role.canCreatePosts) return;
+
     final now = DateTime.now();
     final pollOptions = pollOptionsText
         .where((t) => t.trim().isNotEmpty)
@@ -67,22 +71,37 @@ mixin PostsCubitMixin on LmtBaseCubit {
       title: 'منشور جديد من ${state.currentUser.name} 📢',
       description: newPost.content,
       category: NotificationCategory.posts,
+      tone: LmtNotificationTone.normal,
       targetTabIndex: 0,
+      excludedMemberIds: [state.currentUser.id],
     );
 
     emit(state.copyWith(posts: [newPost, ...state.posts]));
     await persistState();
   }
 
-  /// Deletes a post (allowed by creator, Editor, or Admin).
-  Future<void> deletePost(String postId) async {
-    final post = state.posts.where((p) => p.id == postId).firstOrNull;
-    if (post == null) return;
+  /// Edits an existing post's text content (Admin & Editor).
+  Future<void> editPost({
+    required String postId,
+    required String content,
+  }) async {
+    if (!state.currentUser.role.canEditPosts) return;
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) return;
 
-    final canDelete = post.creatorId == state.currentUser.id ||
-        state.currentUser.role == UserRole.admin ||
-        state.currentUser.role == UserRole.editor;
-    if (!canDelete) return;
+    final updatedPosts = state.posts.map((post) {
+      if (post.id != postId) return post;
+      return post.copyWith(content: trimmed);
+    }).toList();
+
+    emit(state.copyWith(posts: updatedPosts));
+    await persistState();
+  }
+
+  /// Deletes a post (Administrator ONLY).
+  Future<void> deletePost(String postId) async {
+    if (!state.currentUser.role.canDeletePosts) return;
+    if (!state.posts.any((p) => p.id == postId)) return;
 
     emit(
       state.copyWith(
@@ -92,9 +111,13 @@ mixin PostsCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Toggles the current user's Like on a post.
+  /// Toggles the current user's Like on a post and notifies ONLY the post
+  /// creator with `Post_Interactions` when liked by another member.
   Future<void> toggleLikePost(String postId) async {
     final userId = state.currentUser.id;
+    PostModel? likedPost;
+    var likeAdded = false;
+
     final updatedPosts = state.posts.map((post) {
       if (post.id != postId) return post;
       final liked = List<String>.from(post.likedByIds);
@@ -102,11 +125,32 @@ mixin PostsCubitMixin on LmtBaseCubit {
         liked.remove(userId);
       } else {
         liked.add(userId);
+        likeAdded = true;
+        likedPost = post;
       }
       return post.copyWith(likedByIds: liked);
     }).toList();
 
     emit(state.copyWith(posts: updatedPosts));
+
+    if (likeAdded && likedPost != null && likedPost!.creatorId != userId) {
+      final post = likedPost!;
+      final preview = post.content.length > 60
+          ? '${post.content.substring(0, 60)}...'
+          : post.content;
+      pushNotification(
+        title: 'إعجاب جديد بمنشورك ❤️',
+        description: preview.isNotEmpty
+            ? 'أعجب ${state.currentUser.name} بمنشورك: "$preview"'
+            : 'أعجب ${state.currentUser.name} بمنشورك.',
+        category: NotificationCategory.posts,
+        tone: LmtNotificationTone.postInteractions,
+        targetTabIndex: 0,
+        targetMemberIds: [post.creatorId],
+        excludedMemberIds: [userId],
+      );
+    }
+
     await persistState();
   }
 
@@ -154,29 +198,48 @@ mixin PostsCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Adds a comment to a post.
+  /// Adds a comment to a post and notifies ONLY the post creator with
+  /// `Post_Interactions` when commented by another member.
   Future<void> addPostComment({
     required String postId,
     required String content,
   }) async {
-    if (content.trim().isEmpty) return;
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) return;
+
+    final actorId = state.currentUser.id;
+    PostModel? commentedPost;
 
     final newComment = PostCommentModel(
       id: 'cmt_${DateTime.now().millisecondsSinceEpoch}',
-      authorId: state.currentUser.id,
+      authorId: actorId,
       authorName: state.currentUser.name,
       authorAvatar: state.currentUser.avatarPath,
       authorRole: state.currentUser.role,
-      content: content.trim(),
+      content: trimmed,
       createdAt: DateTime.now(),
     );
 
     final updatedPosts = state.posts.map((post) {
       if (post.id != postId) return post;
+      commentedPost = post;
       return post.copyWith(comments: [...post.comments, newComment]);
     }).toList();
 
     emit(state.copyWith(posts: updatedPosts));
+
+    if (commentedPost != null && commentedPost!.creatorId != actorId) {
+      pushNotification(
+        title: 'تعليق جديد على منشورك 💬',
+        description: 'علّق ${state.currentUser.name} على منشورك: "$trimmed"',
+        category: NotificationCategory.posts,
+        tone: LmtNotificationTone.postInteractions,
+        targetTabIndex: 0,
+        targetMemberIds: [commentedPost!.creatorId],
+        excludedMemberIds: [actorId],
+      );
+    }
+
     await persistState();
   }
 }

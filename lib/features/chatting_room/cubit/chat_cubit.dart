@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/models/lmt_models.dart';
+import '../../../core/services/local_notification_service.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
 
@@ -7,8 +10,85 @@ export '../../../core/cubit/lmt_cubit.dart';
 typedef ChatCubit = LmtCubit;
 
 /// Encapsulates Chatting Room groups, pinning, messages, voice notes, stickers,
-/// reactions, forwarding, editing, and deletion logic.
+/// reactions, live typing indicators, real seen receipts, forwarding, editing,
+/// and deletion logic.
 mixin ChatCubitMixin on LmtBaseCubit {
+  final Map<String, StreamSubscription<List<TypingMemberStatus>>>
+      _typingSubscriptions = {};
+
+  /// Cancels all active typing indicator listeners on Cubit disposal.
+  void cancelTypingWatchers() {
+    for (final sub in _typingSubscriptions.values) {
+      sub.cancel();
+    }
+    _typingSubscriptions.clear();
+  }
+
+  /// Starts watching live typing indicators for [groupId].
+  void startWatchingGroupTyping(String groupId) {
+    if (_typingSubscriptions.containsKey(groupId)) return;
+    _typingSubscriptions[groupId] = repository
+        .watchGroupTyping(groupId)
+        .listen((remoteTypists) {
+      final now = DateTime.now();
+      final active = remoteTypists
+          .where((t) => now.difference(t.updatedAt).inSeconds.abs() <= 8)
+          .toList();
+      final updatedMap =
+          Map<String, List<TypingMemberStatus>>.from(state.typingByGroup);
+      updatedMap[groupId] = active;
+      emit(state.copyWith(typingByGroup: updatedMap));
+    }, onError: (_) {});
+  }
+
+  /// Stops watching live typing indicators for [groupId].
+  void stopWatchingGroupTyping(String groupId) {
+    _typingSubscriptions.remove(groupId)?.cancel();
+  }
+
+  /// Updates the active user's typing heartbeat in [groupId] (supports multiple
+  /// simultaneous typists while hiding self-typing from the sender UI).
+  Future<void> setTypingInGroup({
+    required String groupId,
+    required bool isTyping,
+  }) async {
+    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    final actor = state.currentUser;
+    if (group == null || !group.memberIds.contains(actor.id)) return;
+
+    final now = DateTime.now();
+    final existing = List<TypingMemberStatus>.from(
+      state.typingByGroup[groupId] ?? const [],
+    ).where(
+      (t) =>
+          t.memberId != actor.id &&
+          now.difference(t.updatedAt).inSeconds.abs() <= 8,
+    ).toList();
+
+    if (isTyping) {
+      existing.add(
+        TypingMemberStatus(
+          groupId: groupId,
+          memberId: actor.id,
+          memberName: actor.name,
+          avatarPath: actor.avatarPath,
+          updatedAt: now,
+        ),
+      );
+    }
+
+    final updatedMap =
+        Map<String, List<TypingMemberStatus>>.from(state.typingByGroup);
+    updatedMap[groupId] = existing;
+    emit(state.copyWith(typingByGroup: updatedMap));
+
+    await repository.setGroupTypingStatus(
+      groupId: groupId,
+      member: actor,
+      isTyping: isTyping,
+    );
+  }
+
   /// Selects or clears the active chatting group room.
   void selectChatGroup(String? groupId) {
     emit(
@@ -28,14 +108,15 @@ mixin ChatCubitMixin on LmtBaseCubit {
   }) async {
     if (!state.currentUser.role.canManageGroups) return;
 
+    final resolvedMembers = memberIds.isEmpty
+        ? state.members.map((m) => m.id).toList()
+        : memberIds;
     final newGroup = ChatGroupModel(
       id: 'grp_${DateTime.now().millisecondsSinceEpoch}',
       name: name.trim(),
       description: description.trim(),
       imagePath: imagePath,
-      memberIds: memberIds.isEmpty
-          ? state.members.map((m) => m.id).toList()
-          : memberIds,
+      memberIds: resolvedMembers,
       adminId: state.currentUser.id,
       adminName: state.currentUser.name,
       isPinned: false,
@@ -43,22 +124,29 @@ mixin ChatCubitMixin on LmtBaseCubit {
     );
 
     final updatedGroups = [newGroup, ...state.chatGroups];
-    pushNotification(
-      title: 'تمت إضافتك لمجموعة جديدة 💬',
-      description:
-          'قام ${state.currentUser.name} بإنشاء مجموعة "${newGroup.name}" وإضافتك إليها.',
-      category: NotificationCategory.chat,
-      targetTabIndex: 1,
-      targetGroupId: newGroup.id,
-      targetMemberIds: newGroup.memberIds,
-    );
+    final recipients = newGroup.memberIds
+        .where((id) => id != state.currentUser.id)
+        .toList();
+    if (recipients.isNotEmpty) {
+      pushNotification(
+        title: 'تمت إضافتك لمجموعة جديدة 💬',
+        description:
+            'قام ${state.currentUser.name} بإنشاء مجموعة "${newGroup.name}" وإضافتك إليها.',
+        category: NotificationCategory.chat,
+        tone: LmtNotificationTone.chatMessage,
+        targetTabIndex: 1,
+        targetGroupId: newGroup.id,
+        targetMemberIds: recipients,
+        excludedMemberIds: [state.currentUser.id],
+      );
+    }
 
     emit(state.copyWith(chatGroups: updatedGroups));
     await persistState();
   }
 
   /// Updates an existing chat group's details and notifies ONLY newly added
-  /// members (not existing members).
+  /// members (never existing members or the editor/admin making the change).
   Future<void> updateChatGroup(ChatGroupModel updatedGroup) async {
     if (!state.currentUser.role.canManageGroups) return;
     final previousGroup =
@@ -70,7 +158,11 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
     if (previousGroup != null) {
       final newlyAddedIds = updatedGroup.memberIds
-          .where((id) => !previousGroup.memberIds.contains(id))
+          .where(
+            (id) =>
+                id != state.currentUser.id &&
+                !previousGroup.memberIds.contains(id),
+          )
           .toList();
       if (newlyAddedIds.isNotEmpty) {
         pushNotification(
@@ -78,9 +170,11 @@ mixin ChatCubitMixin on LmtBaseCubit {
           description:
               'قام ${state.currentUser.name} بإضافتك إلى مجموعة "${updatedGroup.name}".',
           category: NotificationCategory.chat,
+          tone: LmtNotificationTone.chatMessage,
           targetTabIndex: 1,
           targetGroupId: updatedGroup.id,
           targetMemberIds: newlyAddedIds,
+          excludedMemberIds: [state.currentUser.id],
         );
       }
     }
@@ -89,9 +183,9 @@ mixin ChatCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Deletes a chat group and its associated messages.
+  /// Deletes a chat group and its associated messages (Administrator ONLY).
   Future<void> deleteChatGroup(String groupId) async {
-    if (!state.currentUser.role.canManageGroups) return;
+    if (!state.currentUser.role.canDeleteGroups) return;
     final updatedGroups =
         state.chatGroups.where((g) => g.id != groupId).toList();
     final updatedMessages =
@@ -119,6 +213,9 @@ mixin ChatCubitMixin on LmtBaseCubit {
   }
 
   /// Sends a text, voice note, image, file, or sticker message to [groupId].
+  ///
+  /// Starts with an empty `seenBy` list so only real group members who enter
+  /// the conversation room appear in the Seen list (excluding the sender).
   Future<void> sendChatMessage({
     required String groupId,
     required MessageType type,
@@ -129,32 +226,12 @@ mixin ChatCubitMixin on LmtBaseCubit {
     ChatMessageModel? replyTo,
   }) async {
     final now = DateTime.now();
-    final initialSeen = [
-      SeenStatusModel(
-        memberId: state.currentUser.id,
-        memberName: state.currentUser.name,
-        avatarPath: state.currentUser.avatarPath,
-        timestamp: now,
-        hasListened: type == MessageType.voiceNote,
-      ),
-      ...state.members
-          .where((m) => m.id != state.currentUser.id)
-          .take(2)
-          .map(
-            (m) => SeenStatusModel(
-              memberId: m.id,
-              memberName: m.name,
-              avatarPath: m.avatarPath,
-              timestamp: now.add(const Duration(seconds: 5)),
-              hasListened: type == MessageType.voiceNote,
-            ),
-          ),
-    ];
+    final senderId = state.currentUser.id;
 
     final message = ChatMessageModel(
       id: 'msg_${now.millisecondsSinceEpoch}',
       groupId: groupId,
-      senderId: state.currentUser.id,
+      senderId: senderId,
       senderName: state.currentUser.name,
       senderAvatar: state.currentUser.avatarPath,
       senderRole: state.currentUser.role,
@@ -170,7 +247,7 @@ mixin ChatCubitMixin on LmtBaseCubit {
           : (replyTo.content.trim().isNotEmpty
               ? replyTo.content
               : _messagePreviewText(replyTo.type, replyTo.content)),
-      seenBy: initialSeen,
+      seenBy: const [],
       sentAt: now,
     );
 
@@ -179,17 +256,121 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
     final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
     if (group != null) {
-      final preview = _messagePreviewText(type, content);
-      pushNotification(
-        title: '${group.name} 💬',
-        description: '${state.currentUser.name}: $preview',
-        category: NotificationCategory.chat,
-        targetTabIndex: 1,
-        targetGroupId: groupId,
-        targetMemberIds: group.memberIds,
-      );
+      final recipients =
+          group.memberIds.where((id) => id != senderId).toList();
+      if (recipients.isNotEmpty) {
+        final preview = _messagePreviewText(type, content);
+        pushNotification(
+          title: '${group.name} 💬',
+          description: '${state.currentUser.name}: $preview',
+          category: NotificationCategory.chat,
+          tone: LmtNotificationTone.chatMessage,
+          targetTabIndex: 1,
+          targetGroupId: groupId,
+          targetMemberIds: recipients,
+          excludedMemberIds: [senderId],
+        );
+      }
     }
 
+    await persistState();
+  }
+
+  /// Marks all messages from other members inside [groupId] as seen by the
+  /// active user when they actually enter the group conversation room.
+  ///
+  /// Never records a member as having seen their own sent messages.
+  Future<void> markGroupMessagesSeen(String groupId) async {
+    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    final viewer = state.currentUser;
+    if (group == null || !group.memberIds.contains(viewer.id)) return;
+
+    final now = DateTime.now();
+    var hasChanges = false;
+
+    final updatedMessages = state.chatMessages.map((msg) {
+      if (msg.groupId != groupId) return msg;
+
+      final sanitized =
+          msg.seenBy.where((s) => s.memberId != msg.senderId).toList();
+      final hadSenderInSeen = sanitized.length != msg.seenBy.length;
+
+      if (msg.senderId == viewer.id) {
+        if (!hadSenderInSeen) return msg;
+        hasChanges = true;
+        return msg.copyWith(seenBy: sanitized);
+      }
+
+      final alreadySeen = sanitized.any((s) => s.memberId == viewer.id);
+      if (alreadySeen) {
+        if (!hadSenderInSeen) return msg;
+        hasChanges = true;
+        return msg.copyWith(seenBy: sanitized);
+      }
+
+      hasChanges = true;
+      return msg.copyWith(
+        seenBy: [
+          ...sanitized,
+          SeenStatusModel(
+            memberId: viewer.id,
+            memberName: viewer.name,
+            avatarPath: viewer.avatarPath,
+            timestamp: now,
+            hasListened: false,
+          ),
+        ],
+      );
+    }).toList();
+
+    if (!hasChanges) return;
+    emit(state.copyWith(chatMessages: updatedMessages));
+    await persistState();
+  }
+
+  /// Records that the current user listened to a voice note message (only when
+  /// they are not the sender).
+  Future<void> markVoiceNoteListened(String messageId) async {
+    final viewer = state.currentUser;
+    var hasChanges = false;
+    final now = DateTime.now();
+
+    final updatedMessages = state.chatMessages.map((msg) {
+      if (msg.id != messageId || msg.senderId == viewer.id) return msg;
+
+      final group =
+          state.chatGroups.where((g) => g.id == msg.groupId).firstOrNull;
+      if (group == null || !group.memberIds.contains(viewer.id)) return msg;
+
+      final existingIdx =
+          msg.seenBy.indexWhere((s) => s.memberId == viewer.id);
+      if (existingIdx == -1) {
+        hasChanges = true;
+        return msg.copyWith(
+          seenBy: [
+            ...msg.seenBy.where((s) => s.memberId != msg.senderId),
+            SeenStatusModel(
+              memberId: viewer.id,
+              memberName: viewer.name,
+              avatarPath: viewer.avatarPath,
+              timestamp: now,
+              hasListened: true,
+            ),
+          ],
+        );
+      }
+      if (!msg.seenBy[existingIdx].hasListened) {
+        hasChanges = true;
+        final updatedSeen = List<SeenStatusModel>.from(msg.seenBy);
+        updatedSeen[existingIdx] =
+            updatedSeen[existingIdx].copyWith(hasListened: true);
+        return msg.copyWith(seenBy: updatedSeen);
+      }
+      return msg;
+    }).toList();
+
+    if (!hasChanges) return;
+    emit(state.copyWith(chatMessages: updatedMessages));
     await persistState();
   }
 
@@ -210,12 +391,17 @@ mixin ChatCubitMixin on LmtBaseCubit {
     }
   }
 
-  /// Toggles an emoji reaction on a chat message.
+  /// Toggles an emoji reaction on a chat message and notifies ONLY the message
+  /// sender with the `Message_Reacts` custom tone when a reaction is added.
   Future<void> toggleMessageReaction({
     required String messageId,
     required String emoji,
   }) async {
     final userName = state.currentUser.name;
+    final actorId = state.currentUser.id;
+    ChatMessageModel? reactedTarget;
+    var reactionAdded = false;
+
     final updatedMessages = state.chatMessages.map((msg) {
       if (msg.id != messageId) return msg;
 
@@ -235,12 +421,38 @@ mixin ChatCubitMixin on LmtBaseCubit {
       } else {
         currentList.add(userName);
         updatedReactions[emoji] = currentList;
+        reactionAdded = true;
+        reactedTarget = msg;
       }
 
       return msg.copyWith(reactions: updatedReactions);
     }).toList();
 
     emit(state.copyWith(chatMessages: updatedMessages));
+
+    if (reactionAdded &&
+        reactedTarget != null &&
+        reactedTarget!.senderId != actorId &&
+        reactedTarget!.senderId != 'system_auto_khelwa') {
+      final target = reactedTarget!;
+      final groupName = state.chatGroups
+              .where((g) => g.id == target.groupId)
+              .map((g) => g.name)
+              .firstOrNull ??
+          'Group Chat';
+      pushNotification(
+        title: 'تفاعل جديد على رسالتك $emoji',
+        description:
+            'تفاعل $userName بـ $emoji على رسالتك في "$groupName".',
+        category: NotificationCategory.chat,
+        tone: LmtNotificationTone.messageReacts,
+        targetTabIndex: 1,
+        targetGroupId: target.groupId,
+        targetMemberIds: [target.senderId],
+        excludedMemberIds: [actorId],
+      );
+    }
+
     await persistState();
   }
 
@@ -255,10 +467,11 @@ mixin ChatCubitMixin on LmtBaseCubit {
         .firstOrNull;
 
     final now = DateTime.now();
+    final senderId = state.currentUser.id;
     final forwarded = ChatMessageModel(
       id: 'msg_${now.millisecondsSinceEpoch}',
       groupId: targetGroupId,
-      senderId: state.currentUser.id,
+      senderId: senderId,
       senderName: state.currentUser.name,
       senderAvatar: state.currentUser.avatarPath,
       senderRole: state.currentUser.role,
@@ -268,15 +481,7 @@ mixin ChatCubitMixin on LmtBaseCubit {
       fileSize: message.fileSize,
       voiceDurationSeconds: message.voiceDurationSeconds,
       forwardedFromGroup: sourceGroup ?? 'Chat Group',
-      seenBy: [
-        SeenStatusModel(
-          memberId: state.currentUser.id,
-          memberName: state.currentUser.name,
-          avatarPath: state.currentUser.avatarPath,
-          timestamp: now,
-          hasListened: message.type == MessageType.voiceNote,
-        ),
-      ],
+      seenBy: const [],
       sentAt: now,
     );
 
@@ -285,21 +490,38 @@ mixin ChatCubitMixin on LmtBaseCubit {
     final targetGroup =
         state.chatGroups.where((g) => g.id == targetGroupId).firstOrNull;
     if (targetGroup != null) {
-      pushNotification(
-        title: '${targetGroup.name} 💬',
-        description:
-            'قام ${state.currentUser.name} بإعادة توجيه رسالة: ${_messagePreviewText(message.type, message.content)}',
-        category: NotificationCategory.chat,
-        targetTabIndex: 1,
-        targetGroupId: targetGroupId,
-        targetMemberIds: targetGroup.memberIds,
-      );
+      final recipients =
+          targetGroup.memberIds.where((id) => id != senderId).toList();
+      if (recipients.isNotEmpty) {
+        pushNotification(
+          title: '${targetGroup.name} 💬',
+          description:
+              'قام ${state.currentUser.name} بإعادة توجيه رسالة: ${_messagePreviewText(message.type, message.content)}',
+          category: NotificationCategory.chat,
+          tone: LmtNotificationTone.chatMessage,
+          targetTabIndex: 1,
+          targetGroupId: targetGroupId,
+          targetMemberIds: recipients,
+          excludedMemberIds: [senderId],
+        );
+      }
     }
 
     await persistState();
   }
 
-  /// Edits a chat message (allowed only by the original sender).
+  /// Maximum window after sending during which the sender may edit a message.
+  static const Duration messageEditTimeLimit = Duration(minutes: 15);
+
+  /// Returns whether the active user may currently edit [msg] (sender-only and
+  /// within [messageEditTimeLimit]).
+  bool canEditMessageNow(ChatMessageModel msg) {
+    if (msg.senderId != state.currentUser.id) return false;
+    final elapsed = DateTime.now().difference(msg.sentAt);
+    return elapsed <= messageEditTimeLimit;
+  }
+
+  /// Edits a chat message (allowed only by the original sender within 15 minutes).
   Future<bool> editChatMessage({
     required String messageId,
     required String newContent,
@@ -308,7 +530,7 @@ mixin ChatCubitMixin on LmtBaseCubit {
     if (index == -1) return false;
 
     final msg = state.chatMessages[index];
-    if (msg.senderId != state.currentUser.id) {
+    if (!canEditMessageNow(msg)) {
       return false;
     }
 
@@ -324,7 +546,7 @@ mixin ChatCubitMixin on LmtBaseCubit {
     return true;
   }
 
-  /// Deletes a chat message (allowed only by the group admin or original sender).
+  /// Deletes a chat message (allowed only by the Administrator or original sender).
   Future<bool> deleteChatMessage({
     required String messageId,
     required String groupId,
@@ -333,12 +555,10 @@ mixin ChatCubitMixin on LmtBaseCubit {
     if (index == -1) return false;
 
     final msg = state.chatMessages[index];
-    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
     final isSender = msg.senderId == state.currentUser.id;
-    final isGroupAdmin = group?.adminId == state.currentUser.id ||
-        state.currentUser.role == UserRole.admin;
+    final isAdmin = state.currentUser.role == UserRole.admin;
 
-    if (!isSender && !isGroupAdmin) {
+    if (!isSender && !isAdmin) {
       return false;
     }
 

@@ -6,6 +6,7 @@ import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
 import '../../../core/utils/device_file_helper.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../cubit/posts_cubit.dart';
 import '../widgets/media_picker_strip.dart';
 import '../widgets/poll_options_editor.dart';
@@ -19,6 +20,7 @@ void showCreatePostModal(BuildContext context, {required PostCategoryType initia
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
+    constraints: AdaptiveBreakpoints.bottomSheetConstraints(context),
     backgroundColor: AppColors.surfaceOf(context),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24.r))),
     builder: (_) => CreatePostSheet(cubit: cubit, initialType: initialType),
@@ -70,6 +72,22 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
     super.dispose();
   }
 
+  void _addPollOption() {
+    setState(() {
+      _optionCtrls.add(TextEditingController());
+    });
+  }
+
+  void _removePollOption(int index) {
+    if (_optionCtrls.length <= 2 || index < 0 || index >= _optionCtrls.length) {
+      return;
+    }
+    setState(() {
+      final removed = _optionCtrls.removeAt(index);
+      removed.dispose();
+    });
+  }
+
   Future<void> _pickMediaFromGallery() async {
     final file = await DeviceFileHelper.pickFileSafely(
       context,
@@ -115,6 +133,25 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
         ),
       );
       return;
+    }
+
+    if (_type == PostCategoryType.poll) {
+      final nonEmptyCount =
+          _optionCtrls.where((c) => c.text.trim().isNotEmpty).length;
+      if (nonEmptyCount < 2) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isArabic
+                  ? 'يرجى إدخال خيارين على الأقل للاستطلاع'
+                  : 'Please enter at least 2 poll options',
+            ),
+            backgroundColor: AppColors.warning,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
     }
 
     widget.cubit.createPost(
@@ -167,7 +204,11 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
               ),
               SizedBox(height: 12.h),
               if (_type == PostCategoryType.poll) ...[
-                PollOptionsEditor(controllers: _optionCtrls),
+                PollOptionsEditor(
+                  controllers: _optionCtrls,
+                  onAddOption: _addPollOption,
+                  onRemoveOption: _removePollOption,
+                ),
                 SizedBox(height: 10.h),
                 Container(
                   decoration: BoxDecoration(

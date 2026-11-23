@@ -9,6 +9,7 @@ import '../routes/routes.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../utils/app_assets.dart';
+import '../utils/device_file_helper.dart';
 
 /// Top application bar displaying the drawer menu button, app title,
 /// tappable active-user role pill, profile avatar with online status dot,
@@ -92,7 +93,10 @@ class CustomAppBar extends StatelessWidget {
                           CircleAvatar(
                             radius: 16.r,
                             backgroundColor: Colors.white24,
-                            backgroundImage: AssetImage(state.currentUser.avatarPath),
+                            backgroundImage: DeviceFileHelper.imageProviderFor(
+                              state.currentUser.avatarPath,
+                              fallbackAsset: AppAssets.accountIcon,
+                            ),
                           ),
                           Positioned(
                             bottom: 0,

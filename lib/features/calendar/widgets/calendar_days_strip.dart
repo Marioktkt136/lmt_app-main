@@ -46,7 +46,7 @@ class CalendarDaysStrip extends StatelessWidget {
     final border = AppColors.borderOf(context);
 
     return SizedBox(
-      height: 70.h,
+      height: 74.h.clamp(72.0, 96.0).toDouble(),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
@@ -103,7 +103,7 @@ class CalendarDaysStrip extends StatelessWidget {
             onTap: () => onSelectDay(day),
             child: Container(
               width: 56.w,
-              padding: EdgeInsets.symmetric(vertical: 5.h),
+              padding: EdgeInsets.symmetric(vertical: 5.h, horizontal: 4.w),
               decoration: BoxDecoration(
                 color:
                     isSelected ? primary : AppColors.cardSurfaceOf(context),
@@ -122,34 +122,39 @@ class CalendarDaysStrip extends StatelessWidget {
                   intensity: (isSelected || hasEvent) ? 0.75 : 0.4,
                 ),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    DateFormat('EEE').format(day),
-                    style: TextStyle(
-                      fontSize: 10.sp,
-                      color: isSelected ? Colors.white70 : textSecondary,
-                    ),
-                  ),
-                  Text(
-                    '${day.day}',
-                    style: TextStyle(
-                      fontSize: 15.sp,
-                      fontWeight: FontWeight.bold,
-                      color: isSelected ? Colors.white : textPrimary,
-                    ),
-                  ),
-                  if (hasEvent)
-                    Container(
-                      width: 6.w,
-                      height: 6.w,
-                      decoration: BoxDecoration(
-                        color: isSelected ? Colors.white : accentGreen,
-                        shape: BoxShape.circle,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      DateFormat('EEE').format(day),
+                      style: TextStyle(
+                        fontSize: 10.sp,
+                        color: isSelected ? Colors.white70 : textSecondary,
                       ),
                     ),
-                ],
+                    Text(
+                      '${day.day}',
+                      style: TextStyle(
+                        fontSize: 15.sp,
+                        fontWeight: FontWeight.bold,
+                        color: isSelected ? Colors.white : textPrimary,
+                      ),
+                    ),
+                    if (hasEvent)
+                      Container(
+                        width: 6.w,
+                        height: 6.w,
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.white : accentGreen,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           );

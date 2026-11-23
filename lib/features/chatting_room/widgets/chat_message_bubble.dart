@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../../core/models/lmt_models.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/widgets/lmt_avatar.dart';
 import 'chat_message_body.dart';
 
 /// Displays an individual chat message bubble supporting Text, Voice Note,
@@ -44,6 +45,9 @@ class ChatMessageBubble extends StatelessWidget {
   /// target of a tapped reply preview.
   final bool isHighlighted;
 
+  /// Optional live avatar path for the sender resolved from `state.members`.
+  final String? senderAvatarOverride;
+
   /// Creates a [ChatMessageBubble].
   const ChatMessageBubble({
     super.key,
@@ -58,6 +62,7 @@ class ChatMessageBubble extends StatelessWidget {
     this.onSaveSticker,
     this.onTapReplyPreview,
     this.isHighlighted = false,
+    this.senderAvatarOverride,
   });
 
   @override
@@ -80,7 +85,7 @@ class ChatMessageBubble extends StatelessWidget {
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic,
           constraints: BoxConstraints(
-            maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+            maxWidth: (MediaQuery.sizeOf(context).width * 0.78).clamp(0.0, 520.0),
           ),
           margin: EdgeInsets.symmetric(
             vertical: 6.h,
@@ -158,19 +163,28 @@ class ChatMessageBubble extends StatelessWidget {
                   ),
                 ),
               ],
-              // Sender Name & Role Badge
+              // Sender Circular Avatar, Name & Role Badge
               Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '${msg.senderName} ${msg.senderRole.badgeEmoji}',
-                    style: TextStyle(
-                      fontSize: 11.sp,
-                      fontWeight: FontWeight.bold,
-                      color: primary,
+                  LmtAvatar(
+                    imagePath: senderAvatarOverride ?? msg.senderAvatar,
+                    radius: 13,
+                    showShadow: false,
+                  ),
+                  SizedBox(width: 6.w),
+                  Expanded(
+                    child: Text(
+                      '${msg.senderName} ${msg.senderRole.badgeEmoji}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.sp,
+                        fontWeight: FontWeight.bold,
+                        color: primary,
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  SizedBox(width: 6.w),
                   Icon(
                     Icons.more_horiz_rounded,
                     size: 16.sp,
@@ -319,52 +333,59 @@ class ChatMessageBubble extends StatelessWidget {
                   ),
                 ),
 
-              // Timestamp, Edited flag & Seen/Listened indicator
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    DateFormat('hh:mm a').format(msg.sentAt),
-                    style: TextStyle(
-                      fontSize: 10.sp,
-                      color: textSecondary,
-                    ),
-                  ),
-                  if (msg.isEdited) ...[
-                    SizedBox(width: 4.w),
-                    Text(
-                      isArabic ? '(معدلة)' : '(edited)',
-                      style: TextStyle(
-                        fontSize: 9.sp,
-                        fontStyle: FontStyle.italic,
-                        color: textSecondary,
-                      ),
-                    ),
-                  ],
-                  const Spacer(),
-                  InkWell(
-                    onTap: onShowSeenBy,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.done_all_rounded,
-                          size: 14.sp,
-                          color: accentGreen,
+              // Timestamp, Edited flag & Seen/Listened indicator (Sender ONLY)
+              Builder(
+                builder: (context) {
+                  final viewerCount = msg.seenBy
+                      .where((s) => s.memberId != msg.senderId)
+                      .length;
+                  return Row(
+                    children: [
+                      Text(
+                        DateFormat('hh:mm a').format(msg.sentAt),
+                        style: TextStyle(
+                          fontSize: 10.sp,
+                          color: textSecondary,
                         ),
-                        SizedBox(width: 2.w),
+                      ),
+                      if (msg.isEdited) ...[
+                        SizedBox(width: 4.w),
                         Text(
-                          '${msg.seenBy.length}',
+                          isArabic ? '(معدلة)' : '(edited)',
                           style: TextStyle(
-                            fontSize: 10.sp,
-                            color: accentGreen,
-                            fontWeight: FontWeight.bold,
+                            fontSize: 9.sp,
+                            fontStyle: FontStyle.italic,
+                            color: textSecondary,
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                ],
+                      const Spacer(),
+                      if (isMe)
+                        InkWell(
+                          onTap: onShowSeenBy,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.done_all_rounded,
+                                size: 14.sp,
+                                color: accentGreen,
+                              ),
+                              SizedBox(width: 2.w),
+                              Text(
+                                '$viewerCount',
+                                style: TextStyle(
+                                  fontSize: 10.sp,
+                                  color: accentGreen,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ],
           ),

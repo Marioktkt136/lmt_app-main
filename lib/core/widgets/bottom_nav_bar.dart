@@ -48,7 +48,7 @@ class BottomNavBar extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 6.h),
       child: Container(
-        height: 58.h,
+        constraints: BoxConstraints(minHeight: 56.h, maxHeight: 68.h),
         padding: EdgeInsets.symmetric(horizontal: 6.w),
         decoration: BoxDecoration(
           color: isDark ? AppColors.surfaceDark : Colors.white,
@@ -97,31 +97,39 @@ class BottomNavBar extends StatelessWidget {
                             ]
                           : const [],
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          item.icon,
-                          size: isSelected ? 21.sp : 19.sp,
-                          color: isSelected
-                              ? Colors.white
-                              : AppColors.textSecondaryOf(context),
-                        ),
-                        SizedBox(height: 2.h),
-                        Text(
-                          item.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 9.8.sp,
-                            fontWeight:
-                                isSelected ? FontWeight.bold : FontWeight.w500,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 4.h, horizontal: 2.w),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            item.icon,
+                            size: isSelected ? 21.sp : 19.sp,
                             color: isSelected
                                 ? Colors.white
                                 : AppColors.textSecondaryOf(context),
                           ),
-                        ),
-                      ],
+                          SizedBox(height: 2.h),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              item.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 9.8.sp,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: isSelected
+                                    ? Colors.white
+                                    : AppColors.textSecondaryOf(context),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

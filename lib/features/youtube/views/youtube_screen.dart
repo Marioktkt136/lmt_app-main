@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_assets.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../widgets/youtube_item.dart';
 import '../widgets/youtube_item_model.dart';
 
@@ -69,20 +70,23 @@ class YoutubeScreen extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: GridView.builder(
-        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 16.h),
-        physics: const BouncingScrollPhysics(),
-        itemCount: items.length,
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 16.w,
-          mainAxisSpacing: 20.h,
-          childAspectRatio: 1.0,
+      body: AdaptiveContentBox(
+        maxWidth: 960,
+        child: GridView.builder(
+          padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 16.h),
+          physics: const BouncingScrollPhysics(),
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 240,
+            crossAxisSpacing: 16.w,
+            mainAxisSpacing: 20.h,
+            childAspectRatio: 1.0,
+          ),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return YoutubeItem(item: item);
+          },
         ),
-        itemBuilder: (context, index) {
-          final item = items[index];
-          return YoutubeItem(item: item);
-        },
       ),
     );
   }

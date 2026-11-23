@@ -9,6 +9,7 @@ import '../../../core/services/native_media_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/utils/app_preferences.dart';
 import '../../../core/utils/device_file_helper.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
 import '../cubit/chat_cubit.dart';
 import '../sheets/chat_attachment_menu_sheet.dart';
@@ -59,14 +60,35 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   Timer? _typingHideTimer;
   Timer? _highlightClearTimer;
   bool _isTyping = false;
+  DateTime? _lastTypingHeartbeatAt;
+  bool _isMarkingSeen = false;
   String? _playingVoiceMessageId;
   String? _highlightedMessageId;
   List<String> _savedStickers = const [];
+  LmtCubit? _cubitRef;
 
   @override
   void initState() {
     super.initState();
     _loadSavedStickers();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        final cubit = context.read<LmtCubit>();
+        _cubitRef = cubit;
+        cubit.startWatchingGroupTyping(widget.group.id);
+        _syncSeenReceipts();
+      }
+    });
+  }
+
+  Future<void> _syncSeenReceipts() async {
+    if (_isMarkingSeen || !mounted) return;
+    _isMarkingSeen = true;
+    try {
+      await context.read<LmtCubit>().markGroupMessagesSeen(widget.group.id);
+    } finally {
+      _isMarkingSeen = false;
+    }
   }
 
   Future<void> _loadSavedStickers() async {
@@ -80,6 +102,10 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     _recordingTimer?.cancel();
     _typingHideTimer?.cancel();
     _highlightClearTimer?.cancel();
+    if (_isTyping) {
+      _cubitRef?.setTypingInGroup(groupId: widget.group.id, isTyping: false);
+    }
+    _cubitRef?.stopWatchingGroupTyping(widget.group.id);
     NativeMediaService.stopVoiceNote();
     _messageController.dispose();
     _scrollController.dispose();
@@ -174,19 +200,34 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
 
   void _handleTextChanged(String value) {
     _typingHideTimer?.cancel();
+    final cubit = context.read<LmtCubit>();
     final hasText = value.trim().isNotEmpty;
     if (!hasText) {
       if (_isTyping) {
-        setState(() => _isTyping = false);
+        _isTyping = false;
+        _lastTypingHeartbeatAt = null;
+        cubit.setTypingInGroup(groupId: widget.group.id, isTyping: false);
       }
       return;
     }
-    if (!_isTyping) {
-      setState(() => _isTyping = true);
+
+    final now = DateTime.now();
+    final needsHeartbeat = !_isTyping ||
+        _lastTypingHeartbeatAt == null ||
+        now.difference(_lastTypingHeartbeatAt!).inSeconds >= 2;
+    if (needsHeartbeat) {
+      _isTyping = true;
+      _lastTypingHeartbeatAt = now;
+      cubit.setTypingInGroup(groupId: widget.group.id, isTyping: true);
     }
+
     _typingHideTimer = Timer(const Duration(seconds: 3), () {
       if (mounted && _isTyping) {
-        setState(() => _isTyping = false);
+        _isTyping = false;
+        _lastTypingHeartbeatAt = null;
+        context
+            .read<LmtCubit>()
+            .setTypingInGroup(groupId: widget.group.id, isTyping: false);
       }
     });
   }
@@ -211,10 +252,25 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     final cubit = context.read<LmtCubit>();
 
     if (_editingMessage != null) {
-      await cubit.editChatMessage(
+      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+      final edited = await cubit.editChatMessage(
         messageId: _editingMessage!.id,
         newContent: text,
       );
+      if (!mounted) return;
+      if (!edited) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isArabic
+                  ? 'انتهى الوقت المتاح لتعديل هذه الرسالة (الحد الأقصى 15 دقيقة)'
+                  : 'Edit window expired (messages can only be edited within 15 minutes)',
+            ),
+            backgroundColor: AppColors.warning,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
       setState(() {
         _isTyping = false;
         _editingMessage = null;
@@ -222,6 +278,10 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       });
       return;
     }
+
+    _isTyping = false;
+    _lastTypingHeartbeatAt = null;
+    await cubit.setTypingInGroup(groupId: widget.group.id, isTyping: false);
 
     await cubit.sendChatMessage(
       groupId: widget.group.id,
@@ -307,13 +367,13 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   }
 
   void _togglePlayVoiceNote(ChatMessageModel msg) {
+    final willPlay = _playingVoiceMessageId != msg.id;
     setState(() {
-      if (_playingVoiceMessageId == msg.id) {
-        _playingVoiceMessageId = null;
-      } else {
-        _playingVoiceMessageId = msg.id;
-      }
+      _playingVoiceMessageId = willPlay ? msg.id : null;
     });
+    if (willPlay) {
+      context.read<LmtCubit>().markVoiceNoteListened(msg.id);
+    }
   }
 
   void _openStickersSheet() {
@@ -396,9 +456,21 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       builder: (context, state) {
         final isArabic = Localizations.localeOf(context).languageCode == 'ar';
         final messages = state.messagesForGroup(widget.group.id);
+        final hasUnseenIncoming = messages.any(
+          (m) =>
+              m.senderId != state.currentUser.id &&
+              !m.seenBy.any((s) => s.memberId == state.currentUser.id),
+        );
+        if (hasUnseenIncoming && !_isMarkingSeen) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _syncSeenReceipts();
+          });
+        }
 
-        return Column(
-          children: [
+        return AdaptiveContentBox(
+          maxWidth: 820,
+          child: Column(
+            children: [
             if (widget.showInlineHeader) ...[
               ConversationHeaderBar(
                 group: widget.group,
@@ -423,6 +495,10 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                       itemBuilder: (context, index) {
                         final msg = messages[messages.length - 1 - index];
                         final isMe = msg.senderId == state.currentUser.id;
+                        final senderAvatarOverride = state.members
+                            .where((m) => m.id == msg.senderId)
+                            .map((m) => m.avatarPath)
+                            .firstOrNull;
                         final itemKey = _messageKeys.putIfAbsent(
                           msg.id,
                           GlobalKey.new,
@@ -433,6 +509,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                           child: ChatMessageBubble(
                             msg: msg,
                             isMe: isMe,
+                            senderAvatarOverride: senderAvatarOverride,
                             isPlayingVoice: _playingVoiceMessageId == msg.id,
                             isHighlighted: _highlightedMessageId == msg.id,
                             onTapReplyPreview: msg.replyToMessageId != null
@@ -475,20 +552,32 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                       },
                     ),
             ),
-            if (_isTyping)
-              ChatTypingIndicator(
-                typingUserName: state.currentUser.name,
-                avatarPath: state.currentUser.avatarPath,
-              ),
+            Builder(
+              builder: (context) {
+                final remoteTypists =
+                    state.visibleTypingMembersForGroup(widget.group.id);
+                if (remoteTypists.isEmpty) return const SizedBox.shrink();
+                return ChatTypingIndicator(typingMembers: remoteTypists);
+              },
+            ),
             ReplyEditBanner(
               replyingTo: _replyingTo,
               editingMessage: _editingMessage,
-              onCancel: () => setState(() {
-                _replyingTo = null;
-                _editingMessage = null;
-                _isTyping = false;
-                _messageController.clear();
-              }),
+              onCancel: () {
+                _typingHideTimer?.cancel();
+                _lastTypingHeartbeatAt = null;
+                if (_isTyping) {
+                  _isTyping = false;
+                  context
+                      .read<LmtCubit>()
+                      .setTypingInGroup(groupId: widget.group.id, isTyping: false);
+                }
+                setState(() {
+                  _replyingTo = null;
+                  _editingMessage = null;
+                  _messageController.clear();
+                });
+              },
             ),
             if (_isRecordingVoice)
               VoiceRecordingBar(
@@ -515,6 +604,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                 onSendText: _handleSendText,
               ),
           ],
+        ),
         );
       },
     );

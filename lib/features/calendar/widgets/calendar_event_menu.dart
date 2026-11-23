@@ -54,6 +54,8 @@ class CalendarEventMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isArabic = CalendarDateUtils.isArabic(context);
+    final canDeleteEvent =
+        context.watch<LmtCubit>().state.currentUser.role.canDeleteCalendar;
     return PopupMenuButton<String>(
       tooltip: isArabic ? 'خيارات الفعالية' : 'Event options',
       onSelected: (val) {
@@ -68,13 +70,14 @@ class CalendarEventMenu extends StatelessWidget {
           value: 'edit',
           child: Text(isArabic ? 'تعديل الفعالية' : 'Edit Event'),
         ),
-        PopupMenuItem(
-          value: 'delete',
-          child: Text(
-            isArabic ? 'حذف الفعالية' : 'Delete Event',
-            style: const TextStyle(color: AppColors.error),
+        if (canDeleteEvent)
+          PopupMenuItem(
+            value: 'delete',
+            child: Text(
+              isArabic ? 'حذف الفعالية' : 'Delete Event',
+              style: const TextStyle(color: AppColors.error),
+            ),
           ),
-        ),
       ],
     );
   }

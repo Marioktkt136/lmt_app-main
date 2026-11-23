@@ -15,10 +15,16 @@ class LoginBiometricButton extends StatelessWidget {
     super.key,
     required this.isEnabled,
     required this.onPressed,
+    this.isDisabledBySettings = false,
   });
 
-  /// True once the user has logged in before on this device.
+  /// True once the user has logged in before on this device AND biometrics are
+  /// enabled in Settings.
   final bool isEnabled;
+
+  /// True when the user has logged in before, but manually disabled biometrics
+  /// inside the Settings screen.
+  final bool isDisabledBySettings;
 
   /// Starts the biometric prompt.
   final VoidCallback onPressed;
@@ -65,9 +71,13 @@ class LoginBiometricButton extends StatelessWidget {
         if (!isEnabled) ...[
           SizedBox(height: 6.h),
           Text(
-            isArabic
-                ? '🔒 يتفعل الدخول بالبصمة / الوجه تلقائياً بعد تسجيل الدخول أول مرة باسم المستخدم وكلمة المرور'
-                : '🔒 Biometric login activates automatically after your first login with username & password',
+            isDisabledBySettings
+                ? (isArabic
+                    ? '🔒 الدخول بالبصمة والوجه متوقف من الإعدادات (يمكنك إعادة تفعيله من الإعدادات)'
+                    : '🔒 Fingerprint / Face ID login is turned off in Settings')
+                : (isArabic
+                    ? '🔒 يتفعل الدخول بالبصمة / الوجه تلقائياً بعد تسجيل الدخول أول مرة باسم المستخدم وكلمة المرور'
+                    : '🔒 Biometric login activates automatically after your first login with username & password'),
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 11.sp,

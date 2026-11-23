@@ -42,10 +42,11 @@ class KhelwaRepository {
 
   String _userKey(String userId) => '${khelwaKeyPrefix}_$userId';
 
-  /// Loads the day counter and today's attendees for the given user.
+  /// Loads the day counter and today's attendees strictly for [userId].
   ///
-  /// On first use the baseline is set to yesterday so the counter starts at 1.
-  /// If the user already took Khelwa today, their name is ensured in the list.
+  /// Never borrows another user's check-in date and never auto-registers
+  /// [userName] on screen entry; a user is only recorded today when they tap
+  /// the button ([record]).
   Future<KhelwaSnapshot> load({
     required String userId,
     required String userName,
@@ -56,14 +57,20 @@ class KhelwaRepository {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
-    String? savedDate =
-        prefs.getString(userKey) ?? prefs.getString(khelwaKeyPrefix);
+    // Clear the legacy shared key so another user's check-in on this device
+    // cannot leak into newly logged-in members/editors.
+    if (prefs.containsKey(khelwaKeyPrefix)) {
+      await prefs.remove(khelwaKeyPrefix);
+    }
+
+    String? savedDate = prefs.getString(userKey);
     if (savedDate == null) {
       savedDate = today.subtract(const Duration(days: 1)).toIso8601String();
       await prefs.setString(userKey, savedDate);
     }
 
-    final parsed = DateTime.parse(savedDate);
+    final parsed = DateTime.tryParse(savedDate) ??
+        today.subtract(const Duration(days: 1));
     final lastDate = DateTime(parsed.year, parsed.month, parsed.day);
     final diff = today.difference(lastDate).inDays;
     final safeDiff = diff < 0 ? 0 : diff;
@@ -71,19 +78,23 @@ class KhelwaRepository {
     final attendees = List<String>.from(
       prefs.getStringList(attendeesKey) ?? const <String>[],
     );
-    if (safeDiff == 0 && !attendees.contains(userName)) {
-      attendees.add(userName);
-      await prefs.setStringList(attendeesKey, attendees);
-    }
+
+    // Only count today as taken when this user is explicitly in today's
+    // attendees list (added solely by pressing the "أخدت الخلوة" button).
+    final effectiveDiff =
+        (safeDiff == 0 && !attendees.contains(userName)) ? 1 : safeDiff;
+    final effectiveLastDate = effectiveDiff > 0 && safeDiff == 0
+        ? today.subtract(const Duration(days: 1))
+        : lastDate;
 
     return KhelwaSnapshot(
-      daysDifference: safeDiff,
-      lastKhelwaDate: lastDate,
+      daysDifference: effectiveDiff,
+      lastKhelwaDate: effectiveLastDate,
       todayAttendees: attendees,
     );
   }
 
-  /// Records that the user took Khelwa now and returns the updated snapshot.
+  /// Records that the user explicitly pressed the button to take Khelwa now.
   Future<KhelwaSnapshot> record({
     required String userId,
     required String userName,
@@ -93,7 +104,6 @@ class KhelwaRepository {
     final attendeesKey = '$attendeesKeyPrefix${todayDateKey(now)}';
 
     await prefs.setString(_userKey(userId), now.toIso8601String());
-    await prefs.setString(khelwaKeyPrefix, now.toIso8601String());
 
     final attendees = List<String>.from(
       prefs.getStringList(attendeesKey) ?? const <String>[],

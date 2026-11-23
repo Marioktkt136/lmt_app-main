@@ -93,39 +93,98 @@ class SettingsAppearanceCard extends StatelessWidget {
               onChanged: onToggleTheme,
             ),
             const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: CircleAvatar(
-                backgroundColor: primary.withValues(alpha: 0.12),
-                child: Icon(Icons.language_rounded, color: primary),
-              ),
-              title: Text(
-                isArabic
-                    ? 'لغة التطبيق (Language Switch Ar/En)'
-                    : 'Application Language (Ar / En)',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13.5.sp,
-                  color: textPrimary,
-                ),
-              ),
-              subtitle: Text(
-                isArabic
-                    ? 'العربية (مصر) / English (USA)'
-                    : 'English (USA) / العربية (Egypt)',
-                style: TextStyle(
-                  fontSize: 11.sp,
-                  color: textSecondary,
-                ),
-              ),
-              trailing: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'ar', label: Text('العربية')),
-                  ButtonSegment(value: 'en', label: Text('EN')),
-                ],
-                selected: {isArabic ? 'ar' : 'en'},
-                onSelectionChanged: (set) => onSwitchLocale(Locale(set.first)),
-              ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompactRow = constraints.maxWidth < 390;
+                final selector = SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'ar', label: Text('العربية')),
+                    ButtonSegment(value: 'en', label: Text('EN')),
+                  ],
+                  selected: {isArabic ? 'ar' : 'en'},
+                  onSelectionChanged: (set) => onSwitchLocale(Locale(set.first)),
+                );
+                if (isCompactRow) {
+                  return Padding(
+                    padding: EdgeInsets.symmetric(vertical: 6.h),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: primary.withValues(alpha: 0.12),
+                              child: Icon(
+                                Icons.language_rounded,
+                                color: primary,
+                              ),
+                            ),
+                            SizedBox(width: 12.w),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    isArabic
+                                        ? 'لغة التطبيق (Ar / En)'
+                                        : 'Application Language (Ar / En)',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13.5.sp,
+                                      color: textPrimary,
+                                    ),
+                                  ),
+                                  Text(
+                                    isArabic
+                                        ? 'العربية (مصر) / English (USA)'
+                                        : 'English (USA) / العربية (Egypt)',
+                                    style: TextStyle(
+                                      fontSize: 11.sp,
+                                      color: textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 10.h),
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: selector,
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: primary.withValues(alpha: 0.12),
+                    child: Icon(Icons.language_rounded, color: primary),
+                  ),
+                  title: Text(
+                    isArabic
+                        ? 'لغة التطبيق (Language Switch Ar/En)'
+                        : 'Application Language (Ar / En)',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13.5.sp,
+                      color: textPrimary,
+                    ),
+                  ),
+                  subtitle: Text(
+                    isArabic
+                        ? 'العربية (مصر) / English (USA)'
+                        : 'English (USA) / العربية (Egypt)',
+                    style: TextStyle(
+                      fontSize: 11.sp,
+                      color: textSecondary,
+                    ),
+                  ),
+                  trailing: selector,
+                );
+              },
             ),
           ],
         ),

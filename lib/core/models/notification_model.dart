@@ -17,8 +17,9 @@ enum NotificationCategory {
   }
 }
 
-/// Represents an in-app notification item with deep-link navigation targets
-/// and optional audience scoping (`targetMemberIds`).
+/// Represents an in-app notification item with deep-link navigation targets,
+/// custom OS notification tone, and audience scoping (`targetMemberIds` &
+/// `excludedMemberIds`).
 class AppNotificationModel extends Equatable {
   /// The unique identifier of the notification.
   final String id;
@@ -50,10 +51,17 @@ class AppNotificationModel extends Equatable {
   /// Optional named route to push when tapped.
   final String? targetRoute;
 
-  /// Optional list of member IDs allowed to see this notification.
+  /// Optional whitelist of member IDs allowed to see this notification.
   ///
-  /// When empty, the notification is visible to all team members.
+  /// When empty, any team member not listed in [excludedMemberIds] sees it.
   final List<String> targetMemberIds;
+
+  /// Member IDs explicitly excluded from seeing this notification (e.g., the
+  /// sender/actor or any user who dismissed this notification from their feed).
+  final List<String> excludedMemberIds;
+
+  /// Custom audio tone key (`LmtNotificationTone.name`) used for OS banners.
+  final String tone;
 
   /// Creates an [AppNotificationModel].
   const AppNotificationModel({
@@ -68,11 +76,15 @@ class AppNotificationModel extends Equatable {
     this.targetEventId,
     this.targetRoute,
     this.targetMemberIds = const [],
+    this.excludedMemberIds = const [],
+    this.tone = 'normal',
   });
 
   /// Returns `true` if [memberId] is authorized to see this notification.
-  bool isVisibleTo(String memberId) =>
-      targetMemberIds.isEmpty || targetMemberIds.contains(memberId);
+  bool isVisibleTo(String memberId) {
+    if (excludedMemberIds.contains(memberId)) return false;
+    return targetMemberIds.isEmpty || targetMemberIds.contains(memberId);
+  }
 
   /// Creates a copy of this notification with updated fields.
   AppNotificationModel copyWith({
@@ -87,6 +99,8 @@ class AppNotificationModel extends Equatable {
     String? targetEventId,
     String? targetRoute,
     List<String>? targetMemberIds,
+    List<String>? excludedMemberIds,
+    String? tone,
   }) {
     return AppNotificationModel(
       id: id ?? this.id,
@@ -100,6 +114,8 @@ class AppNotificationModel extends Equatable {
       targetEventId: targetEventId ?? this.targetEventId,
       targetRoute: targetRoute ?? this.targetRoute,
       targetMemberIds: targetMemberIds ?? this.targetMemberIds,
+      excludedMemberIds: excludedMemberIds ?? this.excludedMemberIds,
+      tone: tone ?? this.tone,
     );
   }
 
@@ -116,28 +132,46 @@ class AppNotificationModel extends Equatable {
         'targetEventId': targetEventId,
         'targetRoute': targetRoute,
         'targetMemberIds': targetMemberIds,
+        'excludedMemberIds': excludedMemberIds,
+        'tone': tone,
       };
 
   /// Deserializes an [AppNotificationModel] from a JSON map.
-  factory AppNotificationModel.fromJson(Map<String, dynamic> json) =>
-      AppNotificationModel(
-        id: json['id'] as String? ?? '',
-        title: json['title'] as String? ?? '',
-        description: json['description'] as String? ?? '',
-        dateTime: DateTime.tryParse(json['dateTime'] as String? ?? '') ??
-            DateTime.now(),
-        category: NotificationCategory.fromString(
-            json['category'] as String? ?? 'system'),
-        isRead: json['isRead'] as bool? ?? false,
-        targetTabIndex: json['targetTabIndex'] as int?,
-        targetGroupId: json['targetGroupId'] as String?,
-        targetEventId: json['targetEventId'] as String?,
-        targetRoute: json['targetRoute'] as String?,
-        targetMemberIds: (json['targetMemberIds'] as List<dynamic>?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            const [],
-      );
+  factory AppNotificationModel.fromJson(Map<String, dynamic> json) {
+    final category = NotificationCategory.fromString(
+      json['category'] as String? ?? 'system',
+    );
+    final rawTone = json['tone'] as String?;
+    final resolvedTone = (rawTone != null && rawTone.trim().isNotEmpty)
+        ? rawTone.trim()
+        : (category == NotificationCategory.calendar
+            ? 'calendar'
+            : (category == NotificationCategory.chat
+                ? 'chatMessage'
+                : 'normal'));
+    return AppNotificationModel(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      dateTime: DateTime.tryParse(json['dateTime'] as String? ?? '') ??
+          DateTime.now(),
+      category: category,
+      isRead: json['isRead'] as bool? ?? false,
+      targetTabIndex: json['targetTabIndex'] as int?,
+      targetGroupId: json['targetGroupId'] as String?,
+      targetEventId: json['targetEventId'] as String?,
+      targetRoute: json['targetRoute'] as String?,
+      targetMemberIds: (json['targetMemberIds'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      excludedMemberIds: (json['excludedMemberIds'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      tone: resolvedTone,
+    );
+  }
 
   @override
   List<Object?> get props => [
@@ -152,5 +186,7 @@ class AppNotificationModel extends Equatable {
         targetEventId,
         targetRoute,
         targetMemberIds,
+        excludedMemberIds,
+        tone,
       ];
 }

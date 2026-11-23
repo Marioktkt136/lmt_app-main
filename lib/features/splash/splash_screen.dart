@@ -5,6 +5,7 @@ import '../../core/config/app_config.dart';
 import '../../core/routes/routes.dart';
 import '../../core/theme/colors.dart';
 import '../../core/utils/app_assets.dart';
+import '../../core/utils/app_preferences.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -43,10 +44,23 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _navigateToNext() {
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(const Duration(seconds: 2), () async {
+      final isLoggedIn = await AppPreferences.isLoggedIn();
+      final savedUser = await AppPreferences.getSavedUsername();
+      final rememberMe = await AppPreferences.isRememberMeEnabled();
+      final biometricEnabled = await AppPreferences.isBiometricEnabled();
       if (!mounted) return;
-      // Always open on Login Screen to guarantee biometric verification of the user
-      Navigator.pushReplacementNamed(context, Routes.login);
+
+      final hasValidSession =
+          isLoggedIn && savedUser != null && savedUser.trim().isNotEmpty;
+
+      // Only skip the Login/Biometric gate when the user already has a saved
+      // remembered session AND turned OFF Biometric Lock in Settings.
+      if (hasValidSession && rememberMe && !biometricEnabled) {
+        Navigator.pushReplacementNamed(context, Routes.home);
+      } else {
+        Navigator.pushReplacementNamed(context, Routes.login);
+      }
     });
   }
 
@@ -64,81 +78,98 @@ class _SplashScreenState extends State<SplashScreen>
         height: double.infinity,
         decoration: const BoxDecoration(gradient: AppColors.primaryGradient),
         child: SafeArea(
-          child: Column(
-            children: [
-              const Spacer(),
-              FadeTransition(
-                opacity: _fadeAnimation,
-                child: ScaleTransition(
-                  scale: _scaleAnimation,
-                  child: Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.25),
-                          blurRadius: 30,
-                          offset: const Offset(0, 18),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final logoSize =
+                  (constraints.maxHeight * 0.22).clamp(96.0, 145.0);
+              return SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      children: [
+                        const Spacer(),
+                        FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: ScaleTransition(
+                            scale: _scaleAnimation,
+                            child: Container(
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(28),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.25),
+                                    blurRadius: 30,
+                                    offset: const Offset(0, 18),
+                                  ),
+                                ],
+                              ),
+                              child: Image.asset(
+                                AppAssets.appLogo,
+                                width: logoSize,
+                                height: logoSize,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Column(
+                              children: [
+                                Text(
+                                  'splash_title'.tr(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.white,
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'splash_tagline'.tr(),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    color: Colors.white.withValues(alpha: 0.85),
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: Column(
+                            children: [
+                              const SizedBox(height: 14),
+                              Text(
+                                'v${AppConfig.appVersion}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                            ],
+                          ),
                         ),
                       ],
                     ),
-                    child: Image.asset(
-                      AppAssets.appLogo,
-                      width: 140,
-                      height: 140,
-                      fit: BoxFit.cover,
-                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 32),
-              FadeTransition(
-                opacity: _fadeAnimation,
-                child: Column(
-                  children: [
-                    Text(
-                      'splash_title'.tr(),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 30,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'splash_tagline'.tr(),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.white.withValues(alpha: 0.85),
-                        height: 1.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              FadeTransition(
-                opacity: _fadeAnimation,
-                child: Column(
-                  children: [
-                    const SizedBox(height: 14),
-                    Text(
-                      'v${AppConfig.appVersion}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withValues(alpha: 0.7),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                  ],
-                ),
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),

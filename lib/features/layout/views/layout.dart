@@ -3,10 +3,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../cubit/layout_cubit.dart';
+import '../../../core/services/shorebird_update_service.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/app_bar.dart';
 import '../../../core/widgets/bottom_nav_bar.dart';
 import '../../../core/widgets/header_banner.dart';
+import '../../../core/widgets/shorebird_welcome_dialog.dart';
 import '../../calendar/views/calendar_screen.dart';
 import '../../chatting_room/views/chatting_room.dart';
 import '../../dashboard/views/dashboard_screen.dart';
@@ -38,6 +41,7 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
 
   late int _selectedIndex;
   PageController? _pageController;
+  bool _hasShownUpdateWelcome = false;
 
   @override
   void initState() {
@@ -61,6 +65,17 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
           openEventId: cubit.state.selectedCalendarEventId,
         );
         cubit.syncDueCalendarReminders();
+        _checkOtaUpdatesAndWelcome();
+      }
+    });
+  }
+
+  void _checkOtaUpdatesAndWelcome() {
+    ShorebirdUpdateService.instance.checkAndSyncUpdates().then((result) {
+      final welcome = result.welcomeMessage;
+      if (welcome != null && mounted && !_hasShownUpdateWelcome) {
+        _hasShownUpdateWelcome = true;
+        ShorebirdWelcomeDialog.show(context, welcome);
       }
     });
   }
@@ -69,6 +84,7 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
       context.read<LmtCubit>().syncDueCalendarReminders();
+      _checkOtaUpdatesAndWelcome();
     }
   }
 
@@ -132,54 +148,26 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
         backgroundColor: isDark ? const Color(0xFF1A2536) : AppColors.primary,
         drawer: const LmtNavigationDrawer(),
         body: SafeArea(
-          child: Column(
-            children: [
-              // Custom App Bar
-              const Padding(padding: EdgeInsets.symmetric(horizontal: 6.0), child: CustomAppBar()),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide =
+                  constraints.maxWidth >= AdaptiveBreakpoints.navRailMinWidth;
+              final isExtendedRail = constraints.maxWidth >=
+                  AdaptiveBreakpoints.navRailExtendedMinWidth;
+              final isArabic = Localizations.localeOf(context).languageCode == 'ar';
 
-              // Offline / Online Connection Detector Banner
-              BlocBuilder<LmtCubit, LmtState>(
-                buildWhen: (p, c) => p.isOnline != c.isOnline,
-                builder: (context, state) {
-                  if (state.isOnline) return const SizedBox.shrink();
-                  final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-                  return Container(
-                    width: double.infinity,
-                    margin: EdgeInsets.symmetric(horizontal: 16.w, vertical: 4.h),
-                    padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
-                    decoration: BoxDecoration(
-                      color: AppColors.warning,
-                      borderRadius: BorderRadius.circular(10.r),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.wifi_off_rounded, size: 16, color: Colors.white),
-                        SizedBox(width: 6.w),
-                        Text(
-                          isArabic
-                              ? 'وضع عدم الاتصال: يتم العمل من الذاكرة المحلية وسيتم المزامنة تلقائياً'
-                              : 'Offline Mode: Using local cached data, auto-sync enabled',
-                          style: TextStyle(
-                            fontSize: 10.5.sp,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-
-              // Main Surface Container
-              Expanded(
+              final surfaceArea = Expanded(
                 child: Container(
+                  margin: isWide
+                      ? EdgeInsetsDirectional.only(end: 10.w, bottom: 8.h)
+                      : EdgeInsets.zero,
                   decoration: BoxDecoration(
                     color: AppColors.backgroundOf(context),
                     borderRadius: BorderRadius.circular(34.r),
                     border: Border.all(
-                      color: isDark ? primary.withValues(alpha: 0.25) : Colors.transparent,
+                      color: isDark
+                          ? primary.withValues(alpha: 0.25)
+                          : Colors.transparent,
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -192,7 +180,12 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
                   child: Material(
                     color: Colors.transparent,
                     child: Padding(
-                      padding: EdgeInsets.only(left: 14.w, right: 14.w, top: 5.h, bottom: 6.h),
+                      padding: EdgeInsets.only(
+                        left: 14.w,
+                        right: 14.w,
+                        top: 5.h,
+                        bottom: 6.h,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -214,11 +207,153 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-              ),
+              );
 
-              // Bottom Navigation Bar (5 Tabs)
-              BottomNavBar(selectedIndex: _selectedIndex, onTap: _onTabChanged),
-            ],
+              final railDestinations = <NavigationRailDestination>[
+                NavigationRailDestination(
+                  icon: const Icon(Icons.dynamic_feed_outlined),
+                  selectedIcon: const Icon(Icons.dynamic_feed_rounded),
+                  label: Text(isArabic ? 'المنشورات' : 'Posts'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.forum_outlined),
+                  selectedIcon: const Icon(Icons.forum_rounded),
+                  label: Text(isArabic ? 'المحادثات' : 'Chats'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.folder_copy_outlined),
+                  selectedIcon: const Icon(Icons.folder_copy_rounded),
+                  label: Text(isArabic ? 'الملفات' : 'Files'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.calendar_month_outlined),
+                  selectedIcon: const Icon(Icons.calendar_month_rounded),
+                  label: Text(isArabic ? 'التقويم' : 'Calendar'),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.people_alt_outlined),
+                  selectedIcon: const Icon(Icons.people_alt_rounded),
+                  label: Text(isArabic ? 'الأعضاء' : 'Members'),
+                ),
+              ];
+
+              return Column(
+                children: [
+                  // Custom App Bar
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6.0),
+                    child: CustomAppBar(),
+                  ),
+
+                  // Offline / Online Connection Detector Banner
+                  BlocBuilder<LmtCubit, LmtState>(
+                    buildWhen: (p, c) => p.isOnline != c.isOnline,
+                    builder: (context, state) {
+                      if (state.isOnline) return const SizedBox.shrink();
+                      return Container(
+                        width: double.infinity,
+                        margin: EdgeInsets.symmetric(
+                          horizontal: 16.w,
+                          vertical: 4.h,
+                        ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12.w,
+                          vertical: 4.h,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning,
+                          borderRadius: BorderRadius.circular(10.r),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.wifi_off_rounded,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                            SizedBox(width: 6.w),
+                            Flexible(
+                              child: Text(
+                                isArabic
+                                    ? 'وضع عدم الاتصال: يتم العمل من الذاكرة المحلية وسيتم المزامنة تلقائياً'
+                                    : 'Offline Mode: Using local cached data, auto-sync enabled',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10.5.sp,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+
+                  // Main Adaptive Content Area
+                  if (isWide)
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            margin: EdgeInsetsDirectional.only(
+                              start: 10.w,
+                              end: 8.w,
+                              bottom: 8.h,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? AppColors.surfaceDark
+                                  : Colors.white.withValues(alpha: 0.96),
+                              borderRadius: BorderRadius.circular(26.r),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(26.r),
+                              child: NavigationRail(
+                                selectedIndex: _selectedIndex,
+                                onDestinationSelected: _onTabChanged,
+                                extended: isExtendedRail,
+                                backgroundColor: Colors.transparent,
+                                selectedIconTheme:
+                                    IconThemeData(color: primary),
+                                selectedLabelTextStyle: TextStyle(
+                                  color: primary,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12.sp,
+                                ),
+                                unselectedIconTheme: IconThemeData(
+                                  color: AppColors.textSecondaryOf(context),
+                                ),
+                                unselectedLabelTextStyle: TextStyle(
+                                  color: AppColors.textSecondaryOf(context),
+                                  fontSize: 11.5.sp,
+                                ),
+                                indicatorColor:
+                                    primary.withValues(alpha: 0.14),
+                                labelType: isExtendedRail
+                                    ? NavigationRailLabelType.none
+                                    : NavigationRailLabelType.all,
+                                destinations: railDestinations,
+                              ),
+                            ),
+                          ),
+                          surfaceArea,
+                        ],
+                      ),
+                    )
+                  else ...[
+                    surfaceArea,
+                    BottomNavBar(
+                      selectedIndex: _selectedIndex,
+                      onTap: _onTabChanged,
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
         ),
       ),
