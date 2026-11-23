@@ -161,7 +161,7 @@ void handleSharedFileTap(BuildContext context, SharedFileModel file) {
                   child: Text(
                     file.documentContent ??
                         (file.localFilePath != null
-                            ? '${file.description}\n\n📄 مسار الملف المرفوع:\n${file.localFilePath}'
+                            ? '${file.description}\n\n📎 ${DeviceFileHelper.displayFileName(file.localFilePath, fallback: file.title)} (${file.fileExtension} • ${file.fileSize})'
                             : file.description),
                     style: TextStyle(
                       fontSize: 13.sp,

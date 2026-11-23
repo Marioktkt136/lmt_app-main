@@ -6,10 +6,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../models/lmt_models.dart';
 import '../../services/native_media_service.dart';
+import '../cloud_media_storage.dart';
 import 'mime_type_util.dart';
 
-/// Materialises a [SharedFileModel] on disk, publishes it to the public
-/// Download folder and optionally opens it with the native viewer.
+/// Materialises a [SharedFileModel] on disk (downloading from
+/// [CloudMediaStorage] when needed), publishes it to the public Download folder,
+/// and optionally opens it with the native viewer.
 class FileDownloadService {
   FileDownloadService._();
 
@@ -24,10 +26,6 @@ class FileDownloadService {
   }
 
   /// Downloads [file] and returns the public download path.
-  ///
-  /// Staging order: user-uploaded local file, bundled image asset, then a
-  /// generated text document. When [openAfterSave] is true the staged file is
-  /// opened via [OpenFilex].
   static Future<String> downloadAndOpen(
     SharedFileModel file, {
     bool openAfterSave = true,
@@ -50,9 +48,34 @@ class FileDownloadService {
   }
 
   static Future<_Staged> _stage(SharedFileModel file, Directory dir) async {
-    // 1. File uploaded from the device and still present.
     final localPath = file.localFilePath;
-    if (localPath != null && localPath.isNotEmpty) {
+
+    // 0. Real cross-device file stored in Firestore media_blobs (`cloud://blob/...`).
+    if (CloudMediaStorage.isCloudUri(localPath)) {
+      final bytes = await CloudMediaStorage.downloadBytes(localPath!);
+      if (bytes != null && bytes.isNotEmpty) {
+        final realName = MimeTypeUtil.sanitizeFileName(
+          CloudMediaStorage.displayFileName(
+            localPath,
+            fallback: file.title,
+          ),
+        );
+        final extLower = file.fileExtension.toLowerCase();
+        final finalName = (extLower.isNotEmpty &&
+                extLower != 'file' &&
+                !realName.toLowerCase().contains('.'))
+            ? '$realName.$extLower'
+            : realName;
+        final target = File('${dir.path}/$finalName');
+        await target.writeAsBytes(bytes, flush: true);
+        return _Staged(target, finalName, MimeTypeUtil.forFileName(finalName));
+      }
+    }
+
+    // 1. File uploaded from this device and still present locally.
+    if (localPath != null &&
+        localPath.isNotEmpty &&
+        !CloudMediaStorage.isCloudUri(localPath)) {
       final source = File(localPath);
       if (source.existsSync()) {
         final name = source.uri.pathSegments.last;

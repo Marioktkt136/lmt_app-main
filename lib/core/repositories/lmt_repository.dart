@@ -86,6 +86,10 @@ abstract class LmtRepository {
   /// Streams real-time notifications for multi-device Web & Mobile sync.
   Stream<List<AppNotificationModel>> watchNotifications() =>
       const Stream.empty();
+
+  /// Streams live merged repository snapshots whenever any remote cloud
+  /// collection updates, enabling real-time multi-device Auto-Sync.
+  Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
 }
 
 /// Concrete local-first implementation of [LmtRepository].
@@ -220,4 +224,7 @@ class LmtLocalRepositoryImpl implements LmtRepository {
   @override
   Stream<List<AppNotificationModel>> watchNotifications() =>
       const Stream.empty();
+
+  @override
+  Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
 }

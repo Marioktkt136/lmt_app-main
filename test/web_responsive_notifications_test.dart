@@ -9,6 +9,7 @@ import 'package:lmt/core/models/lmt_models.dart';
 import 'package:lmt/core/repositories/lmt_repository.dart';
 import 'package:lmt/core/services/local_notification_service.dart';
 import 'package:lmt/core/utils/app_assets.dart';
+import 'package:lmt/core/utils/cloud_media_storage.dart';
 import 'package:lmt/core/utils/device_file_helper.dart';
 import 'package:lmt/features/calendar/cubit/calendar_cubit.dart';
 import 'package:lmt/features/calendar/views/calendar_screen.dart';
@@ -21,6 +22,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _StreamableRepo implements LmtRepository {
   final StreamController<List<AppNotificationModel>> notifController =
       StreamController<List<AppNotificationModel>>.broadcast();
+  final StreamController<LmtRepositorySnapshot> liveSnapshotController =
+      StreamController<LmtRepositorySnapshot>.broadcast();
 
   @override
   Future<LmtRepositorySnapshot> loadSnapshot() async {
@@ -92,7 +95,14 @@ class _StreamableRepo implements LmtRepository {
   Stream<List<AppNotificationModel>> watchNotifications() =>
       notifController.stream;
 
-  Future<void> dispose() => notifController.close();
+  @override
+  Stream<LmtRepositorySnapshot> watchLiveSnapshots() =>
+      liveSnapshotController.stream;
+
+  Future<void> dispose() async {
+    await notifController.close();
+    await liveSnapshotController.close();
+  }
 }
 
 const _admin = MemberModel(
@@ -320,6 +330,182 @@ void main() {
       expect(find.text('بروفة الفريق 1'), findsOneWidget);
       expect(find.text('بروفة الفريق 2'), findsOneWidget);
       await cubit.close();
+    });
+  });
+
+  group('Real-Time Auto-Sync & Cloud Media', () {
+    test(
+        'LmtCubit live snapshot stream auto-syncs chat, posts, files, calendar, avatars & notifications',
+        () async {
+      final repo = _StreamableRepo();
+      final cubit = LmtCubit(repository: repo);
+      while (!cubit.state.isInitialized) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      final events = <ForegroundNotificationEvent>[];
+      final sub = LocalNotificationService.foregroundStream.listen(events.add);
+
+      const newAvatarUri =
+          'cloud://blob/blob_avatar_mina?name=mina.png&mime=image%2Fpng&chunks=1';
+      final updatedEditor = _editor.copyWith(avatarPath: newAvatarUri);
+      final updatedPost = PostModel(
+        id: 'post_live_1',
+        creatorId: _admin.id,
+        creatorName: _admin.name,
+        publishTime: DateTime(2026, 11, 23, 14, 0),
+        type: PostCategoryType.simple,
+        content: 'تحديث بوست جديد لايف',
+        likedByIds: [_editor.id],
+        comments: [
+          PostCommentModel(
+            id: 'c_live_1',
+            authorId: _editor.id,
+            authorName: _editor.name,
+            authorAvatar: newAvatarUri,
+            content: 'تعليق لحظي',
+            createdAt: DateTime(2026, 11, 23, 14, 5),
+          ),
+        ],
+      );
+      final updatedFile = SharedFileModel(
+        id: 'file_live_1',
+        title: 'ملف الفريق الحقيقي',
+        description: 'مستند مرفوع على السحابة',
+        category: SharedFileType.pdf,
+        fileExtension: 'PDF',
+        fileSize: '120 KB',
+        localFilePath:
+            'cloud://blob/blob_doc_1?name=team_plan.pdf&mime=application%2Fpdf&chunks=1',
+        uploadedBy: _editor.name,
+        uploadedAt: DateTime(2026, 11, 23, 14, 10),
+      );
+      final updatedEvent = CalendarEventModel(
+        id: 'evt_live_1',
+        title: 'اجتماع متزامن تلقائياً',
+        description: 'تحديث لحظي للتقويم',
+        eventDateTime: DateTime.now().add(const Duration(days: 2)),
+        reminderDateTime: DateTime.now().add(const Duration(days: 1)),
+        createdBy: _editor.name,
+      );
+      final liveMessage = ChatMessageModel(
+        id: 'msg_live_2',
+        groupId: _group.id,
+        senderId: _editor.id,
+        senderName: _editor.name,
+        senderAvatar: newAvatarUri,
+        senderRole: _editor.role,
+        type: MessageType.text,
+        content: 'رسالة متزامنة تلقائياً بدون زرار Sync',
+        sentAt: DateTime(2026, 11, 23, 14, 15),
+        seenBy: const [],
+      );
+      final liveNotification = AppNotificationModel(
+        id: 'notif_live_file',
+        title: 'ملف جديد متزامن 📄',
+        description: 'Mina Adel رفع ملف الفريق الحقيقي',
+        dateTime: DateTime.now(),
+        category: NotificationCategory.files,
+        tone: LmtNotificationTone.normal.name,
+        excludedMemberIds: const ['LMT-2026-002'],
+      );
+
+      repo.liveSnapshotController.add(
+        LmtRepositorySnapshot(
+          biometricEnabled: true,
+          sloganOfYear: '#تغيروا_2026',
+          verseOfYear: 'verse',
+          currentUser: _admin,
+          members: [_admin, updatedEditor],
+          chatGroups: [_group],
+          chatMessages: [liveMessage],
+          posts: [updatedPost],
+          sharedFiles: [updatedFile],
+          calendarEvents: [updatedEvent],
+          notifications: [liveNotification],
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(cubit.state.lastSyncedAt, isNotNull);
+      expect(
+        cubit.state.chatMessages.any((m) => m.id == 'msg_live_2'),
+        isTrue,
+      );
+      expect(cubit.state.posts.single.likedByIds, contains(_editor.id));
+      expect(cubit.state.posts.single.comments.single.content, 'تعليق لحظي');
+      expect(
+        cubit.state.sharedFiles.single.localFilePath,
+        startsWith('cloud://blob/'),
+      );
+      expect(
+        cubit.state.calendarEvents.single.title,
+        'اجتماع متزامن تلقائياً',
+      );
+      expect(
+        cubit.state.members.firstWhere((m) => m.id == _editor.id).avatarPath,
+        newAvatarUri,
+      );
+      expect(
+        events.any((e) => e.idKey == 'notif_live_file'),
+        isTrue,
+      );
+
+      await sub.cancel();
+      await cubit.close();
+      await repo.dispose();
+    });
+
+    test('updateProfileAvatar dispatches avatar-change notification for other members',
+        () async {
+      final repo = _StreamableRepo();
+      final cubit = LmtCubit(repository: repo);
+      while (!cubit.state.isInitialized) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      const uploadedAvatarUri =
+          'cloud://blob/blob_admin_1?name=mario.png&mime=image%2Fpng&chunks=1';
+      await cubit.updateProfileAvatar(uploadedAvatarUri);
+
+      expect(cubit.state.currentUser.avatarPath, uploadedAvatarUri);
+      expect(
+        cubit.state.notifications.any(
+          (n) =>
+              n.title.contains('الصورة الشخصية') &&
+              n.excludedMemberIds.contains(_admin.id),
+        ),
+        isTrue,
+      );
+
+      await cubit.close();
+      await repo.dispose();
+    });
+
+    test('CloudMediaStorage and DeviceFileHelper handle cloud://blob URIs cleanly',
+        () {
+      const cloudPdf =
+          'cloud://blob/blob_pdf_1?name=rehearsal_script.pdf&mime=application%2Fpdf&chunks=2';
+      const cloudImage =
+          'cloud://blob/blob_img_1?name=stage_photo.png&mime=image%2Fpng&chunks=1';
+      const cloudVideo =
+          'cloud://blob/blob_vid_1?name=promo.mp4&mime=video%2Fmp4&chunks=3';
+
+      expect(CloudMediaStorage.isCloudUri(cloudPdf), isTrue);
+      expect(
+        CloudMediaStorage.displayFileName(cloudPdf),
+        'rehearsal_script.pdf',
+      );
+      expect(
+        DeviceFileHelper.displayFileName(cloudPdf),
+        'rehearsal_script.pdf',
+      );
+      expect(DeviceFileHelper.isVideoPath(cloudVideo), isTrue);
+      expect(
+        DeviceFileHelper.imageProviderFor(cloudImage),
+        isA<CloudBlobImageProvider>(),
+      );
     });
   });
 }

@@ -4,23 +4,24 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/lmt_models.dart';
+import '../utils/app_assets.dart';
 import '../utils/app_preferences.dart';
 import 'lmt_repository.dart';
 
 /// Temporary Cloud Firestore implementation of [LmtRepository] backed by an
-/// offline-first local cache ([LmtLocalRepositoryImpl]).
-///
-/// Later, when migrating to the C# ASP.NET Core & SQL Server backend, swap the
-/// registration in `lib/core/di/injection_container.dart` with an API-backed
-/// [LmtRepository] without changing any Cubits or UI widgets.
+/// offline-first local cache ([LmtLocalRepositoryImpl]) with real-time
+/// multi-collection `.snapshots()` auto-sync across all connected devices.
 class LmtFirestoreRepositoryImpl implements LmtRepository {
   /// Underlying local cache repository for instant offline-first startup and
   /// disconnected fallback.
   final LmtRepository localCache;
 
-  LmtFirestoreRepositoryImpl({this.localCache = const LmtLocalRepositoryImpl()});
+  LmtFirestoreRepositoryImpl({
+    this.localCache = const LmtLocalRepositoryImpl(),
+  });
 
   static const String _membersCol = 'members';
   static const String _memberAuthCol = 'member_auth';
@@ -34,13 +35,20 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   static const String _teamConfigCol = 'team_config';
   static const String _brandingDocId = 'branding';
 
-  static const Duration _remoteTimeout = Duration(seconds: 6);
+  static const Duration _remoteTimeout = Duration(seconds: 8);
   static const int _maxBatchOps = 400;
 
-  /// Tracks the serialized payload last synced per collection and document ID so
-  /// only modified/new/deleted documents are written to Firestore.
+  /// Tracks serialized JSON payloads last seen or written per collection & doc ID.
   final Map<String, Map<String, String>> _lastSyncedDocs = {};
-  bool _isSyncing = false;
+
+  /// Live decoded doc maps per collection used by [watchLiveSnapshots].
+  final Map<String, Map<String, Map<String, dynamic>>> _liveDocs = {};
+  Map<String, dynamic>? _liveBrandingDoc;
+  List<MemberModel> _localMemberFallback = const [];
+
+  bool _persistInFlight = false;
+  ({Map<String, dynamic> stateJson, String currentUserId})? _queuedPersist;
+  Completer<void>? _persistIdleCompleter;
 
   FirebaseFirestore? get _db =>
       Firebase.apps.isNotEmpty ? FirebaseFirestore.instance : null;
@@ -57,6 +65,14 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     }
   }
 
+  /// Ensures bounded string fields comply with `firestore.rules` (especially
+  /// preventing legacy >500 char data URIs from aborting a batch).
+  String _clampBoundedPath(dynamic raw, int maxLen, String fallback) {
+    if (raw is! String || raw.trim().isEmpty) return fallback;
+    final trimmed = raw.trim();
+    return trimmed.length <= maxLen ? trimmed : fallback;
+  }
+
   /// Strips sensitive credentials before storing member directory records in
   /// Firestore and attaches the current anonymous auth UID for auditability.
   Map<String, dynamic> _prepareDocForCloud(
@@ -69,6 +85,42 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       copy.remove('password');
       copy.remove('passwordHash');
       copy.remove('passwordSalt');
+      copy['avatarPath'] =
+          _clampBoundedPath(copy['avatarPath'], 500, AppAssets.accountIcon);
+    } else {
+      if (copy.containsKey('senderAvatar')) {
+        copy['senderAvatar'] = _clampBoundedPath(
+          copy['senderAvatar'],
+          500,
+          AppAssets.accountIcon,
+        );
+      }
+      if (copy.containsKey('creatorAvatar')) {
+        copy['creatorAvatar'] = _clampBoundedPath(
+          copy['creatorAvatar'],
+          500,
+          AppAssets.accountIcon,
+        );
+      }
+      if (copy.containsKey('imagePath')) {
+        copy['imagePath'] = _clampBoundedPath(
+          copy['imagePath'],
+          500,
+          AppAssets.appLogo,
+        );
+      }
+      if (copy['attachmentPath'] is String &&
+          (copy['attachmentPath'] as String).length > 1000) {
+        copy['attachmentPath'] = AppAssets.postIcon;
+      }
+      if (copy['mediaPath'] is String &&
+          (copy['mediaPath'] as String).length > 1000) {
+        copy['mediaPath'] = null;
+      }
+      if (copy['localFilePath'] is String &&
+          (copy['localFilePath'] as String).length > 1000) {
+        copy['localFilePath'] = null;
+      }
     }
     copy['updatedByUid'] = uid;
     return copy;
@@ -133,11 +185,31 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     String collectionName,
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
   ) {
-    final map = <String, String>{};
+    final encodedMap = <String, String>{};
+    final rawMap = <String, Map<String, dynamic>>{};
     for (final doc in docs) {
-      map[doc.id] = jsonEncode(doc.data());
+      final data = Map<String, dynamic>.from(doc.data());
+      encodedMap[doc.id] = jsonEncode(data);
+      rawMap[doc.id] = {...data, 'id': doc.id};
     }
-    _lastSyncedDocs[collectionName] = map;
+    _lastSyncedDocs[collectionName] = encodedMap;
+    _liveDocs[collectionName] = rawMap;
+  }
+
+  Future<void> _commitCollectionSafely({
+    required FirebaseFirestore db,
+    required String collectionName,
+    required List<Map<String, dynamic>> docs,
+  }) async {
+    try {
+      await _commitCollectionDiff(
+        db: db,
+        collectionName: collectionName,
+        docs: docs,
+      );
+    } catch (e) {
+      debugPrint('Firestore sync error [$collectionName]: $e');
+    }
   }
 
   Future<void> _commitCollectionDiff({
@@ -148,6 +220,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     final colRef = db.collection(collectionName);
     final previousMap = _lastSyncedDocs[collectionName] ?? const {};
     final nextMap = <String, String>{};
+    final nextRawMap = <String, Map<String, dynamic>>{};
     final operations = <void Function(WriteBatch)>[];
 
     for (final data in docs) {
@@ -155,6 +228,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       if (id == null || id.trim().isEmpty) continue;
       final encoded = jsonEncode(data);
       nextMap[id] = encoded;
+      nextRawMap[id] = data;
       if (previousMap[id] != encoded) {
         operations.add((batch) => batch.set(colRef.doc(id), data));
       }
@@ -176,6 +250,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     }
 
     _lastSyncedDocs[collectionName] = nextMap;
+    _liveDocs[collectionName] = nextRawMap;
   }
 
   Future<void> _syncBrandingDoc(
@@ -184,21 +259,154 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     required String verseOfYear,
     required String uid,
   }) async {
-    final payload = <String, dynamic>{
-      'sloganOfYear': sloganOfYear,
-      'verseOfYear': verseOfYear,
-      'updatedByUid': uid,
-    };
-    final encoded = jsonEncode(payload);
-    final previous = _lastSyncedDocs[_teamConfigCol]?[_brandingDocId];
-    if (previous == encoded) return;
+    try {
+      final payload = <String, dynamic>{
+        'sloganOfYear': sloganOfYear,
+        'verseOfYear': verseOfYear,
+        'updatedByUid': uid,
+      };
+      final encoded = jsonEncode(payload);
+      final previous = _lastSyncedDocs[_teamConfigCol]?[_brandingDocId];
+      if (previous == encoded) return;
 
-    await db
-        .collection(_teamConfigCol)
-        .doc(_brandingDocId)
-        .set(payload)
-        .timeout(_remoteTimeout);
-    _lastSyncedDocs[_teamConfigCol] = {_brandingDocId: encoded};
+      await db
+          .collection(_teamConfigCol)
+          .doc(_brandingDocId)
+          .set(payload)
+          .timeout(_remoteTimeout);
+      _lastSyncedDocs[_teamConfigCol] = {_brandingDocId: encoded};
+      _liveBrandingDoc = payload;
+    } catch (e) {
+      debugPrint('Firestore branding sync error: $e');
+    }
+  }
+
+  Future<LmtRepositorySnapshot> _assembleSnapshot({
+    required LmtRepositorySnapshot fallback,
+  }) async {
+    final membersMap = _liveDocs[_membersCol] ?? const {};
+    final authMap = _liveDocs[_memberAuthCol] ?? const {};
+    final groupsMap = _liveDocs[_chatGroupsCol] ?? const {};
+    final messagesMap = _liveDocs[_chatMessagesCol] ?? const {};
+    final postsMap = _liveDocs[_postsCol] ?? const {};
+    final filesMap = _liveDocs[_sharedFilesCol] ?? const {};
+    final eventsMap = _liveDocs[_calendarEventsCol] ?? const {};
+    final notifsMap = _liveDocs[_notificationsCol] ?? const {};
+
+    final localMemberMap = <String, MemberModel>{
+      for (final m in _localMemberFallback) m.id: m,
+      for (final m in fallback.members) m.id: m,
+    };
+
+    final members = membersMap.entries.map((entry) {
+      final data = Map<String, dynamic>.from(entry.value);
+      data['id'] ??= entry.key;
+      final auth = authMap[entry.key];
+      final localMember = localMemberMap[entry.key];
+      final authPassword = auth?['password'] as String? ?? '';
+      if (authPassword.isNotEmpty) {
+        data['password'] = authPassword;
+      } else {
+        final localPassword = localMember?.password ?? '';
+        if (localPassword.isNotEmpty) {
+          data['password'] = localPassword;
+        } else if (entry.key == 'LMT-2026-001') {
+          data['password'] = 'password123';
+        } else {
+          data['password'] = '';
+        }
+      }
+      data.remove('passwordHash');
+      data.remove('passwordSalt');
+      return MemberModel.fromJson(data);
+    }).toList()
+      ..sort((a, b) => a.id.compareTo(b.id));
+
+    final chatGroups = groupsMap.values
+        .map(ChatGroupModel.fromJson)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    final chatMessages = messagesMap.values
+        .map(ChatMessageModel.fromJson)
+        .toList()
+      ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+
+    final posts = postsMap.values.map(PostModel.fromJson).toList()
+      ..sort((a, b) => b.publishTime.compareTo(a.publishTime));
+
+    final sharedFiles = filesMap.values
+        .map(SharedFileModel.fromJson)
+        .toList()
+      ..sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
+
+    final calendarEvents = eventsMap.values
+        .map(CalendarEventModel.fromJson)
+        .toList()
+      ..sort((a, b) => a.eventDateTime.compareTo(b.eventDateTime));
+
+    final notifications = notifsMap.values
+        .map(AppNotificationModel.fromJson)
+        .toList()
+      ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
+
+    final brandingData = _liveBrandingDoc;
+    final sloganOfYear =
+        (brandingData?['sloganOfYear'] as String?) ?? fallback.sloganOfYear;
+    final verseOfYear =
+        (brandingData?['verseOfYear'] as String?) ?? fallback.verseOfYear;
+
+    if (brandingData != null) {
+      await AppPreferences.setSloganOfYear(sloganOfYear);
+      await AppPreferences.setVerseOfYear(verseOfYear);
+    }
+
+    final savedUserId = await AppPreferences.getCurrentUserId();
+    final isLoggedIn = await AppPreferences.isLoggedIn();
+    final matchedSaved = (savedUserId != null && savedUserId.isNotEmpty)
+        ? members.where((m) => m.id == savedUserId).firstOrNull
+        : null;
+    if (isLoggedIn &&
+        savedUserId != null &&
+        savedUserId.isNotEmpty &&
+        members.isNotEmpty &&
+        matchedSaved == null) {
+      await AppPreferences.clearLogin();
+    }
+
+    final currentUser = matchedSaved ??
+        members.where((m) => m.id == fallback.currentUser.id).firstOrNull ??
+        (members.isNotEmpty ? members.first : fallback.currentUser);
+
+    await localCache.persistSnapshot(
+      stateJson: {
+        'sloganOfYear': sloganOfYear,
+        'verseOfYear': verseOfYear,
+        'currentUser': currentUser.toJson(),
+        'members': members.map((e) => e.toJson()).toList(),
+        'chatGroups': chatGroups.map((e) => e.toJson()).toList(),
+        'chatMessages': chatMessages.map((e) => e.toJson()).toList(),
+        'posts': posts.map((e) => e.toJson()).toList(),
+        'sharedFiles': sharedFiles.map((e) => e.toJson()).toList(),
+        'calendarEvents': calendarEvents.map((e) => e.toJson()).toList(),
+        'notifications': notifications.map((e) => e.toJson()).toList(),
+      },
+      currentUserId: matchedSaved?.id ?? '',
+    );
+
+    return LmtRepositorySnapshot(
+      biometricEnabled: fallback.biometricEnabled,
+      sloganOfYear: sloganOfYear,
+      verseOfYear: verseOfYear,
+      currentUser: currentUser,
+      members: members.isEmpty ? fallback.members : members,
+      chatGroups: chatGroups.isEmpty ? fallback.chatGroups : chatGroups,
+      chatMessages: chatMessages,
+      posts: posts,
+      sharedFiles: sharedFiles,
+      calendarEvents: calendarEvents,
+      notifications: notifications,
+    );
   }
 
   Future<List<MemberModel>> _seedInitialCollectionsIfEmpty(
@@ -209,7 +417,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     final seedMembers = seedSource.members;
     final serializedMembers = seedMembers.map((e) => e.toJson()).toList();
 
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _membersCol,
       docs: _prepareCollectionDocs(
@@ -218,12 +426,12 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         isMemberCollection: true,
       ),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _memberAuthCol,
       docs: _prepareMemberAuthDocs(serializedMembers, uid),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _chatGroupsCol,
       docs: _prepareCollectionDocs(
@@ -231,7 +439,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         uid,
       ),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _chatMessagesCol,
       docs: _prepareCollectionDocs(
@@ -239,7 +447,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         uid,
       ),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _postsCol,
       docs: _prepareCollectionDocs(
@@ -247,7 +455,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         uid,
       ),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _sharedFilesCol,
       docs: _prepareCollectionDocs(
@@ -255,7 +463,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         uid,
       ),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _calendarEventsCol,
       docs: _prepareCollectionDocs(
@@ -263,7 +471,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         uid,
       ),
     );
-    await _commitCollectionDiff(
+    await _commitCollectionSafely(
       db: db,
       collectionName: _notificationsCol,
       docs: _prepareCollectionDocs(
@@ -283,6 +491,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   @override
   Future<LmtRepositorySnapshot> loadSnapshot() async {
     final local = await localCache.loadSnapshot();
+    _localMemberFallback = local.members;
     final db = _db;
     if (db == null) return local;
 
@@ -349,20 +558,24 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         );
       }
 
-      final memberAuthSnap =
-          await db.collection(_memberAuthCol).get().timeout(_remoteTimeout);
-      final groupsSnap =
-          await db.collection(_chatGroupsCol).get().timeout(_remoteTimeout);
-      final messagesSnap =
-          await db.collection(_chatMessagesCol).get().timeout(_remoteTimeout);
-      final postsSnap =
-          await db.collection(_postsCol).get().timeout(_remoteTimeout);
-      final filesSnap =
-          await db.collection(_sharedFilesCol).get().timeout(_remoteTimeout);
-      final eventsSnap =
-          await db.collection(_calendarEventsCol).get().timeout(_remoteTimeout);
-      final notifsSnap =
-          await db.collection(_notificationsCol).get().timeout(_remoteTimeout);
+      final snaps = await Future.wait([
+        db.collection(_memberAuthCol).get().timeout(_remoteTimeout),
+        db.collection(_chatGroupsCol).get().timeout(_remoteTimeout),
+        db.collection(_chatMessagesCol).get().timeout(_remoteTimeout),
+        db.collection(_postsCol).get().timeout(_remoteTimeout),
+        db.collection(_sharedFilesCol).get().timeout(_remoteTimeout),
+        db.collection(_calendarEventsCol).get().timeout(_remoteTimeout),
+        db.collection(_notificationsCol).get().timeout(_remoteTimeout),
+      ]);
+
+      final memberAuthSnap = snaps[0];
+      final groupsSnap = snaps[1];
+      final messagesSnap = snaps[2];
+      final postsSnap = snaps[3];
+      final filesSnap = snaps[4];
+      final eventsSnap = snaps[5];
+      final notifsSnap = snaps[6];
+
       final brandingSnap = await db
           .collection(_teamConfigCol)
           .doc(_brandingDocId)
@@ -378,129 +591,15 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       _recordSnapshotPayloads(_calendarEventsCol, eventsSnap.docs);
       _recordSnapshotPayloads(_notificationsCol, notifsSnap.docs);
 
-      final authMap = <String, Map<String, dynamic>>{
-        for (final doc in memberAuthSnap.docs) doc.id: doc.data(),
-      };
-      final localMemberMap = <String, MemberModel>{
-        for (final m in local.members) m.id: m,
-      };
-      final members = membersSnap.docs.map((doc) {
-        final data = Map<String, dynamic>.from(doc.data());
-        data['id'] ??= doc.id;
-        final auth = authMap[doc.id];
-        final localMember = localMemberMap[doc.id];
-        final authPassword = auth?['password'] as String? ?? '';
-        if (authPassword.isNotEmpty) {
-          data['password'] = authPassword;
-        } else {
-          final localPassword = localMember?.password ?? '';
-          if (localPassword.isNotEmpty) {
-            data['password'] = localPassword;
-          } else if (doc.id == 'LMT-2026-001') {
-            data['password'] = 'password123';
-          } else {
-            data['password'] = '';
-          }
-        }
-        data.remove('passwordHash');
-        data.remove('passwordSalt');
-        return MemberModel.fromJson(data);
-      }).toList()
-        ..sort((a, b) => a.id.compareTo(b.id));
-
-      final chatGroups = groupsSnap.docs
-          .map((d) => ChatGroupModel.fromJson({...d.data(), 'id': d.id}))
-          .toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-
-      final chatMessages = messagesSnap.docs
-          .map((d) => ChatMessageModel.fromJson({...d.data(), 'id': d.id}))
-          .toList()
-        ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
-
-      final posts = postsSnap.docs
-          .map((d) => PostModel.fromJson({...d.data(), 'id': d.id}))
-          .toList()
-        ..sort((a, b) => b.publishTime.compareTo(a.publishTime));
-
-      final sharedFiles = filesSnap.docs
-          .map((d) => SharedFileModel.fromJson({...d.data(), 'id': d.id}))
-          .toList()
-        ..sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
-
-      final calendarEvents = eventsSnap.docs
-          .map((d) => CalendarEventModel.fromJson({...d.data(), 'id': d.id}))
-          .toList()
-        ..sort((a, b) => a.eventDateTime.compareTo(b.eventDateTime));
-
-      final notifications = notifsSnap.docs
-          .map((d) => AppNotificationModel.fromJson({...d.data(), 'id': d.id}))
-          .toList()
-        ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
-
       final brandingData = brandingSnap.data();
       if (brandingData != null) {
         _lastSyncedDocs[_teamConfigCol] = {
           _brandingDocId: jsonEncode(brandingData),
         };
-      }
-      final sloganOfYear =
-          (brandingData?['sloganOfYear'] as String?) ?? local.sloganOfYear;
-      final verseOfYear =
-          (brandingData?['verseOfYear'] as String?) ?? local.verseOfYear;
-
-      if (brandingData != null) {
-        await AppPreferences.setSloganOfYear(sloganOfYear);
-        await AppPreferences.setVerseOfYear(verseOfYear);
+        _liveBrandingDoc = Map<String, dynamic>.from(brandingData);
       }
 
-      final savedUserId = await AppPreferences.getCurrentUserId();
-      final isLoggedIn = await AppPreferences.isLoggedIn();
-      final matchedSaved = (savedUserId != null && savedUserId.isNotEmpty)
-          ? members.where((m) => m.id == savedUserId).firstOrNull
-          : null;
-      if (isLoggedIn &&
-          savedUserId != null &&
-          savedUserId.isNotEmpty &&
-          matchedSaved == null) {
-        // The locally remembered account was deleted remotely: invalidate session
-        // rather than silently substituting members.first (Admin).
-        await AppPreferences.clearLogin();
-      }
-
-      final currentUser = matchedSaved ??
-          members.where((m) => m.id == local.currentUser.id).firstOrNull ??
-          (members.isNotEmpty ? members.first : local.currentUser);
-
-      await localCache.persistSnapshot(
-        stateJson: {
-          'sloganOfYear': sloganOfYear,
-          'verseOfYear': verseOfYear,
-          'currentUser': currentUser.toJson(),
-          'members': members.map((e) => e.toJson()).toList(),
-          'chatGroups': chatGroups.map((e) => e.toJson()).toList(),
-          'chatMessages': chatMessages.map((e) => e.toJson()).toList(),
-          'posts': posts.map((e) => e.toJson()).toList(),
-          'sharedFiles': sharedFiles.map((e) => e.toJson()).toList(),
-          'calendarEvents': calendarEvents.map((e) => e.toJson()).toList(),
-          'notifications': notifications.map((e) => e.toJson()).toList(),
-        },
-        currentUserId: matchedSaved?.id ?? '',
-      );
-
-      return LmtRepositorySnapshot(
-        biometricEnabled: local.biometricEnabled,
-        sloganOfYear: sloganOfYear,
-        verseOfYear: verseOfYear,
-        currentUser: currentUser,
-        members: members.isEmpty ? local.members : members,
-        chatGroups: chatGroups.isEmpty ? local.chatGroups : chatGroups,
-        chatMessages: chatMessages,
-        posts: posts,
-        sharedFiles: sharedFiles,
-        calendarEvents: calendarEvents,
-        notifications: notifications,
-      );
+      return await _assembleSnapshot(fallback: local);
     } catch (_) {
       return local;
     }
@@ -517,79 +616,111 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     );
 
     final db = _db;
-    if (db == null || _isSyncing) return;
+    if (db == null) return;
 
-    _isSyncing = true;
+    if (_persistInFlight) {
+      // Never drop concurrent writes: coalesce and flush right after the current
+      // Firestore batch completes.
+      _queuedPersist = (stateJson: stateJson, currentUserId: currentUserId);
+      await _persistIdleCompleter?.future;
+      return;
+    }
+
+    _persistInFlight = true;
+    _persistIdleCompleter = Completer<void>();
+
+    try {
+      var nextWrite = (stateJson: stateJson, currentUserId: currentUserId);
+      while (true) {
+        await _flushSinglePersist(db, nextWrite.stateJson);
+        final pending = _queuedPersist;
+        _queuedPersist = null;
+        if (pending == null) break;
+        nextWrite = pending;
+      }
+    } finally {
+      _persistInFlight = false;
+      _persistIdleCompleter?.complete();
+      _persistIdleCompleter = null;
+    }
+  }
+
+  Future<void> _flushSinglePersist(
+    FirebaseFirestore db,
+    Map<String, dynamic> stateJson,
+  ) async {
     try {
       final authed = await _ensureAuthenticated();
       if (!authed) return;
       final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
 
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _membersCol,
-        docs: _prepareCollectionDocs(
-          stateJson['members'] as List<dynamic>?,
-          uid,
-          isMemberCollection: true,
+      await Future.wait([
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _membersCol,
+          docs: _prepareCollectionDocs(
+            stateJson['members'] as List<dynamic>?,
+            uid,
+            isMemberCollection: true,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _memberAuthCol,
-        docs: _prepareMemberAuthDocs(
-          stateJson['members'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _memberAuthCol,
+          docs: _prepareMemberAuthDocs(
+            stateJson['members'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _chatGroupsCol,
-        docs: _prepareCollectionDocs(
-          stateJson['chatGroups'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _chatGroupsCol,
+          docs: _prepareCollectionDocs(
+            stateJson['chatGroups'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _chatMessagesCol,
-        docs: _prepareCollectionDocs(
-          stateJson['chatMessages'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _chatMessagesCol,
+          docs: _prepareCollectionDocs(
+            stateJson['chatMessages'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _postsCol,
-        docs: _prepareCollectionDocs(
-          stateJson['posts'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _postsCol,
+          docs: _prepareCollectionDocs(
+            stateJson['posts'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _sharedFilesCol,
-        docs: _prepareCollectionDocs(
-          stateJson['sharedFiles'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _sharedFilesCol,
+          docs: _prepareCollectionDocs(
+            stateJson['sharedFiles'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _calendarEventsCol,
-        docs: _prepareCollectionDocs(
-          stateJson['calendarEvents'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _calendarEventsCol,
+          docs: _prepareCollectionDocs(
+            stateJson['calendarEvents'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
-      await _commitCollectionDiff(
-        db: db,
-        collectionName: _notificationsCol,
-        docs: _prepareCollectionDocs(
-          stateJson['notifications'] as List<dynamic>?,
-          uid,
+        _commitCollectionSafely(
+          db: db,
+          collectionName: _notificationsCol,
+          docs: _prepareCollectionDocs(
+            stateJson['notifications'] as List<dynamic>?,
+            uid,
+          ),
         ),
-      );
+      ]);
 
       final slogan = stateJson['sloganOfYear'] as String?;
       final verse = stateJson['verseOfYear'] as String?;
@@ -601,11 +732,118 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           uid: uid,
         );
       }
-    } catch (_) {
-      // Keep local persistence resilient even when offline or restricted.
-    } finally {
-      _isSyncing = false;
+    } catch (e) {
+      debugPrint('Firestore flushSinglePersist error: $e');
     }
+  }
+
+  @override
+  Stream<LmtRepositorySnapshot> watchLiveSnapshots() {
+    final db = _db;
+    if (db == null) return const Stream.empty();
+
+    late StreamController<LmtRepositorySnapshot> controller;
+    final subs = <StreamSubscription<dynamic>>[];
+    Timer? debounce;
+    var emitting = false;
+    var dirty = false;
+
+    Future<void> emitCombined() async {
+      if (controller.isClosed) return;
+      if (_persistInFlight) {
+        dirty = true;
+        return;
+      }
+      if (emitting) {
+        dirty = true;
+        return;
+      }
+      emitting = true;
+      try {
+        do {
+          dirty = false;
+          final local = await localCache.loadSnapshot();
+          final assembled = await _assembleSnapshot(fallback: local);
+          if (!controller.isClosed) {
+            controller.add(assembled);
+          }
+        } while (dirty && !controller.isClosed);
+      } catch (e) {
+        debugPrint('Firestore watchLiveSnapshots assemble error: $e');
+      } finally {
+        emitting = false;
+      }
+    }
+
+    void scheduleEmit() {
+      debounce?.cancel();
+      debounce = Timer(const Duration(milliseconds: 60), emitCombined);
+    }
+
+    void watchCollection(String collectionName) {
+      final sub = db.collection(collectionName).snapshots().listen(
+        (snap) {
+          // Ignore local optimistic cache echo while this device is committing.
+          if (snap.metadata.hasPendingWrites && _persistInFlight) return;
+          _recordSnapshotPayloads(collectionName, snap.docs);
+          scheduleEmit();
+        },
+        onError: (Object e) {
+          debugPrint('Firestore watch [$collectionName] error: $e');
+        },
+      );
+      subs.add(sub);
+    }
+
+    controller = StreamController<LmtRepositorySnapshot>.broadcast(
+      onListen: () {
+        _ensureAuthenticated().then((authed) {
+          if (!authed || controller.isClosed) return;
+          watchCollection(_membersCol);
+          watchCollection(_memberAuthCol);
+          watchCollection(_chatGroupsCol);
+          watchCollection(_chatMessagesCol);
+          watchCollection(_postsCol);
+          watchCollection(_sharedFilesCol);
+          watchCollection(_calendarEventsCol);
+          watchCollection(_notificationsCol);
+
+          subs.add(
+            db
+                .collection(_teamConfigCol)
+                .doc(_brandingDocId)
+                .snapshots()
+                .listen(
+              (docSnap) {
+                if (docSnap.metadata.hasPendingWrites && _persistInFlight) {
+                  return;
+                }
+                final data = docSnap.data();
+                if (data != null) {
+                  _lastSyncedDocs[_teamConfigCol] = {
+                    _brandingDocId: jsonEncode(data),
+                  };
+                  _liveBrandingDoc = Map<String, dynamic>.from(data);
+                  scheduleEmit();
+                }
+              },
+              onError: (Object e) {
+                debugPrint('Firestore watch branding error: $e');
+              },
+            ),
+          );
+        });
+      },
+      onCancel: () {
+        debounce?.cancel();
+        for (final sub in subs) {
+          sub.cancel();
+        }
+        subs.clear();
+      },
+    );
+
+    return controller.stream;
   }
 
   @override
@@ -628,7 +866,11 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           'groupId': groupId,
           'memberId': member.id,
           'memberName': member.name,
-          'avatarPath': member.avatarPath,
+          'avatarPath': _clampBoundedPath(
+            member.avatarPath,
+            500,
+            AppAssets.accountIcon,
+          ),
           'updatedAt': DateTime.now().toIso8601String(),
           'updatedByUid': uid,
         }).timeout(_remoteTimeout);

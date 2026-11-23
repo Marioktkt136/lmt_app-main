@@ -97,6 +97,7 @@ class CustomAppBar extends StatelessWidget {
                               state.currentUser.avatarPath,
                               fallbackAsset: AppAssets.accountIcon,
                             ),
+                            onBackgroundImageError: (_, _) {},
                           ),
                           Positioned(
                             bottom: 0,

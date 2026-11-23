@@ -350,11 +350,20 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     final recordedFilePath = await NativeMediaService.stopVoiceRecording();
     if (!mounted) return;
 
+    final syncedVoicePath = (recordedFilePath != null &&
+            recordedFilePath.trim().isNotEmpty)
+        ? await DeviceFileHelper.persistPickedFile(
+            recordedFilePath,
+            'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+          )
+        : null;
+    if (!mounted) return;
+
     await context.read<LmtCubit>().sendChatMessage(
           groupId: widget.group.id,
           type: MessageType.voiceNote,
           content: 'رسالة صوتية مسجلة 🎤',
-          attachmentPath: recordedFilePath,
+          attachmentPath: syncedVoicePath ?? recordedFilePath,
           voiceDurationSeconds: duration,
           replyTo: _replyingTo,
         );

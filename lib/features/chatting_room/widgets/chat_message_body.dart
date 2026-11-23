@@ -226,7 +226,10 @@ class ChatMessageBody extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        msg.attachmentPath?.split('/').last ?? 'Document.pdf',
+                        DeviceFileHelper.displayFileName(
+                          msg.attachmentPath,
+                          fallback: 'Document.pdf',
+                        ),
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 12.sp,

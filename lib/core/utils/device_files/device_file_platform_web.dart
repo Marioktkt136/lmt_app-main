@@ -8,16 +8,20 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:web/web.dart' as web;
 
 import '../../models/lmt_models.dart';
+import '../cloud_media_storage.dart';
 import 'file_type.dart';
 import 'mime_type_util.dart';
 import 'platform_file.dart';
 
-/// On Web, disk paths do not exist; `data:` and `http:` URLs are handled in
-/// [DeviceFileHelper].
+final Map<String, Uint8List> _webPickedBytesCache = <String, Uint8List>{};
+web.HTMLAudioElement? _activeWebAudioPlayer;
+
+/// On Web, disk paths do not exist; `cloud://`, `data:`, and `http:` URLs
+/// are handled directly in [DeviceFileHelper].
 ImageProvider? localFileImageProvider(String path) => null;
 
-/// On Web, disk paths do not exist; `data:` and `http:` URLs are handled in
-/// [DeviceFileHelper].
+/// On Web, disk paths do not exist; `cloud://`, `data:`, and `http:` URLs
+/// are handled directly in [DeviceFileHelper].
 Widget? buildLocalFileImage(
   String path, {
   double? width,
@@ -26,6 +30,12 @@ Widget? buildLocalFileImage(
   Widget Function(BuildContext, Object, StackTrace?)? errorBuilder,
 }) =>
     null;
+
+/// Web relies on [CloudMediaStorage] memory cache (browser HTTP cache).
+Future<Uint8List?> readCloudDiskCache(String blobGroupId) async => null;
+
+/// Web relies on [CloudMediaStorage] memory cache (browser HTTP cache).
+Future<void> writeCloudDiskCache(String blobGroupId, Uint8List bytes) async {}
 
 String _acceptFilterFor(FileType type, List<String>? allowedExtensions) {
   if (allowedExtensions != null && allowedExtensions.isNotEmpty) {
@@ -42,19 +52,16 @@ String _acceptFilterFor(FileType type, List<String>? allowedExtensions) {
 }
 
 /// Resizes large images on an offscreen HTML `<canvas>` so browser-selected
-/// avatars and timeline images fit comfortably inside Firestore documents.
-Future<String?> _toCompactImageDataUrl(
+/// avatars and timeline images upload fast and sync cleanly via Firestore.
+Future<Uint8List> _compactImageBytesIfLarge(
   web.File webFile,
-  Uint8List bytes,
-  String mimeType,
+  Uint8List rawBytes,
 ) async {
-  const maxRawBytes = 220 * 1024;
-  if (bytes.lengthInBytes <= maxRawBytes) {
-    return 'data:$mimeType;base64,${base64Encode(bytes)}';
-  }
+  const maxRawBytes = 240 * 1024;
+  if (rawBytes.lengthInBytes <= maxRawBytes) return rawBytes;
 
   final objectUrl = web.URL.createObjectURL(webFile);
-  final completer = Completer<String?>();
+  final completer = Completer<Uint8List>();
   final img = web.HTMLImageElement();
 
   late JSFunction onLoad;
@@ -66,7 +73,7 @@ Future<String?> _toCompactImageDataUrl(
       var targetW = img.naturalWidth;
       var targetH = img.naturalHeight;
       if (targetW <= 0 || targetH <= 0) {
-        completer.complete('data:$mimeType;base64,${base64Encode(bytes)}');
+        completer.complete(rawBytes);
         return;
       }
       if (targetW > maxDim || targetH > maxDim) {
@@ -83,13 +90,14 @@ Future<String?> _toCompactImageDataUrl(
         ..height = targetH;
       final ctx = canvas.getContext('2d') as web.CanvasRenderingContext2D?;
       if (ctx == null) {
-        completer.complete('data:$mimeType;base64,${base64Encode(bytes)}');
+        completer.complete(rawBytes);
         return;
       }
       ctx.drawImage(img, 0, 0, targetW, targetH);
-      completer.complete(canvas.toDataURL('image/jpeg', 0.80.toJS));
+      final dataUrl = canvas.toDataURL('image/jpeg', 0.80.toJS);
+      completer.complete(UriData.parse(dataUrl).contentAsBytes());
     } catch (_) {
-      completer.complete('data:$mimeType;base64,${base64Encode(bytes)}');
+      completer.complete(rawBytes);
     } finally {
       web.URL.revokeObjectURL(objectUrl);
     }
@@ -97,7 +105,7 @@ Future<String?> _toCompactImageDataUrl(
 
   onError = ((web.Event _) {
     web.URL.revokeObjectURL(objectUrl);
-    completer.complete('data:$mimeType;base64,${base64Encode(bytes)}');
+    completer.complete(rawBytes);
   }).toJS;
 
   img.addEventListener('load', onLoad);
@@ -108,7 +116,7 @@ Future<String?> _toCompactImageDataUrl(
     const Duration(seconds: 6),
     onTimeout: () {
       web.URL.revokeObjectURL(objectUrl);
-      return 'data:$mimeType;base64,${base64Encode(bytes)}';
+      return rawBytes;
     },
   );
 }
@@ -152,22 +160,27 @@ Future<PlatformFile?> pickFallbackOrWebFile(
   if (selected == null) return null;
 
   final jsBuffer = await selected.arrayBuffer().toDart;
-  final bytes = jsBuffer.toDart.asUint8List();
+  var bytes = jsBuffer.toDart.asUint8List();
   final name = selected.name;
-  final mime = selected.type.isNotEmpty
+  var mime = selected.type.isNotEmpty
       ? selected.type
       : MimeTypeUtil.forFileName(name);
 
-  String? resolvedPath;
   if (mime.startsWith('image/')) {
-    resolvedPath = await _toCompactImageDataUrl(selected, bytes, mime);
-  } else if (bytes.lengthInBytes <= 350 * 1024) {
+    final compacted = await _compactImageBytesIfLarge(selected, bytes);
+    if (compacted.lengthInBytes < bytes.lengthInBytes) {
+      bytes = compacted;
+      mime = 'image/jpeg';
+    }
+  }
+
+  String resolvedPath;
+  if (bytes.lengthInBytes <= 350 * 1024) {
     resolvedPath = 'data:$mime;base64,${base64Encode(bytes)}';
   } else {
-    // Keep non-image large files addressable via in-memory object URL for
-    // current browser session previews/downloads without bloating Firestore.
     resolvedPath = web.URL.createObjectURL(selected);
   }
+  _webPickedBytesCache[resolvedPath] = bytes;
 
   return PlatformFile(
     name: name,
@@ -177,14 +190,59 @@ Future<PlatformFile?> pickFallbackOrWebFile(
   );
 }
 
-/// On Web, picked images/files already hold browser `data:` or `blob:` URLs.
+/// Uploads Web-picked file/image bytes to [CloudMediaStorage] and returns a
+/// compact `cloud://blob/...` URI synced across all Web and Mobile clients.
 Future<String> persistPickedFilePlatform(
   String sourcePath,
-  String fileName,
-) async =>
-    sourcePath;
+  String fileName, {
+  Uint8List? bytes,
+}) async {
+  if (CloudMediaStorage.isCloudUri(sourcePath) ||
+      sourcePath.startsWith('http://') ||
+      sourcePath.startsWith('https://')) {
+    return sourcePath;
+  }
 
-/// Triggers a real browser file download (`<a download="...">`) for [file].
+  var rawBytes = bytes ?? _webPickedBytesCache.remove(sourcePath);
+  if (rawBytes == null && sourcePath.startsWith('data:')) {
+    try {
+      rawBytes = UriData.parse(sourcePath).contentAsBytes();
+    } catch (_) {}
+  }
+
+  if (rawBytes != null && rawBytes.isNotEmpty) {
+    final cloudUri = await CloudMediaStorage.uploadBytes(
+      bytes: rawBytes,
+      fileName: fileName,
+      mimeType: MimeTypeUtil.forFileName(fileName),
+    );
+    if (cloudUri != null) {
+      return cloudUri;
+    }
+  }
+
+  return sourcePath;
+}
+
+void _triggerWebBlobDownload(Uint8List bytes, String mime, String fileName) {
+  final blobParts = <JSUint8Array>[bytes.toJS].toJS;
+  final blob = web.Blob(blobParts, web.BlobPropertyBag(type: mime));
+  final objectUrl = web.URL.createObjectURL(blob);
+  final anchor = web.HTMLAnchorElement()
+    ..href = objectUrl
+    ..download = fileName
+    ..style.display = 'none';
+  web.document.body?.append(anchor);
+  anchor.click();
+  anchor.remove();
+  Future<void>.delayed(
+    const Duration(seconds: 15),
+    () => web.URL.revokeObjectURL(objectUrl),
+  );
+}
+
+/// Triggers a real browser download (`<a download="...">`) using the real
+/// cloud blob bytes, inline data URI, or bundled asset.
 Future<String> downloadAndOpenRealFilePlatform(
   SharedFileModel file, {
   bool openAfterSave = true,
@@ -195,7 +253,17 @@ Future<String> downloadAndOpenRealFilePlatform(
   String mime = 'application/octet-stream';
 
   if (localPath != null && localPath.isNotEmpty) {
-    if (localPath.startsWith('http://') ||
+    if (CloudMediaStorage.isCloudUri(localPath)) {
+      bytes = await CloudMediaStorage.downloadBytes(localPath);
+      if (bytes != null && bytes.isNotEmpty) {
+        downloadName = CloudMediaStorage.displayFileName(
+          localPath,
+          fallback: MimeTypeUtil.sanitizeFileName(file.title),
+        );
+        mime = CloudMediaStorage.mimeTypeFromUri(localPath) ??
+            MimeTypeUtil.forFileName(downloadName);
+      }
+    } else if (localPath.startsWith('http://') ||
         localPath.startsWith('https://') ||
         localPath.startsWith('blob:')) {
       final name = MimeTypeUtil.sanitizeFileName(file.title);
@@ -209,9 +277,7 @@ Future<String> downloadAndOpenRealFilePlatform(
       anchor.click();
       anchor.remove();
       return name;
-    }
-
-    if (localPath.startsWith('data:')) {
+    } else if (localPath.startsWith('data:')) {
       final parsed = UriData.parse(localPath);
       bytes = parsed.contentAsBytes();
       mime = parsed.mimeType;
@@ -259,26 +325,60 @@ ${file.documentContent ?? file.description}
     bytes = Uint8List.fromList(utf8.encode(content));
   }
 
-  final blobParts = <JSUint8Array>[bytes.toJS].toJS;
-  final blob = web.Blob(blobParts, web.BlobPropertyBag(type: mime));
-  final objectUrl = web.URL.createObjectURL(blob);
-  final anchor = web.HTMLAnchorElement()
-    ..href = objectUrl
-    ..download = downloadName ?? 'lmt_download'
-    ..style.display = 'none';
-  web.document.body?.append(anchor);
-  anchor.click();
-  anchor.remove();
-  Future<void>.delayed(
-    const Duration(seconds: 10),
-    () => web.URL.revokeObjectURL(objectUrl),
-  );
-  return downloadName ?? 'download';
+  final finalName = downloadName ?? 'lmt_download';
+  _triggerWebBlobDownload(bytes, mime, finalName);
+  return finalName;
 }
 
-/// Opens a browser URL, `blob:` URL, or triggers download for a `data:` URI.
+/// Creates a browser Blob URL for `cloud://blob/...` playback or download.
+Future<String?> materializeCloudFilePlatform(String path) async {
+  if (!CloudMediaStorage.isCloudUri(path)) return path;
+  final bytes = await CloudMediaStorage.downloadBytes(path);
+  if (bytes == null || bytes.isEmpty) return null;
+  final mime = CloudMediaStorage.mimeTypeFromUri(path) ??
+      MimeTypeUtil.forFileName(CloudMediaStorage.displayFileName(path));
+  final blob = web.Blob(
+    <JSUint8Array>[bytes.toJS].toJS,
+    web.BlobPropertyBag(type: mime),
+  );
+  return web.URL.createObjectURL(blob);
+}
+
+/// Opens a `cloud://`, `data:`, `blob:`, or `http(s):` resource in a browser tab
+/// or downloads non-inline formats.
 Future<String?> openLocalOrExternalPathPlatform(String path) async {
   try {
+    if (CloudMediaStorage.isCloudUri(path)) {
+      final bytes = await CloudMediaStorage.downloadBytes(path);
+      if (bytes == null || bytes.isEmpty) {
+        return 'Unable to download cloud file';
+      }
+      final name = CloudMediaStorage.displayFileName(path, fallback: 'file');
+      final mime = CloudMediaStorage.mimeTypeFromUri(path) ??
+          MimeTypeUtil.forFileName(name);
+      final isInlinePreviewable = mime.startsWith('image/') ||
+          mime.startsWith('video/') ||
+          mime.startsWith('audio/') ||
+          mime == 'application/pdf' ||
+          mime.startsWith('text/');
+
+      if (isInlinePreviewable) {
+        final blob = web.Blob(
+          <JSUint8Array>[bytes.toJS].toJS,
+          web.BlobPropertyBag(type: mime),
+        );
+        final url = web.URL.createObjectURL(blob);
+        web.window.open(url, '_blank');
+        Future<void>.delayed(
+          const Duration(seconds: 20),
+          () => web.URL.revokeObjectURL(url),
+        );
+      } else {
+        _triggerWebBlobDownload(bytes, mime, name);
+      }
+      return null;
+    }
+
     if (path.startsWith('data:')) {
       final parsed = UriData.parse(path);
       final bytes = parsed.contentAsBytes();
@@ -300,8 +400,32 @@ Future<String?> openLocalOrExternalPathPlatform(String path) async {
       await launchUrl(Uri.parse(path), mode: LaunchMode.platformDefault);
       return null;
     }
-    return 'Unsupported file preview on web';
+    return 'File is stored locally on another device';
   } catch (e) {
     return e.toString();
   }
+}
+
+/// Plays a cloud/URL audio voice note directly in the Web browser via `<audio>`.
+Future<bool> playAudioUrlWebPlatform(String path, {double speed = 1.0}) async {
+  try {
+    final resolved = await materializeCloudFilePlatform(path);
+    if (resolved == null) return false;
+    _activeWebAudioPlayer?.pause();
+    final audio = web.HTMLAudioElement()
+      ..src = resolved
+      ..playbackRate = speed;
+    _activeWebAudioPlayer = audio;
+    await audio.play().toDart;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Pauses any active HTMLAudioElement voice note on Web.
+Future<void> pauseAudioWebPlatform() async {
+  try {
+    _activeWebAudioPlayer?.pause();
+  } catch (_) {}
 }

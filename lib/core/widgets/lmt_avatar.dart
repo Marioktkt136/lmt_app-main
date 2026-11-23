@@ -46,6 +46,7 @@ class LmtAvatar extends StatelessWidget {
         radius: radius.r,
         backgroundColor: primary.withValues(alpha: 0.14),
         backgroundImage: DeviceFileHelper.imageProviderFor(imagePath),
+        onBackgroundImageError: (_, _) {},
       ),
     );
 

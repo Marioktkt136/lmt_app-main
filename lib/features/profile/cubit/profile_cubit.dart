@@ -1,5 +1,6 @@
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/models/lmt_models.dart';
+import '../../../core/services/local_notification_service.dart';
 import '../../../core/utils/app_preferences.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
@@ -45,6 +46,7 @@ mixin ProfileCubitMixin on LmtBaseCubit {
   /// Propagates updates to [updatedUser] across members, posts, comments,
   /// chat messages, and seen receipts so the new name/avatar appears everywhere.
   Future<void> _emitAndPropagateUserProfile(MemberModel updatedUser) async {
+    final avatarChanged = updatedUser.avatarPath != state.currentUser.avatarPath;
     final updatedMembers = state.members
         .map((m) => m.id == updatedUser.id ? updatedUser : m)
         .toList();
@@ -105,6 +107,17 @@ mixin ProfileCubitMixin on LmtBaseCubit {
       }
       return msg;
     }).toList();
+
+    if (avatarChanged) {
+      pushNotification(
+        title: 'تحديث الصورة الشخصية 📸',
+        description: 'قام ${updatedUser.name} بتحديث صورته الشخصية.',
+        category: NotificationCategory.system,
+        tone: LmtNotificationTone.normal,
+        targetTabIndex: 4,
+        excludedMemberIds: [updatedUser.id],
+      );
+    }
 
     emit(
       state.copyWith(

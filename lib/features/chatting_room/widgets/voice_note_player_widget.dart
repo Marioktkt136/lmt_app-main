@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../../core/models/lmt_models.dart';
 import '../../../core/services/native_media_service.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/utils/device_file_helper.dart';
 
 /// Interactive Voice Note player widget with Play/Pause, Restart from beginning,
 /// -5s / +5s seek buttons, interactive seek slider, and playback speed toggle
@@ -61,7 +63,11 @@ class _VoiceNotePlayerWidgetState extends State<VoiceNotePlayerWidget> {
       _startTicker();
     } else if (!widget.isPlayingVoice && oldWidget.isPlayingVoice) {
       _progressTimer?.cancel();
-      NativeMediaService.pauseVoiceNote();
+      if (kIsWeb) {
+        DeviceFileHelper.pauseAudioOnWeb();
+      } else {
+        NativeMediaService.pauseVoiceNote();
+      }
     }
   }
 
@@ -73,9 +79,17 @@ class _VoiceNotePlayerWidgetState extends State<VoiceNotePlayerWidget> {
 
   Future<void> _startNativePlayback() async {
     final path = widget.msg.attachmentPath;
-    if (path != null && path.trim().isNotEmpty) {
+    if (path == null || path.trim().isEmpty) return;
+
+    if (kIsWeb) {
+      await DeviceFileHelper.playAudioOnWeb(path, speed: _playbackSpeed);
+      return;
+    }
+
+    final resolved = await DeviceFileHelper.resolvePlayablePath(path);
+    if (resolved != null && resolved.trim().isNotEmpty) {
       await NativeMediaService.playVoiceNote(
-        path,
+        resolved,
         speed: _playbackSpeed,
         positionMs: (_currentSeconds * 1000).round(),
       );
@@ -91,7 +105,11 @@ class _VoiceNotePlayerWidgetState extends State<VoiceNotePlayerWidget> {
         if (_currentSeconds >= _totalSeconds) {
           _currentSeconds = 0.0;
           _progressTimer?.cancel();
-          NativeMediaService.stopVoiceNote();
+          if (kIsWeb) {
+            DeviceFileHelper.pauseAudioOnWeb();
+          } else {
+            NativeMediaService.stopVoiceNote();
+          }
           widget.onToggleVoicePlay();
         }
       });

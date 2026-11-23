@@ -110,7 +110,7 @@ rules_version = '2';
 //   - creatorCommittee: string (required, 1..300)
 //   - publishTime: string (required, ISO-8601 date string, 19..40)
 //   - type: string (required, immutable, enum: 'simple' | 'poll' | 'media')
-//   - content: string (required, immutable, 1..5000)
+//   - content: string (required, 1..5000)
 //   - mediaPath: string | null (nullable, immutable, if string: 1..1000)
 //   - isVideo: bool (required, immutable)
 //   - videoUrl: string | null (nullable, immutable, if string: http/https URL, 1..1000)
@@ -181,6 +181,20 @@ rules_version = '2';
 //   - sloganOfYear: string (required, 1..200)
 //   - verseOfYear: string (required, 1..1000)
 //   - updatedByUid: string (required, == request.auth.uid)
+//
+// ---------------------------------------------------------------
+// Collection: media_blobs
+// Document ID: {blobId} (matches `data.id`, e.g., "blob_1732380000_0")
+// Fields:
+//   - id: string (required, immutable, 1..128, == blobId)
+//   - blobGroupId: string (required, immutable, 1..100)
+//   - chunkIndex: int (required, immutable, 0..50)
+//   - totalChunks: int (required, immutable, 1..50)
+//   - fileName: string (required, immutable, 1..260)
+//   - mimeType: string (required, immutable, 1..120)
+//   - dataBase64: string (required, immutable, 1..900000)
+//   - createdAt: string (required, immutable, ISO-8601 date string, 19..40)
+//   - updatedByUid: string (required, immutable, == request.auth.uid)
 //
 // ===============================================================
 
@@ -682,6 +696,30 @@ service cloud.firestore {
              hasValidAuditUid(data);
     }
 
+    // Validate chunked media_blobs document (immutable binary chunk).
+    function isValidMediaBlob(data, blobId) {
+      let allowed = [
+        'id', 'blobGroupId', 'chunkIndex', 'totalChunks',
+        'fileName', 'mimeType', 'dataBase64', 'createdAt', 'updatedByUid'
+      ];
+      return hasRequiredFields(allowed) &&
+             hasOnlyAllowedFields(allowed) &&
+             isValidString(data.id, 1, 128) &&
+             data.id == blobId &&
+             isValidString(data.blobGroupId, 1, 100) &&
+             data.chunkIndex is int &&
+             data.chunkIndex >= 0 &&
+             data.chunkIndex <= 50 &&
+             data.totalChunks is int &&
+             data.totalChunks >= 1 &&
+             data.totalChunks <= 50 &&
+             isValidString(data.fileName, 1, 260) &&
+             isValidString(data.mimeType, 1, 120) &&
+             isValidString(data.dataBase64, 1, 900000) &&
+             isValidDateString(data.createdAt) &&
+             hasValidAuditUid(data);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -739,7 +777,7 @@ service cloud.firestore {
       allow update: if isAuthenticated() &&
                        isValidPost(request.resource.data, postId) &&
                        areImmutableFieldsUnchanged([
-                         'id', 'creatorId', 'type', 'content', 'mediaPath',
+                         'id', 'creatorId', 'type', 'mediaPath',
                          'isVideo', 'videoUrl', 'allowMultiplePollChoices'
                        ]);
       allow delete: if isAuthenticated();
@@ -776,6 +814,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create, update: if isAuthenticated() && isValidBranding(request.resource.data);
       allow delete: if false;
+    }
+
+    match /media_blobs/{blobId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidMediaBlob(request.resource.data, blobId);
+      allow update: if false;
+      allow delete: if isAuthenticated();
     }
 
     // Default deny all other collections, subcollections, and documents.

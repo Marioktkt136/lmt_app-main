@@ -49,6 +49,7 @@ class LmtCubit extends LmtBaseCubit
         KhelwaCubitMixin {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<List<AppNotificationModel>>? _notificationsSubscription;
+  StreamSubscription<LmtRepositorySnapshot>? _liveSyncSubscription;
 
   LmtCubit({LmtRepository? repository})
       : super(repository: repository ?? const LmtLocalRepositoryImpl()) {
@@ -116,6 +117,7 @@ class LmtCubit extends LmtBaseCubit
     knownNotificationIds.addAll(snapshot.notifications.map((n) => n.id));
     _startConnectivityListener();
     _startNotificationsListener();
+    _startLiveSyncListener();
     scheduleEndOfDayKhelwaSummaryTimer();
     await scheduleAllCalendarNotifications();
     await syncDueCalendarReminders();
@@ -148,6 +150,86 @@ class LmtCubit extends LmtBaseCubit
         );
       });
     } catch (_) {}
+  }
+
+  void _startLiveSyncListener() {
+    _liveSyncSubscription?.cancel();
+    try {
+      _liveSyncSubscription = repository.watchLiveSnapshots().listen(
+        _onRemoteLiveSnapshot,
+        onError: (_) {},
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _onRemoteLiveSnapshot(LmtRepositorySnapshot remote) async {
+    if (isClosed || !state.isInitialized || state.isSyncing) return;
+
+    final currentUserId = state.currentUser.id;
+    var hasNewIncomingAlert = false;
+
+    for (final n in remote.notifications) {
+      final isBrandNew = knownNotificationIds.add(n.id) &&
+          !state.notifications.any((existing) => existing.id == n.id);
+      if (isBrandNew && !n.isRead && n.isVisibleTo(currentUserId)) {
+        hasNewIncomingAlert = true;
+        LocalNotificationService.showInstantNotification(
+          idKey: n.id,
+          title: n.title,
+          body: n.description,
+          tone: LmtNotificationTone.fromString(n.tone),
+          payloadData: {
+            'notifId': n.id,
+            'tab': ?n.targetTabIndex,
+            'groupId': ?n.targetGroupId,
+            'eventId': ?n.targetEventId,
+            'route': ?n.targetRoute,
+          },
+        );
+      }
+    }
+
+    final updatedCurrent = remote.members
+            .where((m) => m.id == state.currentUser.id)
+            .firstOrNull ??
+        state.currentUser;
+
+    final prevEventsKey = state.calendarEvents
+        .map((e) =>
+            '${e.id}|${e.eventDateTime.toIso8601String()}|${e.reminderDateTime?.toIso8601String()}|${e.isReminderActive}')
+        .join(',');
+    final nextEventsKey = remote.calendarEvents
+        .map((e) =>
+            '${e.id}|${e.eventDateTime.toIso8601String()}|${e.reminderDateTime?.toIso8601String()}|${e.isReminderActive}')
+        .join(',');
+    final eventsChanged = prevEventsKey != nextEventsKey;
+
+    final nextNotifications =
+        (isSuppressingRemoteNotifSync && !hasNewIncomingAlert)
+            ? state.notifications
+            : remote.notifications;
+
+    emit(
+      state.copyWith(
+        lastSyncedAt: DateTime.now(),
+        sloganOfYear: remote.sloganOfYear,
+        verseOfYear: remote.verseOfYear,
+        currentUser: updatedCurrent,
+        members: remote.members.isNotEmpty ? remote.members : state.members,
+        chatGroups:
+            remote.chatGroups.isNotEmpty ? remote.chatGroups : state.chatGroups,
+        chatMessages: remote.chatMessages,
+        posts: remote.posts,
+        sharedFiles: remote.sharedFiles,
+        calendarEvents: remote.calendarEvents,
+        notifications: nextNotifications,
+      ),
+    );
+
+    if (eventsChanged) {
+      await scheduleAllCalendarNotifications();
+      await syncDueCalendarReminders();
+    }
   }
 
   void _startNotificationsListener() {
@@ -211,6 +293,7 @@ class LmtCubit extends LmtBaseCubit
     cancelTypingWatchers();
     _connectivitySubscription?.cancel();
     _notificationsSubscription?.cancel();
+    _liveSyncSubscription?.cancel();
     return super.close();
   }
 }
