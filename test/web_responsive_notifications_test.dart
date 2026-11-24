@@ -15,6 +15,9 @@ import 'package:lmt/features/calendar/cubit/calendar_cubit.dart';
 import 'package:lmt/features/calendar/views/calendar_screen.dart';
 import 'package:lmt/features/chatting_room/cubit/chat_cubit.dart';
 import 'package:lmt/features/chatting_room/views/chatting_room.dart';
+import 'package:lmt/features/chatting_room/widgets/chat_group_tile.dart';
+import 'package:lmt/features/chatting_room/widgets/conversation_header_bar.dart';
+import 'package:lmt/features/chatting_room/widgets/group_conversation_room.dart';
 import 'package:lmt/features/layout/cubit/layout_cubit.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -71,11 +74,15 @@ class _StreamableRepo implements LmtRepository {
     );
   }
 
+  final List<Map<String, dynamic>> persistedSnapshots = [];
+
   @override
   Future<void> persistSnapshot({
     required Map<String, dynamic> stateJson,
     required String currentUserId,
-  }) async {}
+  }) async {
+    persistedSnapshots.add(Map<String, dynamic>.from(stateJson));
+  }
 
   @override
   Future<void> clearCachedState() async {}
@@ -98,6 +105,16 @@ class _StreamableRepo implements LmtRepository {
   @override
   Stream<LmtRepositorySnapshot> watchLiveSnapshots() =>
       liveSnapshotController.stream;
+
+  @override
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {}
+
+  @override
+  Future<void> resetKhelwaDay({required String dateKey}) async {}
 
   Future<void> dispose() async {
     await notifController.close();
@@ -505,6 +522,279 @@ void main() {
       expect(
         DeviceFileHelper.imageProviderFor(cloudImage),
         isA<CloudBlobImageProvider>(),
+      );
+    });
+
+    test('alertUnseenNotificationsForCurrentUser persists per-user alerts and ignores stale history',
+        () async {
+      final repo = _StreamableRepo();
+      final cubit = LmtCubit(repository: repo);
+      while (!cubit.state.isInitialized) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      final events = <ForegroundNotificationEvent>[];
+      final sub = LocalNotificationService.foregroundStream.listen(events.add);
+
+      final freshUnread = AppNotificationModel(
+        id: 'notif_fresh_1',
+        title: 'رسالة جديدة',
+        description: 'مينا أرسل رسالة جديدة',
+        dateTime: DateTime.now(),
+        category: NotificationCategory.chat,
+        tone: LmtNotificationTone.chatMessage.name,
+      );
+      final staleUnread = AppNotificationModel(
+        id: 'notif_stale_old',
+        title: 'قديم',
+        description: 'أكثر من 24 ساعة',
+        dateTime: DateTime.now().subtract(const Duration(days: 2)),
+        category: NotificationCategory.posts,
+      );
+      final alreadyRead = AppNotificationModel(
+        id: 'notif_read_1',
+        title: 'مقروء',
+        description: 'تمت قراءته',
+        dateTime: DateTime.now(),
+        category: NotificationCategory.posts,
+        isRead: true,
+      );
+
+      final firedFirst = cubit.alertUnseenNotificationsForCurrentUser([
+        freshUnread,
+        staleUnread,
+        alreadyRead,
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(firedFirst, isTrue);
+      expect(events, hasLength(1));
+      expect(events.single.idKey, 'notif_fresh_1');
+
+      // Re-evaluating same list for same user does NOT double-fire.
+      final firedSecond = cubit.alertUnseenNotificationsForCurrentUser([
+        freshUnread,
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(firedSecond, isFalse);
+      expect(events, hasLength(1));
+
+      // Verify Android keep.xml & iOS PWA L.M.T apple-touch-icon exist on disk.
+      expect(
+        File('android/app/src/main/res/raw/keep.xml').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('web/icons/apple-touch-icon.png').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('web/index.html').readAsStringSync(),
+        contains('apple-touch-icon.png?v=3'),
+      );
+      expect(UserRole.member.canCreatePosts, isTrue);
+
+      await sub.cancel();
+      await cubit.close();
+      await repo.dispose();
+    });
+
+    test('createPost(poll) preserves poll post and options cleanly across live snapshot emissions', () async {
+      final repo = _StreamableRepo();
+      final cubit = LmtCubit(repository: repo);
+      while (!cubit.state.isInitialized) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      await cubit.createPost(
+        type: PostCategoryType.poll,
+        content: 'أفضل موعد للبروفة القادمة؟',
+        pollOptionsText: const ['الجمعة مساءً', 'السبت عصراً', 'الأحد مساءً'],
+      );
+
+      expect(cubit.state.posts, hasLength(1));
+      final createdPoll = cubit.state.posts.single;
+      expect(createdPoll.type, PostCategoryType.poll);
+      expect(createdPoll.pollOptions, hasLength(3));
+      expect(
+        createdPoll.pollOptions.map((o) => o.text),
+        ['الجمعة مساءً', 'السبت عصراً', 'الأحد مساءً'],
+      );
+      expect(repo.persistedSnapshots, isNotEmpty);
+      final persistedPosts =
+          repo.persistedSnapshots.last['posts'] as List<dynamic>;
+      expect(persistedPosts, hasLength(1));
+
+      // Verify a subsequent synced live snapshot carrying the persisted post preserves it intact.
+      repo.liveSnapshotController.add(
+        LmtRepositorySnapshot(
+          biometricEnabled: true,
+          sloganOfYear: cubit.state.sloganOfYear,
+          verseOfYear: cubit.state.verseOfYear,
+          currentUser: cubit.state.currentUser,
+          members: cubit.state.members,
+          chatGroups: cubit.state.chatGroups,
+          chatMessages: cubit.state.chatMessages,
+          posts: cubit.state.posts,
+          sharedFiles: cubit.state.sharedFiles,
+          calendarEvents: cubit.state.calendarEvents,
+          notifications: cubit.state.notifications,
+          khelwaDays: cubit.state.khelwaDays,
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(cubit.state.posts, hasLength(1));
+      expect(cubit.state.posts.single.type, PostCategoryType.poll);
+
+      await cubit.close();
+      await repo.dispose();
+    });
+
+    testWidgets('ChatGroupTile & ConversationHeaderBar hide creator/admin name and render WhatsApp unread badge', (tester) async {
+      tester.view.physicalSize = const Size(375, 812);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final grp = ChatGroupModel(
+        id: 'grp_ui_test',
+        name: 'فريق العرض',
+        description: 'مجموعة العمل',
+        imagePath: AppAssets.actIcon,
+        memberIds: const ['LMT-2026-001', 'LMT-2026-002'],
+        groupAdminIds: const ['LMT-2026-001'],
+        adminId: 'LMT-2026-001',
+        adminName: 'SecretCreatorName',
+        isPinned: true,
+        createdAt: DateTime(2026, 11, 20),
+      );
+      final lastMsg = ChatMessageModel(
+        id: 'msg_ui_1',
+        groupId: 'grp_ui_test',
+        senderId: 'LMT-2026-002',
+        senderName: 'Mina Adel',
+        senderRole: UserRole.editor,
+        type: MessageType.text,
+        content: 'ميعادنا الساعة 7',
+        sentAt: DateTime.now(),
+        seenBy: const [],
+      );
+      final cubit = _DesktopFakeCubit();
+      addTearDown(cubit.close);
+
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(375, 812),
+          builder: (_, _) => BlocProvider<LmtCubit>.value(
+            value: cubit,
+            child: MaterialApp(
+              locale: const Locale('en'),
+              home: Scaffold(
+                appBar: ConversationHeaderBar(
+                  group: grp,
+                  state: cubit.state,
+                  onBack: () {},
+                ),
+                body: ChatGroupTile(
+                  group: grp,
+                  lastMessage: lastMsg,
+                  unreadCount: 4,
+                  currentUserId: _admin.id,
+                  canEditGroups: true,
+                  canDeleteGroups: true,
+                  onTap: () {},
+                  onTogglePin: () {},
+                  onEdit: () {},
+                  onLeave: () {},
+                  onDelete: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('فريق العرض'), findsNWidgets(2));
+      expect(find.text('2 members'), findsOneWidget);
+      expect(find.text('4'), findsOneWidget);
+      // Admin/Creator name & old verbose metadata row MUST NOT appear anywhere.
+      expect(find.textContaining('SecretCreatorName'), findsNothing);
+      expect(find.textContaining('Admin:'), findsNothing);
+      expect(find.textContaining('مسؤول'), findsNothing);
+    });
+
+    testWidgets('GroupConversationRoom stops at first unread banner and shows scroll-to-bottom FAB', (tester) async {
+      tester.view.physicalSize = const Size(375, 520);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final cubit = _DesktopFakeCubit();
+      addTearDown(cubit.close);
+
+      final base = DateTime(2026, 11, 24, 0, 0);
+      final manyMessages = <ChatMessageModel>[];
+      for (var i = 0; i < 24; i++) {
+        final isUnread = i >= 10;
+        manyMessages.add(
+          ChatMessageModel(
+            id: 'm_$i',
+            groupId: _group.id,
+            senderId: _editor.id,
+            senderName: _editor.name,
+            senderRole: _editor.role,
+            type: MessageType.text,
+            content: 'Message number $i for testing scrolling height comfortably',
+            sentAt: base.add(Duration(minutes: i)),
+            seenBy: isUnread
+                ? const []
+                : [
+                    SeenStatusModel(
+                      memberId: _admin.id,
+                      memberName: _admin.name,
+                      avatarPath: _admin.avatarPath,
+                      timestamp: base.add(Duration(minutes: i)),
+                    ),
+                  ],
+          ),
+        );
+      }
+
+      cubit.emit(cubit.state.copyWith(chatMessages: manyMessages));
+
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(375, 520),
+          minTextAdapt: true,
+          builder: (_, _) => BlocProvider<LmtCubit>.value(
+            value: cubit,
+            child: MaterialApp(
+              locale: const Locale('en'),
+              home: Scaffold(
+                body: GroupConversationRoom(
+                  group: _group,
+                  onBack: () {},
+                  showInlineHeader: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Unread stop banner (14 unread messages) is shown cleanly at initial stop.
+      expect(find.text('14 unread messages'), findsOneWidget);
+      // Since viewport jumped up past the bottom threshold, the floating button is visible.
+      expect(
+        find.byIcon(Icons.keyboard_double_arrow_down_rounded),
+        findsOneWidget,
+      );
+
+      // Tapping the floating button scrolls cleanly back down to the bottom and hides it.
+      await tester.tap(find.byIcon(Icons.keyboard_double_arrow_down_rounded));
+      await tester.pumpAndSettle();
+      expect(
+        find.byIcon(Icons.keyboard_double_arrow_down_rounded),
+        findsNothing,
       );
     });
   });

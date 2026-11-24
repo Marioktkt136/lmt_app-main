@@ -68,7 +68,6 @@ class _ChatMediaViewerPageState extends State<ChatMediaViewerPage> {
     if (path.isEmpty) return;
 
     setState(() => _isDownloading = true);
-    final messenger = ScaffoldMessenger.of(context);
     try {
       final rawName = path.split('/').last.split('\\').last;
       final ext = rawName.contains('.')
@@ -91,27 +90,57 @@ class _ChatMediaViewerPageState extends State<ChatMediaViewerPage> {
         openAfterSave: false,
       );
 
-      messenger.showSnackBar(
-        SnackBar(
+      if (!context.mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                Icons.check_circle_outline_rounded,
+                color: AppColors.accentGreen,
+              ),
+              const SizedBox(width: 8),
+              Text(isArabic ? 'تم التنزيل' : 'Downloaded'),
+            ],
+          ),
           content: Text(
             isArabic
                 ? 'تم تنزيل الملف بنجاح ✅\n$savedPath'
                 : 'Downloaded successfully ✅\n$savedPath',
           ),
-          backgroundColor: AppColors.accentGreen,
-          behavior: SnackBarBehavior.floating,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: Text(isArabic ? 'حسناً' : 'OK'),
+            ),
+          ],
         ),
       );
     } catch (_) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            isArabic ? 'تعذر تنزيل الملف' : 'Failed to download media',
+      if (context.mounted) {
+        showDialog<void>(
+          context: context,
+          builder: (dialogCtx) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: AppColors.error),
+                const SizedBox(width: 8),
+                Text(isArabic ? 'خطأ' : 'Error'),
+              ],
+            ),
+            content: Text(
+              isArabic ? 'تعذر تنزيل الملف' : 'Failed to download media',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogCtx),
+                child: Text(isArabic ? 'حسناً' : 'OK'),
+              ),
+            ],
           ),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isDownloading = false);
@@ -126,14 +155,27 @@ class _ChatMediaViewerPageState extends State<ChatMediaViewerPage> {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final error = await DeviceFileHelper.openPath(path);
     if (error != null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+      showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.error_outline_rounded, color: AppColors.error),
+              const SizedBox(width: 8),
+              Text(isArabic ? 'خطأ' : 'Error'),
+            ],
+          ),
           content: Text(
             isArabic
                 ? 'تعذر فتح مشغل الفيديو: $error'
                 : 'Unable to open video player: $error',
           ),
-          behavior: SnackBarBehavior.floating,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: Text(isArabic ? 'حسناً' : 'OK'),
+            ),
+          ],
         ),
       );
     }

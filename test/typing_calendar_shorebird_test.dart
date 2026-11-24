@@ -10,6 +10,8 @@ import 'package:lmt/core/widgets/shorebird_welcome_dialog.dart';
 import 'package:lmt/features/calendar/cubit/calendar_cubit.dart';
 import 'package:lmt/features/calendar/views/calendar_screen.dart';
 import 'package:lmt/features/calendar/views/full_months_calendar_page.dart';
+import 'package:lmt/features/calendar/widgets/calendar_event_form_sheet.dart';
+import 'package:lmt/features/calendar/widgets/calendar_reminder_bar.dart';
 import 'package:lmt/features/chatting_room/cubit/chat_cubit.dart';
 import 'package:lmt/features/chatting_room/widgets/chat_typing_indicator.dart';
 import 'package:material_ui/material_ui.dart';
@@ -60,6 +62,16 @@ class _InMemoryTestRepo implements LmtRepository {
 
   @override
   Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
+
+  @override
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {}
+
+  @override
+  Future<void> resetKhelwaDay({required String dateKey}) async {}
 }
 
 const _mario = MemberModel(
@@ -376,6 +388,175 @@ void main() {
       expect(find.text('Welcome to the New Update! 🎉'), findsOneWidget);
       expect(find.textContaining('v1.0.0+1 (Patch #2)'), findsOneWidget);
       expect(find.textContaining('23/11/2026'), findsOneWidget);
+    });
+  });
+
+  group('Calendar Quick Locations, Live Default Time & Reminder Controls', () {
+    test('popularCalendarLocations ranks text venues and Maps URLs by frequency and recency', () {
+      final base = DateTime(2026, 11, 20, 18, 0);
+      final events = [
+        CalendarEventModel(
+          id: 'e1',
+          title: 'Show 1',
+          description: '',
+          eventDateTime: base,
+          createdBy: 'Mario',
+          location: 'بيت الخلوة - وادي النطرون',
+        ),
+        CalendarEventModel(
+          id: 'e2',
+          title: 'Rehearsal 1',
+          description: '',
+          eventDateTime: base.add(const Duration(days: 1)),
+          createdBy: 'Mario',
+          location: 'قاعة المسرح الرئيسية',
+        ),
+        CalendarEventModel(
+          id: 'e3',
+          title: 'Rehearsal 2',
+          description: '',
+          eventDateTime: base.add(const Duration(days: 2)),
+          createdBy: 'Mina',
+          location: '  قاعة المسرح الرئيسية ',
+        ),
+        CalendarEventModel(
+          id: 'e4',
+          title: 'Location Pin 1',
+          description: '',
+          eventDateTime: base.add(const Duration(days: 3)),
+          createdBy: 'Mina',
+          location: 'https://maps.google.com/?q=30.0444,31.2357',
+        ),
+        CalendarEventModel(
+          id: 'e5',
+          title: 'Location Pin 2',
+          description: '',
+          eventDateTime: base.add(const Duration(days: 5)),
+          createdBy: 'Mario',
+          location: 'https://maps.google.com/?q=30.0444,31.2357',
+        ),
+        CalendarEventModel(
+          id: 'e6',
+          title: 'Rehearsal 3',
+          description: '',
+          eventDateTime: base.add(const Duration(days: 4)),
+          createdBy: 'Mario',
+          location: 'قاعة المسرح الرئيسية',
+        ),
+        CalendarEventModel(
+          id: 'e7',
+          title: 'Empty loc',
+          description: '',
+          eventDateTime: base.add(const Duration(days: 6)),
+          createdBy: 'Mario',
+          location: '   ',
+        ),
+      ];
+
+      final ranked = popularCalendarLocations(events);
+      expect(ranked, hasLength(3));
+      expect(ranked[0].location, 'قاعة المسرح الرئيسية');
+      expect(ranked[0].count, 3);
+      expect(ranked[1].location, 'https://maps.google.com/?q=30.0444,31.2357');
+      expect(ranked[1].count, 2);
+      expect(ranked[2].location, 'بيت الخلوة - وادي النطرون');
+      expect(ranked[2].count, 1);
+    });
+
+    testWidgets('CalendarReminderBar hides controls from Member and shows them to Admin and Editor', (tester) async {
+      final cubit = _FakeTestCubit();
+      addTearDown(cubit.close);
+
+      final evt = CalendarEventModel(
+        id: 'evt_rem_1',
+        title: 'Reminder Test',
+        description: 'Testing reminder permissions',
+        eventDateTime: DateTime(2026, 12, 1, 19, 0),
+        reminderDateTime: DateTime(2026, 12, 1, 17, 0),
+        isReminderActive: true,
+        createdBy: _mario.name,
+      );
+
+      Widget buildBar() => BlocProvider<LmtCubit>.value(
+            value: cubit,
+            child: ScreenUtilInit(
+              designSize: const Size(375, 812),
+              minTextAdapt: true,
+              builder: (_, _) => MaterialApp(
+                locale: const Locale('en'),
+                home: Scaffold(
+                  body: CalendarReminderBar(
+                    evt: evt,
+                    accentGreen: Colors.green,
+                  ),
+                ),
+              ),
+            ),
+          );
+
+      // Member: read-only status only, NO Switch and NO 'Set Time' button.
+      cubit.switchUser(_marina);
+      await tester.pumpWidget(buildBar());
+      await tester.pumpAndSettle();
+      expect(find.byType(Switch), findsNothing);
+      expect(find.text('Set Time'), findsNothing);
+
+      // Editor: Switch & 'Set Time' visible.
+      cubit.switchUser(_mina);
+      await tester.pumpWidget(buildBar());
+      await tester.pumpAndSettle();
+      expect(find.byType(Switch), findsOneWidget);
+      expect(find.text('Set Time'), findsOneWidget);
+
+      // Admin: Switch & 'Set Time' visible.
+      cubit.switchUser(_mario);
+      await tester.pumpWidget(buildBar());
+      await tester.pumpAndSettle();
+      expect(find.byType(Switch), findsOneWidget);
+      expect(find.text('Set Time'), findsOneWidget);
+    });
+
+    testWidgets('showAddOrEditEventSheet defaults Event Date & Time to current DateTime.now()', (tester) async {
+      final cubit = _FakeTestCubit();
+      addTearDown(cubit.close);
+      final navKey = GlobalKey<NavigatorState>();
+      final now = DateTime.now();
+      final twoDaysLater = now.add(const Duration(days: 2));
+      String fmtDay(DateTime d) =>
+          '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+      await tester.pumpWidget(
+        BlocProvider<LmtCubit>.value(
+          value: cubit,
+          child: ScreenUtilInit(
+            designSize: const Size(375, 812),
+            minTextAdapt: true,
+            builder: (_, _) => MaterialApp(
+              navigatorKey: navKey,
+              locale: const Locale('en'),
+              home: Scaffold(
+                body: Builder(
+                  builder: (ctx) => ElevatedButton(
+                    onPressed: () => showAddOrEditEventSheet(ctx),
+                    child: const Text('Open Form'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Form'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining(fmtDay(now)), findsAtLeastNWidgets(1));
+      expect(find.textContaining(fmtDay(twoDaysLater)), findsNothing);
+
+      // Close modal cleanly so its live clock timer cancels before teardown.
+      navKey.currentState!.pop();
+      await tester.pumpAndSettle();
     });
   });
 }

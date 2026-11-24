@@ -30,8 +30,15 @@ class GroupConversationPage extends StatelessWidget {
       builder: (context, state) {
         final group =
             state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+        final isStillMember = group != null &&
+            group.memberIds.contains(state.currentUser.id);
 
-        if (group == null) {
+        if (!isStillMember) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted && Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          });
           return Scaffold(
             backgroundColor: AppColors.backgroundOf(context),
             appBar: AppBar(

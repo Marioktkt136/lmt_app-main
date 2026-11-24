@@ -2,20 +2,25 @@
 class WebNotificationBridge {
   WebNotificationBridge._();
 
+  static void init([Iterable<String> toneAssetPaths = const []]) {}
+
+  static Future<void> unlockFromUserGesture() async {}
+
   static bool get isSupported => false;
 
   static String get permissionStatus => 'unsupported';
 
   static Future<String> requestPermission() async => 'unsupported';
 
-  static Future<void> playToneAsset(String assetPath) async {}
+  static Future<bool> playToneAsset(String assetPath) async => false;
 
-  static Future<void> showNotification({
+  static Future<bool> showNotification({
     required String idKey,
     required String title,
     required String body,
     required String toneAssetPath,
     String? payload,
     void Function(String? payload)? onTap,
-  }) async {}
+  }) async =>
+      false;
 }

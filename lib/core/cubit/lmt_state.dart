@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -5,6 +7,7 @@ import '../data/lmt_seed_data.dart';
 import '../models/lmt_models.dart';
 import '../repositories/lmt_repository.dart';
 import '../services/local_notification_service.dart';
+import '../utils/app_preferences.dart';
 
 /// Immutable Application State for L.M.T (Clean Architecture + Feature Cubits).
 class LmtState extends Equatable {
@@ -27,6 +30,7 @@ class LmtState extends Equatable {
   final List<SharedFileModel> sharedFiles;
   final List<CalendarEventModel> calendarEvents;
   final List<AppNotificationModel> notifications;
+  final List<KhelwaDayModel> khelwaDays;
   final Map<String, List<TypingMemberStatus>> typingByGroup;
 
   const LmtState({
@@ -48,6 +52,7 @@ class LmtState extends Equatable {
     required this.sharedFiles,
     required this.calendarEvents,
     required this.notifications,
+    this.khelwaDays = const [],
     this.typingByGroup = const {},
   });
 
@@ -100,6 +105,35 @@ class LmtState extends Equatable {
     return list.isEmpty ? null : list.last;
   }
 
+  /// Counts incoming messages inside [groupId] not yet seen by [currentUser].
+  int unreadMessagesCountForGroup(String groupId) {
+    final uid = currentUser.id;
+    final group = chatGroups.where((g) => g.id == groupId).firstOrNull;
+    if (group == null || !group.memberIds.contains(uid)) return 0;
+    var count = 0;
+    for (final msg in chatMessages) {
+      if (msg.groupId != groupId) continue;
+      if (msg.senderId == uid) continue;
+      if (!msg.seenBy.any((s) => s.memberId == uid)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// Returns the ID of the oldest incoming message in [groupId] not yet seen by
+  /// [currentUser], or `null` when all messages are already seen.
+  String? firstUnreadMessageIdForGroup(String groupId) {
+    final uid = currentUser.id;
+    for (final msg in messagesForGroup(groupId)) {
+      if (msg.senderId == uid) continue;
+      if (!msg.seenBy.any((s) => s.memberId == uid)) {
+        return msg.id;
+      }
+    }
+    return null;
+  }
+
   LmtState copyWith({
     bool? isInitialized,
     bool? isOnline,
@@ -121,6 +155,7 @@ class LmtState extends Equatable {
     List<SharedFileModel>? sharedFiles,
     List<CalendarEventModel>? calendarEvents,
     List<AppNotificationModel>? notifications,
+    List<KhelwaDayModel>? khelwaDays,
     Map<String, List<TypingMemberStatus>>? typingByGroup,
   }) {
     return LmtState(
@@ -146,6 +181,7 @@ class LmtState extends Equatable {
       sharedFiles: sharedFiles ?? this.sharedFiles,
       calendarEvents: calendarEvents ?? this.calendarEvents,
       notifications: notifications ?? this.notifications,
+      khelwaDays: khelwaDays ?? this.khelwaDays,
       typingByGroup: typingByGroup ?? this.typingByGroup,
     );
   }
@@ -161,6 +197,7 @@ class LmtState extends Equatable {
         'sharedFiles': sharedFiles.map((e) => e.toJson()).toList(),
         'calendarEvents': calendarEvents.map((e) => e.toJson()).toList(),
         'notifications': notifications.map((e) => e.toJson()).toList(),
+        'khelwaDays': khelwaDays.map((e) => e.toJson()).toList(),
       };
 
   @override
@@ -183,6 +220,7 @@ class LmtState extends Equatable {
         sharedFiles,
         calendarEvents,
         notifications,
+        khelwaDays,
         typingByGroup,
       ];
 }
@@ -230,6 +268,71 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     }
   }
 
+  /// Hydrates previously alerted notification IDs for [userId] from disk and
+  /// suppresses ancient (>24h) or already-read history so real unread alerts
+  /// never re-trigger across restarts or user switches.
+  Future<void> seedKnownNotificationsForUser(
+    String userId,
+    List<AppNotificationModel> notifications, {
+    bool markRecentUnreadAsKnown = false,
+  }) async {
+    final persisted = await AppPreferences.getAlertedNotificationIds(userId);
+    for (final id in persisted) {
+      knownNotificationIds.add('$userId::$id');
+    }
+    final now = DateTime.now();
+    for (final n in notifications) {
+      final isOld = now.difference(n.dateTime).abs() > const Duration(hours: 24);
+      if (n.isRead ||
+          !n.isVisibleTo(userId) ||
+          isOld ||
+          markRecentUnreadAsKnown) {
+        knownNotificationIds.add('$userId::${n.id}');
+      }
+    }
+  }
+
+  /// Dispatches OS/Web notifications & custom tones for every unread
+  /// notification visible to `state.currentUser` that has not yet been alerted
+  /// on this device for this user. Returns `true` if at least one fired.
+  bool alertUnseenNotificationsForCurrentUser(
+    List<AppNotificationModel> notifications,
+  ) {
+    final userId = state.currentUser.id;
+    final now = DateTime.now();
+    final newlyAlerted = <String>[];
+
+    for (final n in notifications) {
+      if (n.isRead || !n.isVisibleTo(userId)) continue;
+      if (now.difference(n.dateTime).abs() > const Duration(hours: 24)) {
+        continue;
+      }
+      final key = '$userId::${n.id}';
+      if (!knownNotificationIds.add(key)) continue;
+
+      newlyAlerted.add(n.id);
+      LocalNotificationService.showInstantNotification(
+        idKey: n.id,
+        title: n.title,
+        body: n.description,
+        tone: LmtNotificationTone.fromString(n.tone),
+        payloadData: {
+          'notifId': n.id,
+          'tab': ?n.targetTabIndex,
+          'groupId': ?n.targetGroupId,
+          'eventId': ?n.targetEventId,
+          'route': ?n.targetRoute,
+        },
+      );
+    }
+
+    if (newlyAlerted.isNotEmpty) {
+      unawaited(AppPreferences.addAlertedNotificationIds(userId, newlyAlerted));
+      return true;
+    }
+    return false;
+  }
+
   /// Dispatches an in-app and OS-level notification with category-matched or
   /// explicit custom [tone] (`Chat_Message_Tone`, `Post_Interactions`,
   /// `Message_Reacts`, `Calendar_Notifications`, `Normal_Notifications`) and
@@ -250,7 +353,9 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
   }) {
     final resolvedId = id ??
         'notif_${DateTime.now().microsecondsSinceEpoch}_${++_notificationSeq}';
-    knownNotificationIds.add(resolvedId);
+    final userId = state.currentUser.id;
+    knownNotificationIds.add('$userId::$resolvedId');
+    unawaited(AppPreferences.addAlertedNotificationIds(userId, [resolvedId]));
     if (state.notifications.any((n) => n.id == resolvedId)) {
       return;
     }

@@ -10,12 +10,18 @@ import 'package:lmt/core/widgets/expandable_text.dart';
 import 'package:lmt/features/chatting_room/cubit/chat_cubit.dart';
 import 'package:lmt/features/home/widgets/poll_options_editor.dart';
 import 'package:lmt/features/home/widgets/timeline_post_card.dart';
+import 'package:lmt/features/khelwa/cubit/khelwa_cubit.dart';
 import 'package:lmt/features/khelwa/data/khelwa_repository.dart';
 import 'package:lmt/features/profile/cubit/profile_cubit.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _InMemoryLmtRepo implements LmtRepository {
+  final List<({String dateKey, String memberId, String memberName})>
+      recordedKhelwaCheckIns = [];
+  final List<String> resetKhelwaCalls = [];
+  List<KhelwaDayModel> initialKhelwaDays = const [];
+
   @override
   Future<LmtRepositorySnapshot> loadSnapshot() async {
     return LmtRepositorySnapshot(
@@ -30,6 +36,7 @@ class _InMemoryLmtRepo implements LmtRepository {
       sharedFiles: const [],
       calendarEvents: const [],
       notifications: const [],
+      khelwaDays: initialKhelwaDays,
     );
   }
 
@@ -59,6 +66,24 @@ class _InMemoryLmtRepo implements LmtRepository {
 
   @override
   Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
+
+  @override
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {
+    recordedKhelwaCheckIns.add((
+      dateKey: dateKey,
+      memberId: memberId,
+      memberName: memberName,
+    ));
+  }
+
+  @override
+  Future<void> resetKhelwaDay({required String dateKey}) async {
+    resetKhelwaCalls.add(dateKey);
+  }
 }
 
 const _user1 = MemberModel(
@@ -86,16 +111,25 @@ const _user2 = MemberModel(
 );
 
 class _TestFeatureCubit extends LmtBaseCubit
-    with ProfileCubitMixin, ChatCubitMixin {
-  _TestFeatureCubit({List<ChatMessageModel> initialMessages = const []})
-      : super(repository: _InMemoryLmtRepo()) {
+    with ProfileCubitMixin, ChatCubitMixin, KhelwaCubitMixin {
+  _TestFeatureCubit({
+    List<ChatMessageModel> initialMessages = const [],
+    List<KhelwaDayModel> initialKhelwaDays = const [],
+    _InMemoryLmtRepo? repo,
+  }) : super(repository: repo ?? _InMemoryLmtRepo()) {
     emit(
       state.copyWith(
+        isInitialized: true,
         currentUser: _user1,
         members: [_user1, _user2],
         chatMessages: initialMessages,
+        khelwaDays: initialKhelwaDays,
       ),
     );
+  }
+
+  void switchActor(MemberModel user) {
+    emit(state.copyWith(currentUser: user));
   }
 }
 
@@ -386,6 +420,64 @@ void main() {
 
       final renderedWidth = tester.getSize(find.byKey(const Key('inner_box'))).width;
       expect(renderedWidth, 680);
+    });
+  });
+
+  group('Cloud Khelwa Days Persistence & Admin Reset', () {
+    test('records Khelwa check-ins in cloud khelwaDays state, isolates per-user streak, and restricts reset to Admin', () async {
+      final repo = _InMemoryLmtRepo();
+      final threeDaysAgo = DateTime.now().subtract(const Duration(days: 3));
+      final threeDaysAgoKey = KhelwaRepository.todayDateKey(threeDaysAgo);
+      final seededDays = [
+        KhelwaDayModel(
+          id: threeDaysAgoKey,
+          dateKey: threeDaysAgoKey,
+          attendeeIds: const ['LMT-012'],
+          attendeeNames: const ['Samy Farouk'],
+          updatedAt: threeDaysAgo,
+        ),
+      ];
+
+      final cubit = _TestFeatureCubit(
+        repo: repo,
+        initialKhelwaDays: seededDays,
+      );
+
+      // Initially today's Khelwa attendees list is empty; user2 last took Khelwa 3 days ago, user1 defaults to 1.
+      expect(cubit.todayKhelwaAttendees(), isEmpty);
+      expect(cubit.khelwaDaysDifferenceForUser(_user2.id), 3);
+      expect(cubit.khelwaDaysDifferenceForUser(_user1.id), 1);
+
+      // User 1 records Khelwa today -> persisted to repository & added to cloud state.
+      await cubit.recordTodayKhelwa();
+      expect(repo.recordedKhelwaCheckIns, hasLength(1));
+      expect(repo.recordedKhelwaCheckIns.single.memberId, _user1.id);
+      expect(cubit.todayKhelwaAttendees(), ['Mario Naiem']);
+      expect(cubit.khelwaDaysDifferenceForUser(_user1.id), 0);
+      expect(cubit.khelwaDaysDifferenceForUser(_user2.id), 3);
+
+      // User 2 records Khelwa today -> merged cleanly alongside User 1.
+      cubit.switchActor(_user2);
+      await cubit.recordTodayKhelwa();
+      expect(repo.recordedKhelwaCheckIns, hasLength(2));
+      expect(
+        cubit.todayKhelwaAttendees(),
+        containsAll(['Mario Naiem', 'Samy Farouk']),
+      );
+      expect(cubit.khelwaDaysDifferenceForUser(_user2.id), 0);
+
+      // Non-admin (Editor _user2) CANNOT reset today's Khelwa day.
+      await cubit.resetTodayKhelwa();
+      expect(repo.resetKhelwaCalls, isEmpty);
+      expect(cubit.todayKhelwaAttendees(), hasLength(2));
+
+      // Admin (_user1) CAN reset today's Khelwa day.
+      cubit.switchActor(_user1);
+      await cubit.resetTodayKhelwa();
+      expect(repo.resetKhelwaCalls, hasLength(1));
+      expect(cubit.todayKhelwaAttendees(), isEmpty);
+
+      await cubit.close();
     });
   });
 }

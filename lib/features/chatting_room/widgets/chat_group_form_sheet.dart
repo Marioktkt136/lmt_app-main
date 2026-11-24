@@ -32,6 +32,9 @@ void showChatGroupFormSheet(
   final selectedMembers = Set<String>.from(
     existingGroup?.memberIds ?? <String>{creatorId},
   )..add(creatorId);
+  final selectedGroupAdmins = Set<String>.from(
+    existingGroup?.effectiveAdminIds ?? <String>{creatorId},
+  );
 
   showModalBottomSheet<void>(
     context: context,
@@ -42,6 +45,7 @@ void showChatGroupFormSheet(
     ),
     builder: (ctx) {
       String memberQuery = '';
+      String? validationError;
       return StatefulBuilder(
         builder: (ctx, setModalState) {
           final primary = AppColors.primaryOf(ctx);
@@ -63,9 +67,12 @@ void showChatGroupFormSheet(
             }
           }
 
-          final otherMembers =
-              state.members.where((m) => m.id != creatorId).toList();
-          final filteredOtherMembers = otherMembers.where((m) {
+          final availableMembers = state.members
+              .where(
+                (m) => existingGroup != null || m.id != creatorId,
+              )
+              .toList();
+          final filteredMembers = availableMembers.where((m) {
             if (memberQuery.trim().isEmpty) return true;
             final q = memberQuery.trim().toLowerCase();
             return m.name.toLowerCase().contains(q) ||
@@ -74,9 +81,9 @@ void showChatGroupFormSheet(
                 m.committee.toLowerCase().contains(q);
           }).toList();
 
-          final creatorMember =
-              state.members.where((m) => m.id == creatorId).firstOrNull ??
-                  state.currentUser;
+          final adminEligibleMembers = state.members
+              .where((m) => selectedMembers.contains(m.id))
+              .toList();
 
           return Padding(
             padding: EdgeInsets.only(
@@ -200,43 +207,6 @@ void showChatGroupFormSheet(
                   ),
                   SizedBox(height: 6.h),
 
-                  // Creator (Automatically included — no manual selection needed)
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 10.w,
-                      vertical: 8.h,
-                    ),
-                    decoration: BoxDecoration(
-                      color: accentGreen.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12.r),
-                      border: Border.all(
-                        color: accentGreen.withValues(alpha: 0.35),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.check_circle_rounded,
-                          size: 16.sp,
-                          color: accentGreen,
-                        ),
-                        SizedBox(width: 6.w),
-                        Expanded(
-                          child: Text(
-                            '${creatorMember.name} (${creatorMember.role.badgeEmoji}) — ${isArabic ? 'منشئ المجموعة (مضاف تلقائياً)' : 'Group Creator (Included automatically)'}',
-                            style: TextStyle(
-                              fontSize: 11.5.sp,
-                              fontWeight: FontWeight.w600,
-                              color: textPrimary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 8.h),
-
                   // Member Search Bar
                   TextField(
                     controller: searchMembersCtrl,
@@ -260,7 +230,7 @@ void showChatGroupFormSheet(
                   ),
                   SizedBox(height: 8.h),
 
-                  if (filteredOtherMembers.isEmpty)
+                  if (filteredMembers.isEmpty)
                     Padding(
                       padding: EdgeInsets.symmetric(vertical: 8.h),
                       child: Text(
@@ -274,7 +244,7 @@ void showChatGroupFormSheet(
                     Wrap(
                       spacing: 6.w,
                       runSpacing: 6.h,
-                      children: filteredOtherMembers.map((m) {
+                      children: filteredMembers.map((m) {
                         final isSelected = selectedMembers.contains(m.id);
                         return FilterChip(
                           selected: isSelected,
@@ -283,7 +253,13 @@ void showChatGroupFormSheet(
                               if (val) {
                                 selectedMembers.add(m.id);
                               } else {
+                                if (existingGroup == null &&
+                                    m.id == creatorId) {
+                                  return;
+                                }
+                                if (selectedMembers.length <= 1) return;
                                 selectedMembers.remove(m.id);
+                                selectedGroupAdmins.remove(m.id);
                               }
                             });
                           },
@@ -291,16 +267,92 @@ void showChatGroupFormSheet(
                         );
                       }).toList(),
                     ),
+                  if (adminEligibleMembers.isNotEmpty) ...[
+                    SizedBox(height: 14.h),
+                    Text(
+                      isArabic
+                          ? 'مسؤولو المجموعة (صلاحية التعديل وإضافة الأعضاء):'
+                          : 'Group Admins (can edit info, image & add members):',
+                      style: AppTypography.labelLarge.copyWith(
+                        color: textPrimary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(height: 6.h),
+                    Wrap(
+                      spacing: 6.w,
+                      runSpacing: 6.h,
+                      children: adminEligibleMembers.map((m) {
+                        final isGroupAdmin = selectedGroupAdmins.contains(m.id);
+                        return FilterChip(
+                          selectedColor: accentGreen.withValues(alpha: 0.2),
+                          checkmarkColor: accentGreen,
+                          selected: isGroupAdmin,
+                          onSelected: (val) {
+                            setModalState(() {
+                              if (val) {
+                                selectedGroupAdmins.add(m.id);
+                              } else {
+                                if (selectedGroupAdmins.length <= 1) {
+                                  validationError = isArabic
+                                      ? 'يجب وجود مسؤول واحد على الأقل للمجموعة'
+                                      : 'Group must keep at least one admin';
+                                  return;
+                                }
+                                selectedGroupAdmins.remove(m.id);
+                              }
+                              validationError = null;
+                            });
+                          },
+                          label: Text(m.name),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                  if (validationError != null) ...[
+                    SizedBox(height: 10.h),
+                    Text(
+                      validationError!,
+                      style: TextStyle(
+                        color: AppColors.error,
+                        fontSize: 12.sp,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                   SizedBox(height: 18.h),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        if (nameCtrl.text.trim().isEmpty) return;
+                        if (nameCtrl.text.trim().isEmpty) {
+                          setModalState(
+                            () => validationError = isArabic
+                                ? 'يرجى إدخال اسم المجموعة'
+                                : 'Please enter a group name',
+                          );
+                          return;
+                        }
                         final finalMemberIds = <String>{
-                          creatorId,
+                          if (existingGroup == null) creatorId,
                           ...selectedMembers,
                         }.toList();
+                        final finalAdmins = <String>{
+                          ...selectedGroupAdmins.where(finalMemberIds.contains),
+                        };
+                        if (finalAdmins.isEmpty && finalMemberIds.isNotEmpty) {
+                          finalAdmins.add(finalMemberIds.first);
+                        }
+                        final nextPrimaryAdminId =
+                            finalAdmins.contains(creatorId)
+                                ? creatorId
+                                : finalAdmins.first;
+                        final nextPrimaryAdminName = state.members
+                                .where((m) => m.id == nextPrimaryAdminId)
+                                .map((m) => m.name)
+                                .firstOrNull ??
+                            (existingGroup?.adminName ??
+                                state.currentUser.name);
 
                         if (existingGroup == null) {
                           context.read<LmtCubit>().createChatGroup(
@@ -310,6 +362,7 @@ void showChatGroupFormSheet(
                                     : descCtrl.text,
                                 imagePath: selectedImage,
                                 memberIds: finalMemberIds,
+                                groupAdminIds: finalAdmins.toList(),
                               );
                         } else {
                           context.read<LmtCubit>().updateChatGroup(
@@ -318,6 +371,9 @@ void showChatGroupFormSheet(
                                   description: descCtrl.text.trim(),
                                   imagePath: selectedImage,
                                   memberIds: finalMemberIds,
+                                  groupAdminIds: finalAdmins.toList(),
+                                  adminId: nextPrimaryAdminId,
+                                  adminName: nextPrimaryAdminName,
                                 ),
                               );
                         }

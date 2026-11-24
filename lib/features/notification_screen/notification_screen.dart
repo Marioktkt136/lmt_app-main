@@ -50,22 +50,50 @@ class NotificationScreen extends StatelessWidget {
             ),
             centerTitle: true,
             actions: [
+              IconButton(
+                tooltip: isArabic ? 'تجربة الإشعار والصوت' : 'Test Sound & Alert',
+                onPressed: () async {
+                  final granted = await LocalNotificationService.testToneAndAlert(
+                    tone: LmtNotificationTone.chatMessage,
+                    title: isArabic
+                        ? 'تجربة إشعار L.M.T 🔔'
+                        : 'L.M.T Test Alert 🔔',
+                    body: isArabic
+                        ? 'إذا سمعت النغمة ورأيت الإشعار فالتنبيهات تعمل بنجاح ✅'
+                        : 'If you hear the chime and see this alert, notifications work ✅',
+                  );
+                  if (!granted && context.mounted) {
+                    showDialog<void>(
+                      context: context,
+                      builder: (dialogCtx) => AlertDialog(
+                        title: Text(
+                          isArabic ? 'تنبيه الإشعارات' : 'Notification Alert',
+                        ),
+                        content: Text(
+                          isArabic
+                              ? 'تم تشغيل الصوت — يرجى السماح بالإشعارات من إعدادات الجهاز/المتصفح.'
+                              : 'Sound played — please allow notifications in device/browser settings.',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogCtx),
+                            child: Text(isArabic ? 'حسناً' : 'OK'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(
+                  Icons.volume_up_rounded,
+                  color: Colors.white,
+                ),
+              ),
               if (visibleNotifications.isNotEmpty) ...[
                 IconButton(
                   tooltip: isArabic ? 'قراءة الكل' : 'Mark All Read',
                   onPressed: () {
                     context.read<LmtCubit>().markAllNotificationsRead();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isArabic
-                              ? 'تم تحديد جميع الإشعارات كمقروءة ✅'
-                              : 'All notifications marked as read ✅',
-                        ),
-                        backgroundColor: accentGreen,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
                   },
                   icon: const Icon(
                     Icons.done_all_rounded,
@@ -104,17 +132,6 @@ class NotificationScreen extends StatelessWidget {
                     );
                     if (confirmed == true && context.mounted) {
                       await context.read<LmtCubit>().clearAllNotifications();
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            isArabic
-                                ? 'تم مسح جميع الإشعارات 🧹'
-                                : 'All notifications cleared 🧹',
-                          ),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
                     }
                   },
                   icon: const Icon(
@@ -136,10 +153,7 @@ class NotificationScreen extends StatelessWidget {
           ),
           body: Column(
             children: [
-              if (kIsWeb &&
-                  LocalNotificationService.isWebNotificationsSupported &&
-                  LocalNotificationService.webPermissionStatus != 'granted')
-                _WebNotificationsBanner(isArabic: isArabic),
+              _OsNotificationsBanner(isArabic: isArabic),
               Expanded(
                 child: visibleNotifications.isEmpty
                     ? Center(
@@ -347,43 +361,85 @@ class NotificationScreen extends StatelessWidget {
   }
 }
 
-class _WebNotificationsBanner extends StatefulWidget {
+class _OsNotificationsBanner extends StatefulWidget {
   final bool isArabic;
 
-  const _WebNotificationsBanner({required this.isArabic});
+  const _OsNotificationsBanner({required this.isArabic});
 
   @override
-  State<_WebNotificationsBanner> createState() =>
-      _WebNotificationsBannerState();
+  State<_OsNotificationsBanner> createState() => _OsNotificationsBannerState();
 }
 
-class _WebNotificationsBannerState extends State<_WebNotificationsBanner> {
-  String _status = LocalNotificationService.webPermissionStatus;
+class _OsNotificationsBannerState extends State<_OsNotificationsBanner> {
+  bool _isGranted = true;
+  bool _isWebDenied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStatus();
+  }
+
+  Future<void> _checkStatus() async {
+    if (kIsWeb) {
+      if (!LocalNotificationService.isWebNotificationsSupported) {
+        if (mounted) setState(() => _isGranted = true);
+        return;
+      }
+      final status = LocalNotificationService.webPermissionStatus;
+      if (mounted) {
+        setState(() {
+          _isGranted = status == 'granted';
+          _isWebDenied = status == 'denied';
+        });
+      }
+      return;
+    }
+    final enabled = await LocalNotificationService.areOsNotificationsEnabled();
+    if (mounted) {
+      setState(() => _isGranted = enabled);
+    }
+  }
 
   Future<void> _enable() async {
-    final next = await LocalNotificationService.requestWebPermission();
-    if (!mounted) return;
-    setState(() => _status = next);
-    if (next == 'granted') {
-      await LocalNotificationService.showInstantNotification(
-        idKey: 'web_notif_enabled_${DateTime.now().millisecondsSinceEpoch}',
-        title: widget.isArabic
-            ? 'تم تفعيل إشعارات المتصفح 🔔'
-            : 'Browser Notifications Enabled 🔔',
-        body: widget.isArabic
-            ? 'ستصلك الآن تنبيهات الرسائل والمنشورات والفعاليات بالأصوات المخصصة.'
-            : 'You will now receive real-time alerts with custom chimes.',
+    final granted = await LocalNotificationService.testToneAndAlert(
+      tone: LmtNotificationTone.normal,
+      title: widget.isArabic
+          ? 'تم تفعيل الإشعارات بنجاح 🔔'
+          : 'Notifications Enabled 🔔',
+      body: widget.isArabic
+          ? 'ستصلك الآن تنبيهات الرسائل والمنشورات والفعاليات بالأصوات المخصصة.'
+          : 'You will now receive real-time alerts with custom chimes.',
+    );
+    await _checkStatus();
+    if (!granted && mounted && !kIsWeb) {
+      showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: Text(
+            widget.isArabic ? 'تفعيل الإشعارات' : 'Enable Notifications',
+          ),
+          content: Text(
+            widget.isArabic
+                ? 'يرجى تفعيل إذن الإشعارات للتطبيق من إعدادات الهاتف -> التطبيقات -> L.M.T App.'
+                : 'Please enable app notifications in Phone Settings -> Apps -> L.M.T App.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: Text(widget.isArabic ? 'حسناً' : 'OK'),
+            ),
+          ],
+        ),
       );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_status == 'granted' || _status == 'unsupported') {
-      return const SizedBox.shrink();
-    }
+    if (_isGranted) return const SizedBox.shrink();
     final primary = AppColors.primaryOf(context);
-    final denied = _status == 'denied';
+    final denied = kIsWeb && _isWebDenied;
 
     return AdaptiveContentBox(
       maxWidth: 820,
@@ -408,11 +464,11 @@ class _WebNotificationsBannerState extends State<_WebNotificationsBanner> {
               child: Text(
                 denied
                     ? (widget.isArabic
-                        ? 'إشعارات المتصفح محظورة حالياً — اسمح بالإشعارات من أيقونة القفل بجانب رابط الموقع.'
-                        : 'Browser notifications are blocked — allow them from the address-bar lock icon.')
+                        ? 'إشعارات المتصفح محظورة حالياً — اسمح بالإشعارات من إعدادات الموقع/المتصفح.'
+                        : 'Browser notifications are blocked — allow them from site settings.')
                     : (widget.isArabic
-                        ? 'فعّل إشعارات المتصفح لاستلام التنبيهات الفورية بالصوت المخصص حتى أثناء تصفح تبويبات أخرى.'
-                        : 'Enable browser notifications to get instant alerts with custom sounds across tabs.'),
+                        ? 'إشعارات النظام غير مفعلة — اضغط "تفعيل الآن" لاستلام التنبيهات والأصوات المخصصة.'
+                        : 'System notifications are off — tap Enable to receive real-time alerts & chimes.'),
                 style: TextStyle(
                   fontSize: 11.5.sp,
                   fontWeight: FontWeight.w600,

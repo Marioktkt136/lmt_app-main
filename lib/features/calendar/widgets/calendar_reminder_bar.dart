@@ -8,7 +8,8 @@ import '../cubit/calendar_cubit.dart';
 import '../helpers/calendar_date_time_picker.dart';
 import '../helpers/calendar_date_utils.dart';
 
-/// Reminder status row of an event card: label, "Set Time" and on/off switch.
+/// Reminder status row of an event card: label plus Admin/Editor controls
+/// ("Set Time" and on/off switch). Members view status read-only.
 class CalendarReminderBar extends StatelessWidget {
   /// Event whose reminder is shown.
   final CalendarEventModel evt;
@@ -31,14 +32,14 @@ class CalendarReminderBar extends StatelessWidget {
     );
     if (picked == null) return;
     await cubit.toggleEventReminder(evt.id, customReminderTime: picked);
-    if (!context.mounted) return;
-    showReminderSetSnackBar(context, picked);
   }
 
   @override
   Widget build(BuildContext context) {
     final isArabic = CalendarDateUtils.isArabic(context);
     final textSecondary = AppColors.textSecondaryOf(context);
+    final canManageCalendar =
+        context.watch<LmtCubit>().state.currentUser.role.canManageCalendar;
     final active = evt.isReminderActive;
     final color = active ? accentGreen : textSecondary;
     final label = active && evt.reminderDateTime != null
@@ -47,7 +48,7 @@ class CalendarReminderBar extends StatelessWidget {
         : (isArabic ? 'التذكير غير مفعل لهذا الحدث' : 'Reminder disabled');
 
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 2.h),
+      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: canManageCalendar ? 2.h : 8.h),
       decoration: BoxDecoration(
         color: active
             ? accentGreen.withValues(alpha: 0.1)
@@ -79,23 +80,25 @@ class CalendarReminderBar extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(
-            style: TextButton.styleFrom(minimumSize: Size(48.w, 48.h)),
-            onPressed: () => _pickCustom(context),
-            child: Text(
-              isArabic ? 'ضبط التذكير' : 'Set Time',
-              style: TextStyle(fontSize: 11.sp),
+          if (canManageCalendar) ...[
+            TextButton(
+              style: TextButton.styleFrom(minimumSize: Size(48.w, 48.h)),
+              onPressed: () => _pickCustom(context),
+              child: Text(
+                isArabic ? 'ضبط التذكير' : 'Set Time',
+                style: TextStyle(fontSize: 11.sp),
+              ),
             ),
-          ),
-          Tooltip(
-            message: isArabic ? 'تفعيل/إيقاف التذكير' : 'Toggle reminder',
-            child: Switch(
-              value: active,
-              activeTrackColor: accentGreen,
-              onChanged: (_) =>
-                  context.read<LmtCubit>().toggleEventReminder(evt.id),
+            Tooltip(
+              message: isArabic ? 'تفعيل/إيقاف التذكير' : 'Toggle reminder',
+              child: Switch(
+                value: active,
+                activeTrackColor: accentGreen,
+                onChanged: (_) =>
+                    context.read<LmtCubit>().toggleEventReminder(evt.id),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

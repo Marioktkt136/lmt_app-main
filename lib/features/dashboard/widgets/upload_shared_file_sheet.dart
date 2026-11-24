@@ -250,31 +250,44 @@ void showUploadSharedFileSheet(BuildContext context) {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        if (isFileMode && pickedLocalPath == null) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                isArabic
-                                    ? 'يرجى اختيار ملف من هاتفك أولاً 📱'
-                                    : 'Please pick a file from your device first 📱',
+                        void showValidationAlert(String message) {
+                          showDialog<void>(
+                            context: context,
+                            builder: (dialogCtx) => AlertDialog(
+                              title: Row(
+                                children: [
+                                  Icon(
+                                    Icons.warning_amber_rounded,
+                                    color: AppColors.warning,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(isArabic ? 'تنبيه' : 'Notice'),
+                                ],
                               ),
-                              backgroundColor: AppColors.warning,
-                              behavior: SnackBarBehavior.floating,
+                              content: Text(message),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(dialogCtx),
+                                  child: Text(isArabic ? 'حسناً' : 'OK'),
+                                ),
+                              ],
                             ),
+                          );
+                        }
+
+                        if (isFileMode && pickedLocalPath == null) {
+                          showValidationAlert(
+                            isArabic
+                                ? 'يرجى اختيار ملف من هاتفك أولاً 📱'
+                                : 'Please pick a file from your device first 📱',
                           );
                           return;
                         }
                         if (!isFileMode && urlCtrl.text.trim().isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                isArabic
-                                    ? 'يرجى إدخال الرابط الخارجي (URL) أولاً 🔗'
-                                    : 'Please enter an external URL first 🔗',
-                              ),
-                              backgroundColor: AppColors.warning,
-                              behavior: SnackBarBehavior.floating,
-                            ),
+                          showValidationAlert(
+                            isArabic
+                                ? 'يرجى إدخال الرابط الخارجي (URL) أولاً 🔗'
+                                : 'Please enter an external URL first 🔗',
                           );
                           return;
                         }

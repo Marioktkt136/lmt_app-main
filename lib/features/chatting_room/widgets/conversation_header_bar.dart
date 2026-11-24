@@ -8,6 +8,7 @@ import '../../../core/theme/colors.dart';
 import '../../../core/widgets/lmt_avatar.dart';
 import '../cubit/chat_cubit.dart';
 import 'chat_group_form_sheet.dart';
+import 'group_members_sheet.dart';
 
 /// Full-width mobile [AppBar] for [GroupConversationPage].
 ///
@@ -41,6 +42,72 @@ class ConversationHeaderBar extends StatelessWidget
   @override
   Size get preferredSize => Size.fromHeight(62.h);
 
+  Future<void> _confirmAndLeave(BuildContext context, bool isArabic) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text(isArabic ? 'مغادرة المجموعة؟' : 'Exit Group?'),
+        content: Text(
+          isArabic
+              ? 'هل أنت متأكد من مغادرة "${group.name}"؟'
+              : 'Are you sure you want to leave "${group.name}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(isArabic ? 'مغادرة' : 'Exit'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await context.read<LmtCubit>().leaveChatGroup(group.id);
+    if (context.mounted) {
+      onBack();
+    }
+  }
+
+  Future<void> _confirmAndDelete(BuildContext context, bool isArabic) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text(isArabic ? 'حذف المجموعة؟' : 'Delete Group?'),
+        content: Text(
+          isArabic
+              ? 'سيتم حذف "${group.name}" وجميع رسائلها نهائياً.'
+              : 'Are you sure you want to permanently delete "${group.name}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(isArabic ? 'حذف' : 'Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await context.read<LmtCubit>().deleteChatGroup(group.id);
+    if (context.mounted) {
+      onBack();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
@@ -51,7 +118,8 @@ class ConversationHeaderBar extends StatelessWidget
     final subColor = isDark
         ? AppColors.textSecondaryDark
         : Colors.white.withValues(alpha: 0.88);
-    final canEditGroup = state.currentUser.role.canManageGroups;
+    final canEditGroup = group.canUserEditGroup(state.currentUser);
+    final canDeleteGroup = state.currentUser.role.canDeleteGroups;
 
     return AppBar(
       backgroundColor: appBarBg,
@@ -94,7 +162,7 @@ class ConversationHeaderBar extends StatelessWidget
                   state,
                   existingGroup: group,
                 )
-            : null,
+            : () => showGroupMembersSheet(context, group.id),
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: 6.h, horizontal: 4.w),
           child: Row(
@@ -136,7 +204,7 @@ class ConversationHeaderBar extends StatelessWidget
                     ),
                     SizedBox(height: 1.h),
                     Text(
-                      '${group.memberIds.length} ${isArabic ? 'عضو' : 'members'} • ${isArabic ? 'المسؤول:' : 'Admin:'} ${group.adminName}',
+                      '${group.memberIds.length} ${isArabic ? 'عضو' : 'members'}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -162,6 +230,83 @@ class ConversationHeaderBar extends StatelessWidget
                 ? (isDark ? primary : const Color(0xFFFFD54F))
                 : subColor,
           ),
+        ),
+        PopupMenuButton<String>(
+          tooltip: isArabic ? 'خيارات المجموعة' : 'Group Options',
+          icon: Icon(Icons.more_vert_rounded, color: fgColor),
+          onSelected: (action) {
+            if (action == 'members') {
+              showGroupMembersSheet(context, group.id);
+            } else if (action == 'edit') {
+              showChatGroupFormSheet(context, state, existingGroup: group);
+            } else if (action == 'leave') {
+              _confirmAndLeave(context, isArabic);
+            } else if (action == 'delete') {
+              _confirmAndDelete(context, isArabic);
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'members',
+              child: Row(
+                children: [
+                  const Icon(Icons.group_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    isArabic
+                        ? 'أعضاء ومسؤولو المجموعة'
+                        : 'Group Members & Admins',
+                  ),
+                ],
+              ),
+            ),
+            if (canEditGroup)
+              PopupMenuItem(
+                value: 'edit',
+                child: Row(
+                  children: [
+                    const Icon(Icons.edit_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      isArabic
+                          ? 'تعديل الاسم والوصف والصورة'
+                          : 'Edit Group Info & Image',
+                    ),
+                  ],
+                ),
+              ),
+            PopupMenuItem(
+              value: 'leave',
+              child: Row(
+                children: [
+                  Icon(Icons.logout_rounded, size: 18, color: AppColors.warning),
+                  const SizedBox(width: 8),
+                  Text(
+                    isArabic ? 'مغادرة المجموعة' : 'Exit Group',
+                    style: TextStyle(color: AppColors.warning),
+                  ),
+                ],
+              ),
+            ),
+            if (canDeleteGroup)
+              PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: AppColors.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      isArabic ? 'حذف المجموعة' : 'Delete Group',
+                      style: const TextStyle(color: AppColors.error),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ],
     );

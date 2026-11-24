@@ -71,39 +71,6 @@ extension ContextExtension on BuildContext {
   /// Returns if keyboard is visible
   bool get isKeyboardVisible => MediaQuery.of(this).viewInsets.bottom > 0;
 
-  /// Shows snackbar with message
-  void showSnackBar(
-    String message, {
-    Duration duration = const Duration(seconds: 3),
-    SnackBarAction? action,
-  }) {
-    ScaffoldMessenger.of(this).showSnackBar(
-      SnackBar(content: Text(message), duration: duration, action: action),
-    );
-  }
-
-  /// Shows error snackbar
-  void showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(this).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: colorScheme.error,
-        duration: const Duration(seconds: 4),
-      ),
-    );
-  }
-
-  /// Shows success snackbar
-  void showSuccessSnackBar(String message) {
-    ScaffoldMessenger.of(this).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
   /// Hides keyboard
   void hideKeyboard() {
     FocusScope.of(this).unfocus();

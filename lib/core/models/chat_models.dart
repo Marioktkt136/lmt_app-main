@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../utils/app_assets.dart';
+import 'member_model.dart';
 import 'user_role.dart';
 
 /// Supported message content types inside a chatting group.
@@ -365,10 +366,16 @@ class ChatGroupModel extends Equatable {
   /// List of member IDs participating in this group.
   final List<String> memberIds;
 
-  /// The member ID of the group creator/administrator.
+  /// List of member IDs granted Group Admin authority for this group.
+  ///
+  /// Multiple members can hold group admin authority simultaneously alongside
+  /// the primary owner (`adminId`).
+  final List<String> groupAdminIds;
+
+  /// The member ID of the primary group owner/creator.
   final String adminId;
 
-  /// The display name of the group creator/administrator.
+  /// The display name of the primary group owner (internal metadata only).
   final String adminName;
 
   /// Whether this group is pinned to the top of the groups query.
@@ -377,6 +384,26 @@ class ChatGroupModel extends Equatable {
   /// The creation timestamp of the group.
   final DateTime createdAt;
 
+  /// Ordered, deduplicated list of all Group Admin IDs (`adminId` + `groupAdminIds`).
+  List<String> get effectiveAdminIds => <String>{
+        if (adminId.trim().isNotEmpty) adminId,
+        ...groupAdminIds.where((id) => id.trim().isNotEmpty),
+      }.toList();
+
+  /// Whether [memberId] is an administrator of this specific chat group.
+  bool isGroupAdminMember(String memberId) =>
+      memberId.trim().isNotEmpty && effectiveAdminIds.contains(memberId);
+
+  /// Whether [user] can add/remove members, edit group name/description/image,
+  /// and manage group admins for this group.
+  ///
+  /// Allowed ONLY for global App Administrators ([UserRole.admin]) and members
+  /// who are currently administrators of this group.
+  bool canUserEditGroup(MemberModel user) {
+    if (user.role == UserRole.admin) return true;
+    return memberIds.contains(user.id) && isGroupAdminMember(user.id);
+  }
+
   /// Creates a [ChatGroupModel].
   const ChatGroupModel({
     required this.id,
@@ -384,6 +411,7 @@ class ChatGroupModel extends Equatable {
     required this.description,
     this.imagePath = AppAssets.actIcon,
     required this.memberIds,
+    this.groupAdminIds = const [],
     required this.adminId,
     required this.adminName,
     this.isPinned = false,
@@ -397,6 +425,7 @@ class ChatGroupModel extends Equatable {
     String? description,
     String? imagePath,
     List<String>? memberIds,
+    List<String>? groupAdminIds,
     String? adminId,
     String? adminName,
     bool? isPinned,
@@ -408,6 +437,7 @@ class ChatGroupModel extends Equatable {
       description: description ?? this.description,
       imagePath: imagePath ?? this.imagePath,
       memberIds: memberIds ?? this.memberIds,
+      groupAdminIds: groupAdminIds ?? this.groupAdminIds,
       adminId: adminId ?? this.adminId,
       adminName: adminName ?? this.adminName,
       isPinned: isPinned ?? this.isPinned,
@@ -422,6 +452,7 @@ class ChatGroupModel extends Equatable {
         'description': description,
         'imagePath': imagePath,
         'memberIds': memberIds,
+        'groupAdminIds': effectiveAdminIds,
         'adminId': adminId,
         'adminName': adminName,
         'isPinned': isPinned,
@@ -429,21 +460,35 @@ class ChatGroupModel extends Equatable {
       };
 
   /// Deserializes a [ChatGroupModel] from a JSON map.
-  factory ChatGroupModel.fromJson(Map<String, dynamic> json) => ChatGroupModel(
-        id: json['id'] as String? ?? '',
-        name: json['name'] as String? ?? '',
-        description: json['description'] as String? ?? '',
-        imagePath: json['imagePath'] as String? ?? AppAssets.actIcon,
-        memberIds: (json['memberIds'] as List<dynamic>?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            const [],
-        adminId: json['adminId'] as String? ?? 'LMT-001',
-        adminName: json['adminName'] as String? ?? 'Admin',
-        isPinned: json['isPinned'] as bool? ?? false,
-        createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-            DateTime.now(),
-      );
+  factory ChatGroupModel.fromJson(Map<String, dynamic> json) {
+    final parsedAdminId = json['adminId'] as String? ?? 'LMT-001';
+    final rawGroupAdmins = (json['groupAdminIds'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .toList() ??
+        const <String>[];
+    final normalizedAdmins = <String>{
+      if (parsedAdminId.trim().isNotEmpty) parsedAdminId,
+      ...rawGroupAdmins,
+    }.toList();
+
+    return ChatGroupModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      imagePath: json['imagePath'] as String? ?? AppAssets.actIcon,
+      memberIds: (json['memberIds'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      groupAdminIds: normalizedAdmins,
+      adminId: parsedAdminId,
+      adminName: json['adminName'] as String? ?? 'Admin',
+      isPinned: json['isPinned'] as bool? ?? false,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
 
   @override
   List<Object?> get props => [
@@ -452,6 +497,7 @@ class ChatGroupModel extends Equatable {
         description,
         imagePath,
         memberIds,
+        groupAdminIds,
         adminId,
         adminName,
         isPinned,

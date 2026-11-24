@@ -42,13 +42,6 @@ class CalendarEventMenu extends StatelessWidget {
     );
     if (ok != true) return;
     await cubit.deleteCalendarEvent(evt.id);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(isArabic ? 'تم حذف الفعالية' : 'Event deleted'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   @override

@@ -19,6 +19,8 @@ class AppPreferences {
   static const String _lastUpdateDateKey = 'last_app_update_date';
   static const String _pendingUpdateWelcomeKey =
       'pending_shorebird_update_welcome';
+  static const String _alertedNotifPrefix = 'lmt_alerted_notifs_v1_';
+  static const String _webAuthnCredPrefix = 'lmt_webauthn_cred_v1_';
 
   static Future<SharedPreferences> _prefs() async {
     return SharedPreferences.getInstance();
@@ -228,6 +230,48 @@ class AppPreferences {
       await prefs.remove(_pendingUpdateWelcomeKey);
     } else {
       await prefs.setString(_pendingUpdateWelcomeKey, value);
+    }
+  }
+
+  // Per-user persisted OS notification IDs so alerts fire once reliably.
+  static Future<Set<String>> getAlertedNotificationIds(String userId) async {
+    final prefs = await _prefs();
+    final list = prefs.getStringList('$_alertedNotifPrefix$userId');
+    return list == null ? <String>{} : list.toSet();
+  }
+
+  static Future<void> addAlertedNotificationIds(
+    String userId,
+    Iterable<String> newIds,
+  ) async {
+    final items = newIds.where((id) => id.isNotEmpty).toList();
+    if (items.isEmpty) return;
+    final prefs = await _prefs();
+    final key = '$_alertedNotifPrefix$userId';
+    final existing = prefs.getStringList(key) ?? const <String>[];
+    final merged = <String>{...existing, ...items}.toList();
+    // Keep only the latest 300 IDs so storage stays compact.
+    final trimmed =
+        merged.length > 300 ? merged.sublist(merged.length - 300) : merged;
+    await prefs.setStringList(key, trimmed);
+  }
+
+  // WebAuthn / Passkey credential ID bound per user on this Web / iOS PWA device.
+  static Future<String?> getWebAuthnCredentialId(String userId) async {
+    final prefs = await _prefs();
+    return prefs.getString('$_webAuthnCredPrefix$userId');
+  }
+
+  static Future<void> setWebAuthnCredentialId(
+    String userId,
+    String? credentialId,
+  ) async {
+    final prefs = await _prefs();
+    final key = '$_webAuthnCredPrefix$userId';
+    if (credentialId == null || credentialId.isEmpty) {
+      await prefs.remove(key);
+    } else {
+      await prefs.setString(key, credentialId);
     }
   }
 }

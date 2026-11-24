@@ -55,18 +55,6 @@ void showPickProfileAvatarSheet(
         }
         if (!ctx.mounted) return;
         Navigator.pop(ctx);
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isArabic
-                  ? 'تم تحديث الصورة الشخصية بنجاح ✅'
-                  : 'Profile photo updated ✅',
-            ),
-            backgroundColor: AppColors.accentGreenOf(context),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
       }
 
       return SafeArea(
@@ -573,19 +561,6 @@ void showUpdatePasswordSheet(BuildContext context) {
                                 return;
                               }
                               Navigator.pop(ctx);
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isArabic
-                                        ? 'تم تحديث كلمة المرور بنجاح ✅'
-                                        : 'Password updated successfully ✅',
-                                  ),
-                                  backgroundColor:
-                                      AppColors.accentGreenOf(context),
-                                  behavior: SnackBarBehavior.floating,
-                                ),
-                              );
                             },
                       icon: const Icon(Icons.check_circle_outline),
                       label: Text(

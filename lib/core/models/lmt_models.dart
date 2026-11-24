@@ -3,6 +3,7 @@ library;
 
 export 'calendar_event_model.dart';
 export 'chat_models.dart';
+export 'khelwa_day_model.dart';
 export 'member_model.dart';
 export 'notification_model.dart';
 export 'post_models.dart';

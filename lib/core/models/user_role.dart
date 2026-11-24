@@ -5,9 +5,9 @@
 /// - [UserRole.editor]: Can create and edit posts, chat groups, calendar events,
 ///   and shared files, and edit non-admin member roles/details, but CANNOT
 ///   create users or delete users, posts, chat groups, events, or shared files.
-/// - [UserRole.member]: View and interact only (chatting, reacting, liking,
-///   commenting, voting in polls) without creating, editing, or deleting
-///   structural resources.
+/// - [UserRole.member]: Can create new timeline posts and interact (chatting,
+///   reacting, liking, commenting, voting in polls), without editing others'
+///   posts or managing/deleting structural resources.
 enum UserRole {
   admin,
   editor,
@@ -87,9 +87,8 @@ enum UserRole {
   /// Whether this role can permanently delete calendar events.
   bool get canDeleteCalendar => this == UserRole.admin;
 
-  /// Whether this role can create or edit posts in the timeline.
-  bool get canCreatePosts =>
-      this == UserRole.admin || this == UserRole.editor;
+  /// Whether this role can create new posts in the timeline (all roles).
+  bool get canCreatePosts => true;
 
   /// Whether this role can edit existing posts in the timeline.
   bool get canEditPosts =>

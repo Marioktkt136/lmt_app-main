@@ -6,17 +6,14 @@ import '../../../core/models/user_role.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/widgets/adaptive_layout.dart';
 import '../cubit/khelwa_cubit.dart';
-import '../data/khelwa_repository.dart';
 import '../widgets/khelwa_attendees_card.dart';
 import '../widgets/khelwa_counter_circle.dart';
-import '../widgets/khelwa_snackbars.dart';
 import '../widgets/khelwa_take_button.dart';
 
 /// Daily Spiritual Khelwa Tracker Screen.
 ///
-/// Composes the counter, the "I took Khelwa" button and today's attendees.
-/// Persistence lives in [KhelwaRepository]; publishing to the `grp_khelwa`
-/// chat group goes through [LmtCubit.publishDailyKhelwaSummaryToGroup].
+/// Reads real-time cloud-synced check-in lists (`khelwa_days`) from [LmtCubit]
+/// so today's attendees list stays accurate across all members and devices.
 class KhelwaScreen extends StatefulWidget {
   /// Creates a [KhelwaScreen].
   const KhelwaScreen({super.key});
@@ -26,56 +23,25 @@ class KhelwaScreen extends StatefulWidget {
 }
 
 class _KhelwaScreenState extends State<KhelwaScreen> {
-  static const KhelwaRepository _repo = KhelwaRepository();
-
-  int _daysDifference = 1;
-  List<String> _attendees = const [];
-  bool _isLoading = true;
   bool _isSaving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
-  }
-
-  Future<void> _load() async {
-    final user = context.read<LmtCubit>().state.currentUser;
-    try {
-      final snap = await _repo.load(userId: user.id, userName: user.name);
-      if (!mounted) return;
-      setState(() {
-        _daysDifference = snap.daysDifference;
-        _attendees = snap.todayAttendees;
-        _isLoading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _daysDifference = 1;
-        _isLoading = false;
-      });
-    }
-  }
+  String? _errorMessage;
 
   Future<void> _record() async {
     if (_isSaving) return;
-    setState(() => _isSaving = true);
-    final cubit = context.read<LmtCubit>();
-    final user = cubit.state.currentUser;
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
     try {
-      final snap = await _repo.record(userId: user.id, userName: user.name);
-      if (!mounted) return;
-      setState(() {
-        _daysDifference = 0;
-        _attendees = snap.todayAttendees;
-        _isSaving = false;
-      });
-      KhelwaSnackbars.showRecorded(context);
-    } catch (_) {
+      await context.read<LmtCubit>().recordTodayKhelwa();
       if (!mounted) return;
       setState(() => _isSaving = false);
-      KhelwaSnackbars.showError(context);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        _errorMessage = 'حدث خطأ أثناء تسجيل الخلوة، يرجى المحاولة مرة أخرى.';
+      });
     }
   }
 
@@ -90,7 +56,7 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('تصفير قائمة اليوم 🔄'),
         content: const Text(
-          'هل أنت متأكد من رغبتك في مسح وإعادة ضبط قائمة من أخذوا الخلوة اليوم؟',
+          'هل أنت متأكد من رغبتك في مسح وإعادة ضبط قائمة من أخذوا الخلوة اليوم للجميع؟',
         ),
         actions: [
           TextButton(
@@ -110,18 +76,7 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
     );
 
     if (confirmed != true || !mounted) return;
-    await _repo.resetTodayAttendees();
-    if (!mounted) return;
-    setState(() {
-      _attendees = const [];
-      _daysDifference = 1;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('تم تصفير قائمة الخلوة اليومية بنجاح ✅'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    await context.read<LmtCubit>().resetTodayKhelwa();
   }
 
   @override
@@ -131,76 +86,94 @@ class _KhelwaScreenState extends State<KhelwaScreen> {
     final appBarBg = isDark ? AppColors.surfaceDark : AppColors.primary;
     final appBarFg = isDark ? AppColors.textPrimaryDark : Colors.white;
 
-    return Scaffold(
-      backgroundColor: AppColors.backgroundOf(context),
-      appBar: AppBar(
-        backgroundColor: appBarBg,
-        foregroundColor: appBarFg,
-        iconTheme: IconThemeData(color: appBarFg),
-        actionsIconTheme: IconThemeData(color: isDark ? primary : Colors.white),
-        elevation: isDark ? 0 : 2,
-        shadowColor: Colors.black.withValues(alpha: 0.2),
-        centerTitle: true,
-        shape: isDark
-            ? Border(
-                bottom: BorderSide(
-                  color: primary.withValues(alpha: 0.28),
-                  width: 1,
-                ),
-              )
-            : null,
-        title: Text(
-          'الخلوة اليومية 🙏',
-          style: TextStyle(
-            fontSize: 18.sp,
-            fontWeight: FontWeight.bold,
-            fontFamily: 'Cairo',
-            color: appBarFg,
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'جروب الخلوة اليومية',
-            onPressed: _openKhelwaGroup,
-            icon: Icon(
-              Icons.chat_rounded,
-              color: isDark ? primary : Colors.white,
+    return BlocBuilder<LmtCubit, LmtState>(
+      builder: (context, state) {
+        final cubit = context.read<LmtCubit>();
+        final daysDifference =
+            cubit.khelwaDaysDifferenceForUser(state.currentUser.id);
+        final attendees = cubit.todayKhelwaAttendees();
+
+        return Scaffold(
+          backgroundColor: AppColors.backgroundOf(context),
+          appBar: AppBar(
+            backgroundColor: appBarBg,
+            foregroundColor: appBarFg,
+            iconTheme: IconThemeData(color: appBarFg),
+            actionsIconTheme:
+                IconThemeData(color: isDark ? primary : Colors.white),
+            elevation: isDark ? 0 : 2,
+            shadowColor: Colors.black.withValues(alpha: 0.2),
+            centerTitle: true,
+            shape: isDark
+                ? Border(
+                    bottom: BorderSide(
+                      color: primary.withValues(alpha: 0.28),
+                      width: 1,
+                    ),
+                  )
+                : null,
+            title: Text(
+              'الخلوة اليومية 🙏',
+              style: TextStyle(
+                fontSize: 18.sp,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'Cairo',
+                color: appBarFg,
+              ),
             ),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: _isLoading
-            ? Center(child: CircularProgressIndicator(color: primary))
-            : AdaptiveContentBox(
-                maxWidth: 680,
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 24.h),
-                  child: Column(
-                    children: [
-                      SizedBox(height: 16.h),
-                      KhelwaCounterCircle(daysDifference: _daysDifference),
-                      SizedBox(height: 36.h),
-                      KhelwaTakeButton(
-                        canTakeToday: _daysDifference > 0,
-                        isSaving: _isSaving,
-                        onPressed: _record,
-                      ),
-                      SizedBox(height: 32.h),
-                      KhelwaAttendeesCard(
-                        attendees: _attendees,
-                        isAdmin:
-                            context.watch<LmtCubit>().state.currentUser.role ==
-                                UserRole.admin,
-                        onResetToday: _confirmAndResetToday,
-                      ),
-                      SizedBox(height: 20.h),
-                    ],
-                  ),
+            actions: [
+              IconButton(
+                tooltip: 'جروب الخلوة اليومية',
+                onPressed: _openKhelwaGroup,
+                icon: Icon(
+                  Icons.chat_rounded,
+                  color: isDark ? primary : Colors.white,
                 ),
               ),
-      ),
+            ],
+          ),
+          body: SafeArea(
+            child: AdaptiveContentBox(
+              maxWidth: 680,
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: EdgeInsets.symmetric(horizontal: 24.w, vertical: 24.h),
+                child: Column(
+                  children: [
+                    SizedBox(height: 16.h),
+                    KhelwaCounterCircle(daysDifference: daysDifference),
+                    SizedBox(height: 36.h),
+                    KhelwaTakeButton(
+                      canTakeToday: daysDifference > 0,
+                      isSaving: _isSaving,
+                      onPressed: _record,
+                    ),
+                    if (_errorMessage != null) ...[
+                      SizedBox(height: 12.h),
+                      Text(
+                        _errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    SizedBox(height: 32.h),
+                    KhelwaAttendeesCard(
+                      attendees: attendees,
+                      isAdmin: state.currentUser.role == UserRole.admin,
+                      onResetToday: _confirmAndResetToday,
+                    ),
+                    SizedBox(height: 20.h),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

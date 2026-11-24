@@ -42,16 +42,27 @@ class LoginScreenState extends State<LoginScreen> {
   bool _isBiometricAuthenticating = false;
   bool _hasPreviousLogin = false;
   bool _isBiometricPrefEnabled = true;
+  String? _savedUserId;
+  String? _savedUsername;
 
   @override
   void initState() {
     super.initState();
+    _biometricService.warmUp();
     _loadSavedCredentialsAndAutoPromptBiometrics();
+    if (!kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          LocalNotificationService.requestOsPermissions();
+        }
+      });
+    }
   }
 
   Future<void> _loadSavedCredentialsAndAutoPromptBiometrics() async {
     final hasLoggedInBefore = await AppPreferences.isLoggedIn();
     final savedUser = await AppPreferences.getSavedUsername();
+    final savedUserId = await AppPreferences.getCurrentUserId();
     final biometricPrefEnabled = await AppPreferences.isBiometricEnabled();
     final hasValidPrevious =
         hasLoggedInBefore && savedUser != null && savedUser.trim().isNotEmpty;
@@ -62,6 +73,8 @@ class LoginScreenState extends State<LoginScreen> {
     setState(() {
       _hasPreviousLogin = hasValidPrevious;
       _isBiometricPrefEnabled = biometricPrefEnabled;
+      _savedUserId = savedUserId;
+      _savedUsername = savedUser;
       if (hasValidPrevious) {
         usernameController.text = savedUser;
       }
@@ -108,9 +121,12 @@ class LoginScreenState extends State<LoginScreen> {
   Future<void> submit() async {
     if (_isSubmitting || !formKey.currentState!.validate()) return;
 
-    if (kIsWeb && LocalNotificationService.webPermissionStatus == 'default') {
-      // Request browser notification permission inside the login tap gesture.
-      LocalNotificationService.requestWebPermission();
+    if (kIsWeb) {
+      LocalNotificationService.unlockWebAudioFromGesture();
+      if (LocalNotificationService.webPermissionStatus == 'default') {
+        // Request browser notification permission inside the login tap gesture.
+        LocalNotificationService.requestWebPermission();
+      }
     }
 
     final isArabic = context.locale.languageCode == 'ar';
@@ -125,10 +141,10 @@ class LoginScreenState extends State<LoginScreen> {
       Navigator.pushReplacementNamed(context, Routes.home);
     } on AuthException catch (e) {
       if (!mounted) return;
-      _showSnackBar(e.localized(isArabic), AppColors.error);
+      _showFeedbackDialog(e.localized(isArabic), AppColors.error);
     } catch (_) {
       if (!mounted) return;
-      _showSnackBar(
+      _showFeedbackDialog(
         isArabic
             ? 'تعذر تسجيل الدخول. يرجى المحاولة مرة أخرى.'
             : 'Unable to sign in. Please try again.',
@@ -145,7 +161,7 @@ class LoginScreenState extends State<LoginScreen> {
   Future<void> authenticateWithBiometrics() async {
     final isArabic = context.locale.languageCode == 'ar';
     if (!_hasPreviousLogin) {
-      _showSnackBar(
+      _showFeedbackDialog(
         isArabic
             ? 'يرجى تسجيل الدخول باسم المستخدم وكلمة المرور أولاً لتفعيل الدخول بالبصمة أو الوجه.'
             : 'Please log in with your username and password first to enable Fingerprint / Face ID.',
@@ -154,7 +170,7 @@ class LoginScreenState extends State<LoginScreen> {
       return;
     }
     if (!_isBiometricPrefEnabled) {
-      _showSnackBar(
+      _showFeedbackDialog(
         isArabic
             ? 'الدخول بالبصمة والوجه معطل حالياً من الإعدادات.'
             : 'Fingerprint / Face ID login is currently disabled in Settings.',
@@ -167,6 +183,8 @@ class LoginScreenState extends State<LoginScreen> {
     setState(() => _isBiometricAuthenticating = true);
     try {
       final result = await _biometricService.authenticate(
+        userId: _savedUserId,
+        username: _savedUsername,
         localizedReason: isArabic
             ? 'قم بمسح بصمة الإصبع أو الوجه لتسجيل الدخول إلى تطبيق فريق الرسالة الاخيرة (L.M.T)'
             : 'Authenticate with your Fingerprint or Face ID to log in to L.M.T',
@@ -185,21 +203,21 @@ class LoginScreenState extends State<LoginScreen> {
             await _completeBiometricLogin();
           }
         case BiometricStatus.notEnrolled:
-          _showSnackBar(
+          _showFeedbackDialog(
             isArabic
                 ? 'جهازك غير مفعل به بصمة إصبع أو وجه حالياً. يرجى إعداد البصمة في إعدادات الهاتف أولاً.'
                 : 'No Fingerprint or Face ID enrolled on this device. Please set up biometrics in device settings first.',
             AppColors.error,
           );
         case BiometricStatus.cancelled:
-          _showSnackBar(
+          _showFeedbackDialog(
             isArabic
                 ? 'لم يكتمل التحقق من البصمة، حاول مرة أخرى'
                 : 'Biometric authentication cancelled or failed',
             AppColors.warning,
           );
         case BiometricStatus.error:
-          _showSnackBar(
+          _showFeedbackDialog(
             isArabic
                 ? 'تعذر تشغيل مستشعر البصمة: ${result.message ?? ''}'
                 : 'Biometric error: ${result.message ?? ''}',
@@ -215,7 +233,6 @@ class LoginScreenState extends State<LoginScreen> {
 
   Future<void> _completeBiometricLogin() async {
     final isArabic = context.locale.languageCode == 'ar';
-    final accentGreen = AppColors.accentGreenOf(context);
     final savedUsername = await AppPreferences.getSavedUsername();
     if (!mounted) return;
 
@@ -223,7 +240,7 @@ class LoginScreenState extends State<LoginScreen> {
     if (enteredUsername.isNotEmpty &&
         savedUsername != null &&
         enteredUsername.toLowerCase() != savedUsername.trim().toLowerCase()) {
-      _showSnackBar(
+      _showFeedbackDialog(
         isArabic
             ? 'البصمة مرتبطة بالحساب المسجل ($savedUsername) فقط. أدخل كلمة المرور للدخول بحساب آخر.'
             : 'Biometrics are bound to ($savedUsername). Enter password to sign in with another account.',
@@ -235,7 +252,6 @@ class LoginScreenState extends State<LoginScreen> {
     try {
       await context.read<LmtCubit>().loginWithBiometrics();
       if (!mounted) return;
-      _showSnackBar('biometric_success'.tr(), accentGreen);
       Navigator.pushReplacementNamed(context, Routes.home);
     } on AuthException catch (e) {
       final stillLoggedIn = await AppPreferences.isLoggedIn();
@@ -247,16 +263,34 @@ class LoginScreenState extends State<LoginScreen> {
           passwordController.clear();
         }
       });
-      _showSnackBar(e.localized(isArabic), AppColors.error);
+      _showFeedbackDialog(e.localized(isArabic), AppColors.error);
     }
   }
 
-  void _showSnackBar(String message, Color backgroundColor) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+  void _showFeedbackDialog(String message, Color accentColor) {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    final icon = accentColor == AppColors.error
+        ? Icons.error_outline_rounded
+        : (accentColor == AppColors.warning
+            ? Icons.warning_amber_rounded
+            : Icons.info_outline_rounded);
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(icon, color: accentColor),
+            const SizedBox(width: 8),
+            Text(isArabic ? 'تنبيه' : 'Notice'),
+          ],
+        ),
         content: Text(message),
-        backgroundColor: backgroundColor,
-        behavior: SnackBarBehavior.floating,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text(isArabic ? 'حسناً' : 'OK'),
+          ),
+        ],
       ),
     );
   }

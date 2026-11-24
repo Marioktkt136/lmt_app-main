@@ -30,10 +30,9 @@ Future<void> downloadAndOpenSharedFile(
   SharedFileModel file,
 ) async {
   final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-  final accentGreen = AppColors.accentGreenOf(context);
 
   try {
-    final savedPath = await DeviceFileHelper.downloadAndOpenRealFile(
+    await DeviceFileHelper.downloadAndOpenRealFile(
       file,
       openAfterSave: true,
     );
@@ -42,29 +41,21 @@ Future<void> downloadAndOpenSharedFile(
       title: isArabic ? 'تم تنزيل الملف بنجاح 📥' : 'File Downloaded 📥',
       body: '${file.title} (${file.fileSize})',
     );
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          isArabic
-              ? 'تم تنزيل وفتح الملف: ${file.title}\nالمسار: $savedPath'
-              : 'Downloaded & opened: ${file.title}',
-        ),
-        backgroundColor: accentGreen,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+    await showDialog<void>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text(isArabic ? 'تعذر فتح الملف' : 'Unable to open file'),
         content: Text(
-          isArabic
-              ? 'حدث خطأ أثناء فتح الملف: $e'
-              : 'Could not open file: $e',
+          isArabic ? 'حدث خطأ أثناء فتح الملف: $e' : 'Could not open file: $e',
         ),
-        backgroundColor: AppColors.error,
-        behavior: SnackBarBehavior.floating,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: Text(isArabic ? 'حسناً' : 'OK'),
+          ),
+        ],
       ),
     );
   }
@@ -186,8 +177,7 @@ void handleSharedFileTap(BuildContext context, SharedFileModel file) {
                     ),
                     onPressed: () async {
                       Navigator.pop(ctx);
-                      final savedPath =
-                          await DeviceFileHelper.downloadAndOpenRealFile(
+                      await DeviceFileHelper.downloadAndOpenRealFile(
                         file,
                         openAfterSave: false,
                       );
@@ -197,18 +187,6 @@ void handleSharedFileTap(BuildContext context, SharedFileModel file) {
                             ? 'تم تنزيل الملف على جهازك ✅'
                             : 'File Saved to Device ✅',
                         body: file.title,
-                      );
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            isArabic
-                                ? 'تم حفظ الملف على الهاتف في:\n$savedPath'
-                                : 'Saved to device:\n$savedPath',
-                          ),
-                          backgroundColor: accentGreen,
-                          behavior: SnackBarBehavior.floating,
-                        ),
                       );
                     },
                     icon: const Icon(Icons.save_alt_rounded),

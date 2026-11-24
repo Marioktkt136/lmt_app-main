@@ -255,9 +255,7 @@ class _PostImageViewerPageState extends State<PostImageViewerPage> {
                                   label: isArabic ? 'فتح / حفظ' : 'Open',
                                   color: Colors.white,
                                   onTap: () async {
-                                    final messenger =
-                                        ScaffoldMessenger.of(context);
-                                    final savedPath = await DeviceFileHelper
+                                    await DeviceFileHelper
                                         .downloadAndOpenRealFile(
                                       SharedFileModel(
                                         id: livePost.id,
@@ -269,16 +267,6 @@ class _PostImageViewerPageState extends State<PostImageViewerPage> {
                                         fileSize: 'Image',
                                         uploadedBy: livePost.creatorName,
                                         uploadedAt: livePost.publishTime,
-                                      ),
-                                    );
-                                    messenger.showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          isArabic
-                                              ? 'تم حفظ الصورة في: $savedPath'
-                                              : 'Image saved to: $savedPath',
-                                        ),
-                                        behavior: SnackBarBehavior.floating,
                                       ),
                                     );
                                   },

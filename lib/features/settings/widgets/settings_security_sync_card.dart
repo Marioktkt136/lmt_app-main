@@ -35,11 +35,12 @@ class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
   final BiometricAuthService _biometricService = BiometricAuthService();
   bool _isCheckingBiometric = false;
   bool _isCheckingUpdates = false;
-  String _versionLabel = 'v1.0.0+1';
+  String _versionLabel = 'v1.0.1+2';
 
   @override
   void initState() {
     super.initState();
+    _biometricService.warmUp();
     _loadCurrentVersion();
   }
 
@@ -78,11 +79,29 @@ class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
 
   void _showFeedback(String message, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+    final isArabic = widget.isArabic;
+    final icon = color == AppColors.error
+        ? Icons.error_outline_rounded
+        : (color == AppColors.warning
+            ? Icons.warning_amber_rounded
+            : Icons.check_circle_outline_rounded);
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 8),
+            Text(isArabic ? 'تنبيه' : 'Notice'),
+          ],
+        ),
         content: Text(message),
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: Text(isArabic ? 'حسناً' : 'OK'),
+          ),
+        ],
       ),
     );
   }
@@ -107,6 +126,8 @@ class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
     setState(() => _isCheckingBiometric = true);
     try {
       final result = await _biometricService.authenticate(
+        userId: cubit.state.currentUser.id,
+        username: cubit.state.currentUser.username,
         localizedReason: isArabic
             ? 'تأكيد بصمة الإصبع أو الوجه لتفعيل الحماية البيومترية في L.M.T'
             : 'Verify your Fingerprint or Face ID to enable biometric login in L.M.T',

@@ -38,7 +38,7 @@ class PostsList extends StatelessWidget {
                 parent: BouncingScrollPhysics(),
               ),
               children: [
-                // 1. Create Post Composer Card (Admin & Editor only)
+                // 1. Create Post Composer Card (Admin, Editor & Member)
                 if (state.currentUser.role.canCreatePosts)
                   PostComposerCard(currentUser: state.currentUser),
 

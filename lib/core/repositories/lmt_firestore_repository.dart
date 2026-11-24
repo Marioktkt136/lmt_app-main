@@ -31,6 +31,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   static const String _sharedFilesCol = 'shared_files';
   static const String _calendarEventsCol = 'calendar_events';
   static const String _notificationsCol = 'notifications';
+  static const String _khelwaDaysCol = 'khelwa_days';
   static const String _chatTypingCol = 'chat_typing';
   static const String _teamConfigCol = 'team_config';
   static const String _brandingDocId = 'branding';
@@ -49,6 +50,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   bool _persistInFlight = false;
   ({Map<String, dynamic> stateJson, String currentUserId})? _queuedPersist;
   Completer<void>? _persistIdleCompleter;
+  Timer? _liveSyncDebounce;
 
   FirebaseFirestore? get _db =>
       Firebase.apps.isNotEmpty ? FirebaseFirestore.instance : null;
@@ -292,6 +294,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     final filesMap = _liveDocs[_sharedFilesCol] ?? const {};
     final eventsMap = _liveDocs[_calendarEventsCol] ?? const {};
     final notifsMap = _liveDocs[_notificationsCol] ?? const {};
+    final khelwaDaysMap = _liveDocs[_khelwaDaysCol] ?? const {};
 
     final localMemberMap = <String, MemberModel>{
       for (final m in _localMemberFallback) m.id: m,
@@ -350,6 +353,11 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         .toList()
       ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
+    final khelwaDays = khelwaDaysMap.values
+        .map(KhelwaDayModel.fromJson)
+        .toList()
+      ..sort((a, b) => b.dateKey.compareTo(a.dateKey));
+
     final brandingData = _liveBrandingDoc;
     final sloganOfYear =
         (brandingData?['sloganOfYear'] as String?) ?? fallback.sloganOfYear;
@@ -390,6 +398,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         'sharedFiles': sharedFiles.map((e) => e.toJson()).toList(),
         'calendarEvents': calendarEvents.map((e) => e.toJson()).toList(),
         'notifications': notifications.map((e) => e.toJson()).toList(),
+        'khelwaDays': khelwaDays.map((e) => e.toJson()).toList(),
       },
       currentUserId: matchedSaved?.id ?? '',
     );
@@ -406,6 +415,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       sharedFiles: sharedFiles,
       calendarEvents: calendarEvents,
       notifications: notifications,
+      khelwaDays: khelwaDays,
     );
   }
 
@@ -566,6 +576,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         db.collection(_sharedFilesCol).get().timeout(_remoteTimeout),
         db.collection(_calendarEventsCol).get().timeout(_remoteTimeout),
         db.collection(_notificationsCol).get().timeout(_remoteTimeout),
+        db.collection(_khelwaDaysCol).get().timeout(_remoteTimeout),
       ]);
 
       final memberAuthSnap = snaps[0];
@@ -575,6 +586,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       final filesSnap = snaps[4];
       final eventsSnap = snaps[5];
       final notifsSnap = snaps[6];
+      final khelwaDaysSnap = snaps[7];
 
       final brandingSnap = await db
           .collection(_teamConfigCol)
@@ -590,6 +602,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       _recordSnapshotPayloads(_sharedFilesCol, filesSnap.docs);
       _recordSnapshotPayloads(_calendarEventsCol, eventsSnap.docs);
       _recordSnapshotPayloads(_notificationsCol, notifsSnap.docs);
+      _recordSnapshotPayloads(_khelwaDaysCol, khelwaDaysSnap.docs);
 
       final brandingData = brandingSnap.data();
       if (brandingData != null) {
@@ -610,26 +623,39 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     required Map<String, dynamic> stateJson,
     required String currentUserId,
   }) async {
-    await localCache.persistSnapshot(
-      stateJson: stateJson,
-      currentUserId: currentUserId,
-    );
-
     final db = _db;
-    if (db == null) return;
+    if (db == null) {
+      await localCache.persistSnapshot(
+        stateJson: stateJson,
+        currentUserId: currentUserId,
+      );
+      return;
+    }
 
     if (_persistInFlight) {
       // Never drop concurrent writes: coalesce and flush right after the current
       // Firestore batch completes.
       _queuedPersist = (stateJson: stateJson, currentUserId: currentUserId);
+      await localCache.persistSnapshot(
+        stateJson: stateJson,
+        currentUserId: currentUserId,
+      );
       await _persistIdleCompleter?.future;
       return;
     }
 
+    // Lock live remote echoes IMMEDIATELY before any async local write so
+    // optimistic local additions (posts/polls, events, files) can never be
+    // wiped by an in-flight stream tick during local caching.
     _persistInFlight = true;
+    _liveSyncDebounce?.cancel();
     _persistIdleCompleter = Completer<void>();
 
     try {
+      await localCache.persistSnapshot(
+        stateJson: stateJson,
+        currentUserId: currentUserId,
+      );
       var nextWrite = (stateJson: stateJson, currentUserId: currentUserId);
       while (true) {
         await _flushSinglePersist(db, nextWrite.stateJson);
@@ -744,7 +770,6 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
 
     late StreamController<LmtRepositorySnapshot> controller;
     final subs = <StreamSubscription<dynamic>>[];
-    Timer? debounce;
     var emitting = false;
     var dirty = false;
 
@@ -762,9 +787,11 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       try {
         do {
           dirty = false;
+          if (_persistInFlight) break;
           final local = await localCache.loadSnapshot();
+          if (_persistInFlight || controller.isClosed) break;
           final assembled = await _assembleSnapshot(fallback: local);
-          if (!controller.isClosed) {
+          if (!_persistInFlight && !controller.isClosed) {
             controller.add(assembled);
           }
         } while (dirty && !controller.isClosed);
@@ -776,8 +803,8 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     }
 
     void scheduleEmit() {
-      debounce?.cancel();
-      debounce = Timer(const Duration(milliseconds: 60), emitCombined);
+      _liveSyncDebounce?.cancel();
+      _liveSyncDebounce = Timer(const Duration(milliseconds: 60), emitCombined);
     }
 
     void watchCollection(String collectionName) {
@@ -807,6 +834,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           watchCollection(_sharedFilesCol);
           watchCollection(_calendarEventsCol);
           watchCollection(_notificationsCol);
+          watchCollection(_khelwaDaysCol);
 
           subs.add(
             db
@@ -835,7 +863,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         });
       },
       onCancel: () {
-        debounce?.cancel();
+        _liveSyncDebounce?.cancel();
         for (final sub in subs) {
           sub.cancel();
         }
@@ -844,6 +872,90 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     );
 
     return controller.stream;
+  }
+
+  @override
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      final docRef = db.collection(_khelwaDaysCol).doc(dateKey);
+
+      await db.runTransaction((tx) async {
+        final snap = await tx.get(docRef);
+        final existing = snap.data();
+        final ids = existing == null
+            ? <String>[]
+            : List<String>.from(
+                (existing['attendeeIds'] as List<dynamic>? ?? const [])
+                    .map((e) => e.toString()),
+              );
+        final names = existing == null
+            ? <String>[]
+            : List<String>.from(
+                (existing['attendeeNames'] as List<dynamic>? ?? const [])
+                    .map((e) => e.toString()),
+              );
+
+        final idx = ids.indexOf(memberId);
+        if (idx == -1) {
+          ids.add(memberId);
+          names.add(memberName);
+        } else if (idx < names.length) {
+          names[idx] = memberName;
+        }
+
+        final payload = <String, dynamic>{
+          'id': dateKey,
+          'dateKey': dateKey,
+          'attendeeIds': ids,
+          'attendeeNames': names,
+          'updatedAt': DateTime.now().toIso8601String(),
+          'updatedByUid': uid,
+        };
+        tx.set(docRef, payload);
+        _lastSyncedDocs[_khelwaDaysCol] ??= {};
+        _liveDocs[_khelwaDaysCol] ??= {};
+        _lastSyncedDocs[_khelwaDaysCol]![dateKey] = jsonEncode(payload);
+        _liveDocs[_khelwaDaysCol]![dateKey] = payload;
+      }).timeout(_remoteTimeout);
+    } catch (e) {
+      debugPrint('Firestore recordKhelwaCheckIn error: $e');
+    }
+  }
+
+  @override
+  Future<void> resetKhelwaDay({required String dateKey}) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      final docRef = db.collection(_khelwaDaysCol).doc(dateKey);
+      final payload = <String, dynamic>{
+        'id': dateKey,
+        'dateKey': dateKey,
+        'attendeeIds': const <String>[],
+        'attendeeNames': const <String>[],
+        'updatedAt': DateTime.now().toIso8601String(),
+        'updatedByUid': uid,
+      };
+      await docRef.set(payload).timeout(_remoteTimeout);
+      _lastSyncedDocs[_khelwaDaysCol] ??= {};
+      _liveDocs[_khelwaDaysCol] ??= {};
+      _lastSyncedDocs[_khelwaDaysCol]![dateKey] = jsonEncode(payload);
+      _liveDocs[_khelwaDaysCol]![dateKey] = payload;
+    } catch (e) {
+      debugPrint('Firestore resetKhelwaDay error: $e');
+    }
   }
 
   @override

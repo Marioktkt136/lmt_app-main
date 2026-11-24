@@ -21,7 +21,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Creates and publishes a new post (Admin & Editor only).
+  /// Creates and publishes a new post (all team roles: Admin, Editor & Member).
   Future<void> createPost({
     required PostCategoryType type,
     required String content,

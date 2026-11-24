@@ -257,12 +257,13 @@ mixin CalendarCubitMixin on LmtBaseCubit {
     await persistState();
   }
 
-  /// Toggles or updates a custom reminder time for an event, ensuring both OS
-  /// and in-app notifications reflect it using `Calendar_Notifications`.
+  /// Toggles or updates a custom reminder time for an event (Admin & Editor only),
+  /// ensuring both OS and in-app notifications reflect it using `Calendar_Notifications`.
   Future<void> toggleEventReminder(
     String eventId, {
     DateTime? customReminderTime,
   }) async {
+    if (!state.currentUser.role.canManageCalendar) return;
     CalendarEventModel? targetUpdated;
     final updatedEvents = state.calendarEvents.map((e) {
       if (e.id != eventId) return e;

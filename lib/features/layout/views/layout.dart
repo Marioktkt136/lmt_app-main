@@ -46,7 +46,14 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   late int _selectedIndex;
   PageController? _pageController;
   bool _hasShownUpdateWelcome = false;
-  StreamSubscription<ForegroundNotificationEvent>? _foregroundNotifSub;
+
+  Future<void> _syncOsNotificationPermissions({bool requestIfMobile = false}) async {
+    if (requestIfMobile && !kIsWeb) {
+      await LocalNotificationService.requestOsPermissions();
+    } else {
+      await LocalNotificationService.areOsNotificationsEnabled();
+    }
+  }
 
   @override
   void initState() {
@@ -54,48 +61,6 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _selectedIndex = widget.initialIndex.clamp(0, _pages.length - 1);
     _pageController = PageController(initialPage: _selectedIndex);
-    _foregroundNotifSub =
-        LocalNotificationService.foregroundStream.listen((event) {
-      if (!mounted || !kIsWeb) return;
-      if (LocalNotificationService.webPermissionStatus == 'granted') return;
-      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 5),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.title,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                if (event.body.trim().isNotEmpty)
-                  Text(
-                    event.body,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
-            ),
-            action: event.payload != null
-                ? SnackBarAction(
-                    label: isArabic ? 'فتح' : 'Open',
-                    onPressed: () {
-                      if (mounted) {
-                        context
-                            .read<LmtCubit>()
-                            .handleNotificationPayload(event.payload);
-                      }
-                    },
-                  )
-                : null,
-          ),
-        );
-    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final cubit = context.read<LmtCubit>();
@@ -111,6 +76,7 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
           openGroupId: cubit.state.selectedChatGroupId,
           openEventId: cubit.state.selectedCalendarEventId,
         );
+        _syncOsNotificationPermissions(requestIfMobile: !kIsWeb);
         cubit.syncDueCalendarReminders();
         _checkOtaUpdatesAndWelcome();
       }
@@ -130,7 +96,12 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
-      context.read<LmtCubit>().syncDueCalendarReminders();
+      final cubit = context.read<LmtCubit>();
+      _syncOsNotificationPermissions();
+      cubit.syncDueCalendarReminders();
+      if (!cubit.state.isSyncing) {
+        cubit.syncNow();
+      }
       _checkOtaUpdatesAndWelcome();
     }
   }
@@ -138,7 +109,6 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _foregroundNotifSub?.cancel();
     _pageController?.dispose();
     _pageController = null;
     super.dispose();

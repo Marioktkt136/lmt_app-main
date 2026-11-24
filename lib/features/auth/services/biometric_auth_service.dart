@@ -2,6 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 
+import '../../../core/utils/app_preferences.dart';
+import 'web_biometric_bridge.dart';
+
 /// Possible outcomes of a [BiometricAuthService.authenticate] call.
 enum BiometricStatus {
   /// The user passed the hardware prompt.
@@ -45,10 +48,38 @@ class BiometricAuthService {
 
   final LocalAuthentication _localAuth;
 
-  /// Shows the system biometric prompt using [localizedReason].
-  Future<BiometricResult> authenticate({required String localizedReason}) async {
+  /// Prepares WebAuthn capability metadata ahead of a user tap on Web / iOS PWA
+  /// so biometric prompts open cleanly inside the click gesture window.
+  Future<void> warmUp() async {
     if (kIsWeb) {
-      return const BiometricResult(BiometricStatus.notEnrolled);
+      await WebBiometricBridge.warmUp();
+    }
+  }
+
+  /// Shows the system biometric prompt (or WebAuthn Face ID / Touch ID on
+  /// HTTPS Web & iOS Home Screen PWA) using [localizedReason].
+  Future<BiometricResult> authenticate({
+    required String localizedReason,
+    String? userId,
+    String? username,
+  }) async {
+    if (kIsWeb) {
+      final resolvedUserId =
+          userId ?? (await AppPreferences.getCurrentUserId()) ?? 'lmt_user';
+      final resolvedUsername =
+          username ?? (await AppPreferences.getSavedUsername()) ?? resolvedUserId;
+      final res = await WebBiometricBridge.authenticate(
+        userId: resolvedUserId,
+        username: resolvedUsername,
+        localizedReason: localizedReason,
+      );
+      return switch (res.status) {
+        'success' => const BiometricResult(BiometricStatus.success),
+        'cancelled' => BiometricResult(BiometricStatus.cancelled, res.message),
+        'notEnrolled' => const BiometricResult(BiometricStatus.notEnrolled),
+        'pluginMissing' => const BiometricResult(BiometricStatus.pluginMissing),
+        _ => BiometricResult(BiometricStatus.error, res.message),
+      };
     }
     try {
       final isSupported = await _localAuth.isDeviceSupported();

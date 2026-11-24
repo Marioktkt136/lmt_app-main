@@ -105,19 +105,27 @@ mixin ChatCubitMixin on LmtBaseCubit {
     required String description,
     required String imagePath,
     required List<String> memberIds,
+    List<String> groupAdminIds = const [],
   }) async {
     if (!state.currentUser.role.canManageGroups) return;
 
     final resolvedMembers = memberIds.isEmpty
         ? state.members.map((m) => m.id).toList()
-        : memberIds;
+        : memberIds.toSet().toList();
+    final creatorId = state.currentUser.id;
+    final normalizedAdmins = <String>{
+      if (resolvedMembers.contains(creatorId)) creatorId,
+      ...groupAdminIds.where(resolvedMembers.contains),
+    }.toList();
+
     final newGroup = ChatGroupModel(
       id: 'grp_${DateTime.now().millisecondsSinceEpoch}',
       name: name.trim(),
       description: description.trim(),
       imagePath: imagePath,
       memberIds: resolvedMembers,
-      adminId: state.currentUser.id,
+      groupAdminIds: normalizedAdmins,
+      adminId: creatorId,
       adminName: state.currentUser.name,
       isPinned: false,
       createdAt: DateTime.now(),
@@ -147,17 +155,51 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
   /// Updates an existing chat group's details and notifies ONLY newly added
   /// members (never existing members or the editor/admin making the change).
+  ///
+  /// Authorized ONLY for Group Admins of this group or Global App Admins
+  /// (`UserRole.admin`).
   Future<void> updateChatGroup(ChatGroupModel updatedGroup) async {
-    if (!state.currentUser.role.canManageGroups) return;
     final previousGroup =
         state.chatGroups.where((g) => g.id == updatedGroup.id).firstOrNull;
+    final canEdit = previousGroup?.canUserEditGroup(state.currentUser) ??
+        state.currentUser.role.canManageGroups;
+    if (!canEdit) return;
+
+    final cleanMembers = updatedGroup.memberIds.toSet().toList();
+    final cleanedCoAdmins = updatedGroup.groupAdminIds
+        .where((id) => cleanMembers.contains(id))
+        .toList();
+    var resolvedAdminId = updatedGroup.adminId;
+    var resolvedAdminName = updatedGroup.adminName;
+    if (cleanMembers.isNotEmpty && !cleanMembers.contains(resolvedAdminId)) {
+      resolvedAdminId = cleanedCoAdmins.isNotEmpty
+          ? cleanedCoAdmins.first
+          : cleanMembers.first;
+      resolvedAdminName = state.members
+              .where((m) => m.id == resolvedAdminId)
+              .map((m) => m.name)
+              .firstOrNull ??
+          resolvedAdminName;
+    }
+
+    final normalizedAdmins = <String>{
+      if (cleanMembers.contains(resolvedAdminId)) resolvedAdminId,
+      ...cleanedCoAdmins,
+    }.toList();
+
+    final normalizedGroup = updatedGroup.copyWith(
+      memberIds: cleanMembers,
+      groupAdminIds: normalizedAdmins,
+      adminId: resolvedAdminId,
+      adminName: resolvedAdminName,
+    );
 
     final updatedGroups = state.chatGroups
-        .map((g) => g.id == updatedGroup.id ? updatedGroup : g)
+        .map((g) => g.id == normalizedGroup.id ? normalizedGroup : g)
         .toList();
 
     if (previousGroup != null) {
-      final newlyAddedIds = updatedGroup.memberIds
+      final newlyAddedIds = normalizedGroup.memberIds
           .where(
             (id) =>
                 id != state.currentUser.id &&
@@ -166,13 +208,13 @@ mixin ChatCubitMixin on LmtBaseCubit {
           .toList();
       if (newlyAddedIds.isNotEmpty) {
         pushNotification(
-          title: 'تمت إضافتك لمجموعة "${updatedGroup.name}" 💬',
+          title: 'تمت إضافتك لمجموعة "${normalizedGroup.name}" 💬',
           description:
-              'قام ${state.currentUser.name} بإضافتك إلى مجموعة "${updatedGroup.name}".',
+              'قام ${state.currentUser.name} بإضافتك إلى مجموعة "${normalizedGroup.name}".',
           category: NotificationCategory.chat,
           tone: LmtNotificationTone.chatMessage,
           targetTabIndex: 1,
-          targetGroupId: updatedGroup.id,
+          targetGroupId: normalizedGroup.id,
           targetMemberIds: newlyAddedIds,
           excludedMemberIds: [state.currentUser.id],
         );
@@ -180,6 +222,154 @@ mixin ChatCubitMixin on LmtBaseCubit {
     }
 
     emit(state.copyWith(chatGroups: updatedGroups));
+    await persistState();
+  }
+
+  /// Grants or revokes Group Admin authority for [memberId] inside [groupId].
+  ///
+  /// Multiple members can hold Group Admin rights simultaneously alongside the
+  /// creator/owner. If revoking from the primary owner (`adminId`) when other
+  /// group admins exist, ownership advances to the next remaining admin.
+  Future<void> setGroupMemberAdmin({
+    required String groupId,
+    required String memberId,
+    required bool isAdmin,
+  }) async {
+    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    if (group == null || !group.canUserEditGroup(state.currentUser)) return;
+    if (!group.memberIds.contains(memberId)) return;
+
+    final admins = List<String>.from(group.effectiveAdminIds);
+    var nextOwnerId = group.adminId;
+    var nextOwnerName = group.adminName;
+
+    if (isAdmin) {
+      if (!admins.contains(memberId)) {
+        admins.add(memberId);
+      }
+    } else {
+      final remainingOtherAdmins =
+          admins.where((id) => id != memberId).toList();
+      if (memberId == group.adminId && remainingOtherAdmins.isEmpty) {
+        return; // Cannot leave primary group owner role empty while alone as admin
+      }
+      admins.remove(memberId);
+      if (memberId == group.adminId && remainingOtherAdmins.isNotEmpty) {
+        nextOwnerId = remainingOtherAdmins.first;
+        nextOwnerName = state.members
+                .where((m) => m.id == nextOwnerId)
+                .map((m) => m.name)
+                .firstOrNull ??
+            nextOwnerName;
+      }
+    }
+
+    final updatedGroup = group.copyWith(
+      adminId: nextOwnerId,
+      adminName: nextOwnerName,
+      groupAdminIds: admins,
+    );
+    final updatedGroups =
+        state.chatGroups.map((g) => g.id == groupId ? updatedGroup : g).toList();
+    emit(state.copyWith(chatGroups: updatedGroups));
+    await persistState();
+  }
+
+  /// Transfers primary group leadership to [newOwnerId]. When [stepDownSelf]
+  /// is `true`, the current actor steps down as group admin so [newOwnerId]
+  /// acts in their place ("بدالي").
+  Future<void> transferGroupOwnership({
+    required String groupId,
+    required String newOwnerId,
+    bool stepDownSelf = true,
+  }) async {
+    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    if (group == null || !group.canUserEditGroup(state.currentUser)) return;
+    if (!group.memberIds.contains(newOwnerId)) return;
+
+    final nextOwnerName = state.members
+            .where((m) => m.id == newOwnerId)
+            .map((m) => m.name)
+            .firstOrNull ??
+        group.adminName;
+    final actorId = state.currentUser.id;
+    final nextAdmins = <String>{
+      newOwnerId,
+      ...group.effectiveAdminIds.where(
+        (id) =>
+            group.memberIds.contains(id) &&
+            (!stepDownSelf || id != actorId || actorId == newOwnerId),
+      ),
+    }.toList();
+
+    final updatedGroup = group.copyWith(
+      adminId: newOwnerId,
+      adminName: nextOwnerName,
+      groupAdminIds: nextAdmins,
+    );
+    final updatedGroups =
+        state.chatGroups.map((g) => g.id == groupId ? updatedGroup : g).toList();
+    emit(state.copyWith(chatGroups: updatedGroups));
+    await persistState();
+  }
+
+  /// Removes the active user from [groupId].
+  ///
+  /// When the leaving user is the primary group creator/owner (`adminId`),
+  /// leadership automatically transfers with priority:
+  /// 1. The first remaining Group Admin in `groupAdminIds`.
+  /// 2. Otherwise the earliest added remaining member in `memberIds`.
+  Future<void> leaveChatGroup(String groupId) async {
+    final actor = state.currentUser;
+    final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
+    if (group == null || !group.memberIds.contains(actor.id)) return;
+
+    final remainingMembers =
+        group.memberIds.where((id) => id != actor.id).toList();
+    final remainingAdmins = group.effectiveAdminIds
+        .where((id) => id != actor.id && remainingMembers.contains(id))
+        .toList();
+
+    late final ChatGroupModel updatedGroup;
+    if (remainingMembers.isEmpty) {
+      updatedGroup = group.copyWith(
+        memberIds: const [],
+        groupAdminIds: const [],
+      );
+    } else if (actor.id == group.adminId) {
+      final successorId = remainingAdmins.isNotEmpty
+          ? remainingAdmins.first
+          : remainingMembers.first;
+      final successorName = state.members
+              .where((m) => m.id == successorId)
+              .map((m) => m.name)
+              .firstOrNull ??
+          group.adminName;
+      final nextAdmins = <String>{
+        successorId,
+        ...remainingAdmins,
+      }.toList();
+      updatedGroup = group.copyWith(
+        memberIds: remainingMembers,
+        adminId: successorId,
+        adminName: successorName,
+        groupAdminIds: nextAdmins,
+      );
+    } else {
+      updatedGroup = group.copyWith(
+        memberIds: remainingMembers,
+        groupAdminIds: remainingAdmins,
+      );
+    }
+
+    final updatedGroups =
+        state.chatGroups.map((g) => g.id == groupId ? updatedGroup : g).toList();
+    emit(
+      state.copyWith(
+        chatGroups: updatedGroups,
+        clearSelectedChatGroup: state.selectedChatGroupId == groupId,
+      ),
+    );
     await persistState();
   }
 
@@ -280,7 +470,10 @@ mixin ChatCubitMixin on LmtBaseCubit {
   /// active user when they actually enter the group conversation room.
   ///
   /// Never records a member as having seen their own sent messages.
-  Future<void> markGroupMessagesSeen(String groupId) async {
+  Future<void> markGroupMessagesSeen(
+    String groupId, {
+    Set<String>? onlyMessageIds,
+  }) async {
     final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
     final viewer = state.currentUser;
     if (group == null || !group.memberIds.contains(viewer.id)) return;
@@ -290,6 +483,9 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
     final updatedMessages = state.chatMessages.map((msg) {
       if (msg.groupId != groupId) return msg;
+      if (onlyMessageIds != null && !onlyMessageIds.contains(msg.id)) {
+        return msg;
+      }
 
       final sanitized =
           msg.seenBy.where((s) => s.memberId != msg.senderId).toList();

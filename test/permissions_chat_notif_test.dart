@@ -59,6 +59,16 @@ class _InMemoryRepo implements LmtRepository {
 
   @override
   Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
+
+  @override
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {}
+
+  @override
+  Future<void> resetKhelwaDay({required String dateKey}) async {}
 }
 
 const _admin = MemberModel(
@@ -378,12 +388,17 @@ void main() {
       final fileId = cubit.state.sharedFiles.single.id;
       final eventId = cubit.state.calendarEvents.single.id;
 
-      // ---- MEMBER ROLE: view & interact only ----
+      // ---- MEMBER ROLE: can create new posts & interact, no structural edits/deletes ----
       cubit.switchActor(_member);
+      expect(UserRole.member.canCreatePosts, isTrue);
       await cubit.createPost(type: PostCategoryType.simple, content: 'Member post');
-      expect(cubit.state.posts, hasLength(1));
+      expect(cubit.state.posts, hasLength(2));
+      expect(cubit.state.posts.first.creatorId, _member.id);
       await cubit.editPost(postId: postId, content: 'Member hacked');
-      expect(cubit.state.posts.single.content, 'Post 1');
+      expect(
+        cubit.state.posts.firstWhere((p) => p.id == postId).content,
+        'Post 1',
+      );
       await cubit.createChatGroup(
         name: 'Member group',
         description: '',
@@ -421,8 +436,10 @@ void main() {
       // Member interactions work (like & comment).
       await cubit.toggleLikePost(postId);
       await cubit.addPostComment(postId: postId, content: 'Nice!');
-      expect(cubit.state.posts.single.likedByIds, contains(_member.id));
-      expect(cubit.state.posts.single.comments, hasLength(1));
+      final interactedPost =
+          cubit.state.posts.firstWhere((p) => p.id == postId);
+      expect(interactedPost.likedByIds, contains(_member.id));
+      expect(interactedPost.comments, hasLength(1));
 
       // ---- EDITOR ROLE: create/edit event/file/group/post, NO user creation, NO deletions ----
       cubit.switchActor(_editor);
@@ -449,7 +466,10 @@ void main() {
       final editorGroupId = cubit.state.chatGroups.first.id;
 
       await cubit.editPost(postId: postId, content: 'Post 1 Edited');
-      expect(cubit.state.posts.single.content, 'Post 1 Edited');
+      expect(
+        cubit.state.posts.firstWhere((p) => p.id == postId).content,
+        'Post 1 Edited',
+      );
 
       await cubit.updateSharedFile(
         fileId: fileId,
@@ -473,15 +493,18 @@ void main() {
       await cubit.deleteSharedFile(fileId);
 
       expect(cubit.state.members, hasLength(3));
-      expect(cubit.state.posts, hasLength(1));
+      expect(cubit.state.posts, hasLength(2));
       expect(cubit.state.chatGroups, hasLength(2));
       expect(cubit.state.calendarEvents, hasLength(2));
       expect(cubit.state.sharedFiles, hasLength(1));
 
       // ---- ADMIN ROLE: can delete ALL 5 entities ----
+      final memberPostId =
+          cubit.state.posts.firstWhere((p) => p.creatorId == _member.id).id;
       cubit.switchActor(_admin);
       await cubit.deleteMember(_member.id);
       await cubit.deletePost(postId);
+      await cubit.deletePost(memberPostId);
       await cubit.deleteChatGroup(editorGroupId);
       await cubit.deleteCalendarEvent(eventId);
       await cubit.deleteSharedFile(fileId);
@@ -491,6 +514,235 @@ void main() {
       expect(cubit.state.chatGroups, hasLength(1));
       expect(cubit.state.calendarEvents, hasLength(1));
       expect(cubit.state.sharedFiles, isEmpty);
+
+      await cubit.close();
+    });
+  });
+
+  group('Calendar Reminder Permissions (Admin & Editor only)', () {
+    test('Admin and Editor can toggle/adjust event reminders while Member is blocked', () async {
+      final cubit = _FullTestCubit();
+      await cubit.addCalendarEvent(
+        title: 'Team Rehearsal',
+        description: 'Stage prep',
+        eventDateTime: DateTime.now().add(const Duration(days: 3)),
+        reminderDateTime: DateTime.now().add(const Duration(days: 2)),
+      );
+      final eventId = cubit.state.calendarEvents.single.id;
+      final originalReminderTime =
+          cubit.state.calendarEvents.single.reminderDateTime!;
+      expect(cubit.state.calendarEvents.single.isReminderActive, isTrue);
+
+      // Member CANNOT toggle off or customize reminder time.
+      cubit.switchActor(_member);
+      await cubit.toggleEventReminder(eventId);
+      expect(cubit.state.calendarEvents.single.isReminderActive, isTrue);
+      final memberAttemptTime = DateTime.now().add(const Duration(hours: 1));
+      await cubit.toggleEventReminder(
+        eventId,
+        customReminderTime: memberAttemptTime,
+      );
+      expect(
+        cubit.state.calendarEvents.single.reminderDateTime,
+        originalReminderTime,
+      );
+
+      // Editor CAN toggle and customize reminder time.
+      cubit.switchActor(_editor);
+      await cubit.toggleEventReminder(eventId);
+      expect(cubit.state.calendarEvents.single.isReminderActive, isFalse);
+
+      final customTime = DateTime.now().add(const Duration(days: 1));
+      await cubit.toggleEventReminder(eventId, customReminderTime: customTime);
+      expect(cubit.state.calendarEvents.single.isReminderActive, isTrue);
+      expect(cubit.state.calendarEvents.single.reminderDateTime, customTime);
+
+      // Admin CAN toggle reminder off.
+      cubit.switchActor(_admin);
+      await cubit.toggleEventReminder(eventId);
+      expect(cubit.state.calendarEvents.single.isReminderActive, isFalse);
+
+      await cubit.close();
+    });
+  });
+
+  group('Multi-Admin Groups, Exit Leadership Transfer & Unread Counts', () {
+    const editor2 = MemberModel(
+      id: 'LMT-2026-004',
+      username: 'editor2',
+      password: 'password123',
+      name: 'Other Editor',
+      role: UserRole.editor,
+      groups: ['جروب عام'],
+      avatarPath: AppAssets.accountIcon,
+    );
+    const member2 = MemberModel(
+      id: 'LMT-2026-005',
+      username: 'member2',
+      password: 'password123',
+      name: 'Second Member',
+      role: UserRole.member,
+      groups: ['جروب عام'],
+      avatarPath: AppAssets.accountIcon,
+    );
+
+    test('supports multiple group admins, step-down transfer, strict permissions, and scoped unread tracking', () async {
+      final cubit = _FullTestCubit();
+      cubit.emit(
+        cubit.state.copyWith(
+          members: [_admin, _editor, _member, editor2, member2],
+        ),
+      );
+
+      // Creator (_editor) creates a new group with [_editor, _member, member2].
+      cubit.switchActor(_editor);
+      await cubit.createChatGroup(
+        name: 'Team Choir',
+        description: 'Initial desc',
+        imagePath: AppAssets.actIcon,
+        memberIds: [_editor.id, _member.id, member2.id],
+      );
+      final gid = cubit.state.chatGroups.firstWhere((g) => g.name == 'Team Choir').id;
+
+      // Another non-group-admin Editor (editor2) CANNOT update this group.
+      cubit.switchActor(editor2);
+      await cubit.updateChatGroup(
+        cubit.state.chatGroups
+            .firstWhere((g) => g.id == gid)
+            .copyWith(name: 'Unauthorized Edit'),
+      );
+      expect(
+        cubit.state.chatGroups.firstWhere((g) => g.id == gid).name,
+        'Team Choir',
+      );
+
+      // Global App Admin (_admin) CAN edit any group even without being creator.
+      cubit.switchActor(_admin);
+      await cubit.updateChatGroup(
+        cubit.state.chatGroups
+            .firstWhere((g) => g.id == gid)
+            .copyWith(description: 'App Admin updated'),
+      );
+      expect(
+        cubit.state.chatGroups.firstWhere((g) => g.id == gid).description,
+        'App Admin updated',
+      );
+
+      // Regular _member CANNOT edit before promotion.
+      cubit.switchActor(_member);
+      await cubit.updateChatGroup(
+        cubit.state.chatGroups
+            .firstWhere((g) => g.id == gid)
+            .copyWith(name: 'Member Hack'),
+      );
+      expect(
+        cubit.state.chatGroups.firstWhere((g) => g.id == gid).name,
+        'Team Choir',
+      );
+
+      // Creator promotes _member as Co-Admin ("معي") -> BOTH are group admins.
+      cubit.switchActor(_editor);
+      await cubit.setGroupMemberAdmin(
+        groupId: gid,
+        memberId: _member.id,
+        isAdmin: true,
+      );
+      var group = cubit.state.chatGroups.firstWhere((g) => g.id == gid);
+      expect(group.effectiveAdminIds, containsAll([_editor.id, _member.id]));
+
+      // Promoted _member CAN now rename, change image, and add editor2!
+      cubit.switchActor(_member);
+      await cubit.updateChatGroup(
+        group.copyWith(
+          name: 'Choir Updated',
+          imagePath: AppAssets.prayIcon,
+          memberIds: [...group.memberIds, editor2.id],
+        ),
+      );
+      group = cubit.state.chatGroups.firstWhere((g) => g.id == gid);
+      expect(group.name, 'Choir Updated');
+      expect(group.imagePath, AppAssets.prayIcon);
+      expect(group.memberIds, contains(editor2.id));
+
+      // _editor transfers full group ownership to _member and steps down ("بدالي").
+      cubit.switchActor(_editor);
+      await cubit.transferGroupOwnership(
+        groupId: gid,
+        newOwnerId: _member.id,
+        stepDownSelf: true,
+      );
+      group = cubit.state.chatGroups.firstWhere((g) => g.id == gid);
+      expect(group.adminId, _member.id);
+      expect(group.isGroupAdminMember(_editor.id), isFalse);
+      expect(group.canUserEditGroup(_editor), isFalse);
+      expect(group.canUserEditGroup(_member), isTrue);
+
+      // Scoped seen tracking keeps unread badge & stop anchor accurate.
+      cubit.switchActor(_member);
+      await cubit.sendChatMessage(groupId: gid, type: MessageType.text, content: 'M1');
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await cubit.sendChatMessage(groupId: gid, type: MessageType.text, content: 'M2');
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await cubit.sendChatMessage(groupId: gid, type: MessageType.text, content: 'M3');
+
+      final msgs = cubit.state.messagesForGroup(gid);
+      cubit.switchActor(_editor);
+      expect(cubit.state.unreadMessagesCountForGroup(gid), 3);
+      expect(cubit.state.firstUnreadMessageIdForGroup(gid), msgs.first.id);
+
+      await cubit.markGroupMessagesSeen(gid, onlyMessageIds: {msgs[0].id});
+      expect(cubit.state.unreadMessagesCountForGroup(gid), 2);
+      expect(cubit.state.firstUnreadMessageIdForGroup(gid), msgs[1].id);
+
+      await cubit.close();
+    });
+
+    test('leaveChatGroup transfers creator role prioritizing Co-Admin first, then earliest added member', () async {
+      final cubit = _FullTestCubit();
+      cubit.emit(
+        cubit.state.copyWith(
+          members: [_admin, _editor, _member, member2],
+        ),
+      );
+
+      // Case 1: Co-Admin (member2) takes priority over earliest regular member (_member).
+      cubit.switchActor(_editor);
+      await cubit.createChatGroup(
+        name: 'Priority Admin Test',
+        description: 'd',
+        imagePath: AppAssets.actIcon,
+        memberIds: [_editor.id, _member.id, member2.id],
+        groupAdminIds: [_editor.id, member2.id],
+      );
+      final gid1 = cubit.state.chatGroups
+          .firstWhere((g) => g.name == 'Priority Admin Test')
+          .id;
+
+      await cubit.leaveChatGroup(gid1);
+      final afterLeave1 = cubit.state.chatGroups.firstWhere((g) => g.id == gid1);
+      expect(afterLeave1.memberIds, [_member.id, member2.id]);
+      expect(afterLeave1.adminId, member2.id);
+      expect(afterLeave1.adminName, member2.name);
+      expect(afterLeave1.isGroupAdminMember(member2.id), isTrue);
+
+      // Case 2: No other Co-Admin -> transfers to earliest added remaining member (_member).
+      cubit.switchActor(_editor);
+      await cubit.createChatGroup(
+        name: 'Earliest Member Test',
+        description: 'd',
+        imagePath: AppAssets.actIcon,
+        memberIds: [_editor.id, _member.id, member2.id],
+      );
+      final gid2 = cubit.state.chatGroups
+          .firstWhere((g) => g.name == 'Earliest Member Test')
+          .id;
+
+      await cubit.leaveChatGroup(gid2);
+      final afterLeave2 = cubit.state.chatGroups.firstWhere((g) => g.id == gid2);
+      expect(afterLeave2.memberIds, [_member.id, member2.id]);
+      expect(afterLeave2.adminId, _member.id);
+      expect(afterLeave2.adminName, _member.name);
+      expect(afterLeave2.isGroupAdminMember(_member.id), isTrue);
 
       await cubit.close();
     });

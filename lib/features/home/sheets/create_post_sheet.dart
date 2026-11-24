@@ -108,29 +108,41 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
   }
 
   void _publish(bool isArabic) {
-    if (_contentCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(isArabic ? 'اكتب محتوى المنشور أولاً' : 'Please write some content first'),
-          backgroundColor: AppColors.warning,
-          behavior: SnackBarBehavior.floating,
+    void showValidationAlert(String message) {
+      showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: AppColors.warning),
+              const SizedBox(width: 8),
+              Text(isArabic ? 'تنبيه' : 'Notice'),
+            ],
+          ),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: Text(isArabic ? 'حسناً' : 'OK'),
+            ),
+          ],
         ),
+      );
+    }
+
+    if (_contentCtrl.text.trim().isEmpty) {
+      showValidationAlert(
+        isArabic ? 'اكتب محتوى المنشور أولاً' : 'Please write some content first',
       );
       return;
     }
 
     if (_type == PostCategoryType.media &&
         (_pickedMediaPath == null || _pickedMediaPath!.isEmpty)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isArabic
-                ? 'يرجى اختيار صورة أو فيديو من المعرض أولاً 📱'
-                : 'Please pick an image or video from your gallery first 📱',
-          ),
-          backgroundColor: AppColors.warning,
-          behavior: SnackBarBehavior.floating,
-        ),
+      showValidationAlert(
+        isArabic
+            ? 'يرجى اختيار صورة أو فيديو من المعرض أولاً 📱'
+            : 'Please pick an image or video from your gallery first 📱',
       );
       return;
     }
@@ -139,16 +151,10 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
       final nonEmptyCount =
           _optionCtrls.where((c) => c.text.trim().isNotEmpty).length;
       if (nonEmptyCount < 2) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isArabic
-                  ? 'يرجى إدخال خيارين على الأقل للاستطلاع'
-                  : 'Please enter at least 2 poll options',
-            ),
-            backgroundColor: AppColors.warning,
-            behavior: SnackBarBehavior.floating,
-          ),
+        showValidationAlert(
+          isArabic
+              ? 'يرجى إدخال خيارين على الأقل للاستطلاع'
+              : 'Please enter at least 2 poll options',
         );
         return;
       }

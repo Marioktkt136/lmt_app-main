@@ -55,8 +55,9 @@ rules_version = '2';
 //   - description: string (required, 0..1000)
 //   - imagePath: string (required, 1..500)
 //   - memberIds: list<string> (required, 0..500 items, item 1..64)
-//   - adminId: string (required, immutable, 1..64)
-//   - adminName: string (required, immutable, 1..120)
+//   - groupAdminIds: list<string> (optional for legacy compatibility, 0..500 items, item 1..64)
+//   - adminId: string (required, 1..64)
+//   - adminName: string (required, 1..120)
 //   - isPinned: bool (required)
 //   - createdAt: string (required, ISO-8601 date string, 19..40)
 //   - updatedByUid: string (required, == request.auth.uid)
@@ -392,11 +393,16 @@ service cloud.firestore {
 
     // Validate ChatGroupModel document.
     function isValidChatGroup(data, groupId) {
-      let allowed = [
+      let required = [
         'id', 'name', 'description', 'imagePath', 'memberIds',
         'adminId', 'adminName', 'isPinned', 'createdAt', 'updatedByUid'
       ];
-      return hasRequiredFields(allowed) &&
+      let allowed = [
+        'id', 'name', 'description', 'imagePath', 'memberIds',
+        'groupAdminIds', 'adminId', 'adminName', 'isPinned',
+        'createdAt', 'updatedByUid'
+      ];
+      return hasRequiredFields(required) &&
              hasOnlyAllowedFields(allowed) &&
              isValidString(data.id, 1, 64) &&
              data.id == groupId &&
@@ -404,6 +410,8 @@ service cloud.firestore {
              isValidString(data.description, 0, 1000) &&
              isValidString(data.imagePath, 1, 500) &&
              isValidStringList(data.memberIds, 0, 500, 1, 64) &&
+             (!('groupAdminIds' in data.keys()) ||
+              isValidStringList(data.groupAdminIds, 0, 500, 1, 64)) &&
              isValidString(data.adminId, 1, 64) &&
              isValidString(data.adminName, 1, 120) &&
              data.isPinned is bool &&
@@ -511,7 +519,7 @@ service cloud.firestore {
              opt.keys().hasAll(allowed) &&
              opt.keys().hasOnly(allowed) &&
              isValidString(opt.id, 1, 64) &&
-             isValidString(opt.text, 1, 200) &&
+             isValidString(opt.text, 1, 500) &&
              isValidStringList(opt.voterIds, 0, 500, 1, 64);
     }
 
@@ -720,6 +728,25 @@ service cloud.firestore {
              hasValidAuditUid(data);
     }
 
+    // Validate KhelwaDayModel document.
+    function isValidKhelwaDay(data, dateKey) {
+      let allowed = [
+        'id', 'dateKey', 'attendeeIds', 'attendeeNames',
+        'updatedAt', 'updatedByUid'
+      ];
+      return hasRequiredFields(allowed) &&
+             hasOnlyAllowedFields(allowed) &&
+             isValidString(data.id, 10, 20) &&
+             data.id == dateKey &&
+             data.dateKey is string &&
+             data.dateKey == dateKey &&
+             data.dateKey.matches("^\\d{4}-\\d{2}-\\d{2}$") &&
+             isValidStringList(data.attendeeIds, 0, 500, 1, 64) &&
+             isValidStringList(data.attendeeNames, 0, 500, 1, 150) &&
+             isValidDateString(data.updatedAt) &&
+             hasValidAuditUid(data);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -747,7 +774,7 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidChatGroup(request.resource.data, groupId);
       allow update: if isAuthenticated() &&
                        isValidChatGroup(request.resource.data, groupId) &&
-                       areImmutableFieldsUnchanged(['id', 'adminId', 'adminName']);
+                       areImmutableFieldsUnchanged(['id']);
       allow delete: if isAuthenticated();
     }
 
@@ -820,6 +847,15 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidMediaBlob(request.resource.data, blobId);
       allow update: if false;
+      allow delete: if isAuthenticated();
+    }
+
+    match /khelwa_days/{dateKey} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidKhelwaDay(request.resource.data, dateKey);
+      allow update: if isAuthenticated() &&
+                       isValidKhelwaDay(request.resource.data, dateKey) &&
+                       areImmutableFieldsUnchanged(['id', 'dateKey']);
       allow delete: if isAuthenticated();
     }
 

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/data/lmt_seed_data.dart';
-import '../../../core/services/local_notification_service.dart';
 import '../../../core/utils/app_preferences.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
@@ -71,31 +70,14 @@ mixin LayoutCubitMixin on LmtBaseCubit {
   /// and fetches any updates created on other devices, playing the exact custom
   /// tone for any newly arrived unread notifications targeting the active user.
   Future<void> syncNow() async {
-    final previousIds = state.notifications.map((n) => n.id).toSet();
     emit(state.copyWith(isSyncing: true));
     await persistState();
     final remote = await repository.loadSnapshot();
-    final currentUserId = state.currentUser.id;
-
-    for (final n in remote.notifications) {
-      if (!previousIds.contains(n.id) &&
-          !n.isRead &&
-          n.isVisibleTo(currentUserId)) {
-        await LocalNotificationService.showInstantNotification(
-          idKey: n.id,
-          title: n.title,
-          body: n.description,
-          tone: LmtNotificationTone.fromString(n.tone),
-          payloadData: {
-            'notifId': n.id,
-            'tab': ?n.targetTabIndex,
-            'groupId': ?n.targetGroupId,
-            'eventId': ?n.targetEventId,
-            'route': ?n.targetRoute,
-          },
-        );
-      }
-    }
+    await seedKnownNotificationsForUser(
+      state.currentUser.id,
+      remote.notifications,
+    );
+    alertUnseenNotificationsForCurrentUser(remote.notifications);
 
     emit(
       state.copyWith(
@@ -108,6 +90,7 @@ mixin LayoutCubitMixin on LmtBaseCubit {
         sharedFiles: remote.sharedFiles,
         calendarEvents: remote.calendarEvents,
         notifications: remote.notifications,
+        khelwaDays: remote.khelwaDays,
       ),
     );
   }

@@ -18,6 +18,7 @@ import '../repositories/lmt_repository.dart';
 import '../routes/app_router.dart';
 import '../services/local_notification_service.dart';
 import '../utils/app_assets.dart';
+import '../utils/app_preferences.dart';
 
 export 'lmt_state.dart';
 
@@ -91,11 +92,16 @@ class LmtCubit extends LmtBaseCubit
       );
     } else {
       final existing = groups[khelwaIdx];
-      final mergedIds = <String>{...existing.memberIds, ...allMemberIds}.toList();
-      if (mergedIds.length != existing.memberIds.length) {
-        groups[khelwaIdx] = existing.copyWith(memberIds: mergedIds);
+      if (existing.memberIds.isEmpty) {
+        groups[khelwaIdx] = existing.copyWith(memberIds: allMemberIds);
       }
     }
+
+    await seedKnownNotificationsForUser(
+      snapshot.currentUser.id,
+      snapshot.notifications,
+    );
+    final hasSession = await AppPreferences.isLoggedIn();
 
     emit(
       state.copyWith(
@@ -111,10 +117,13 @@ class LmtCubit extends LmtBaseCubit
         sharedFiles: snapshot.sharedFiles,
         calendarEvents: snapshot.calendarEvents,
         notifications: snapshot.notifications,
+        khelwaDays: snapshot.khelwaDays,
       ),
     );
 
-    knownNotificationIds.addAll(snapshot.notifications.map((n) => n.id));
+    if (hasSession) {
+      alertUnseenNotificationsForCurrentUser(snapshot.notifications);
+    }
     _startConnectivityListener();
     _startNotificationsListener();
     _startLiveSyncListener();
@@ -165,29 +174,8 @@ class LmtCubit extends LmtBaseCubit
   Future<void> _onRemoteLiveSnapshot(LmtRepositorySnapshot remote) async {
     if (isClosed || !state.isInitialized || state.isSyncing) return;
 
-    final currentUserId = state.currentUser.id;
-    var hasNewIncomingAlert = false;
-
-    for (final n in remote.notifications) {
-      final isBrandNew = knownNotificationIds.add(n.id) &&
-          !state.notifications.any((existing) => existing.id == n.id);
-      if (isBrandNew && !n.isRead && n.isVisibleTo(currentUserId)) {
-        hasNewIncomingAlert = true;
-        LocalNotificationService.showInstantNotification(
-          idKey: n.id,
-          title: n.title,
-          body: n.description,
-          tone: LmtNotificationTone.fromString(n.tone),
-          payloadData: {
-            'notifId': n.id,
-            'tab': ?n.targetTabIndex,
-            'groupId': ?n.targetGroupId,
-            'eventId': ?n.targetEventId,
-            'route': ?n.targetRoute,
-          },
-        );
-      }
-    }
+    final hasNewIncomingAlert =
+        alertUnseenNotificationsForCurrentUser(remote.notifications);
 
     final updatedCurrent = remote.members
             .where((m) => m.id == state.currentUser.id)
@@ -223,6 +211,7 @@ class LmtCubit extends LmtBaseCubit
         sharedFiles: remote.sharedFiles,
         calendarEvents: remote.calendarEvents,
         notifications: nextNotifications,
+        khelwaDays: remote.khelwaDays,
       ),
     );
 
@@ -244,34 +233,9 @@ class LmtCubit extends LmtBaseCubit
 
   void _onRemoteNotificationsSnapshot(List<AppNotificationModel> remoteList) {
     if (isClosed || !state.isInitialized) return;
-    if (state.isSyncing) {
-      knownNotificationIds.addAll(remoteList.map((n) => n.id));
-      return;
-    }
 
-    final currentUserId = state.currentUser.id;
-    var hasNewIncomingAlert = false;
-
-    for (final n in remoteList) {
-      final isBrandNew = knownNotificationIds.add(n.id) &&
-          !state.notifications.any((existing) => existing.id == n.id);
-      if (isBrandNew && !n.isRead && n.isVisibleTo(currentUserId)) {
-        hasNewIncomingAlert = true;
-        LocalNotificationService.showInstantNotification(
-          idKey: n.id,
-          title: n.title,
-          body: n.description,
-          tone: LmtNotificationTone.fromString(n.tone),
-          payloadData: {
-            'notifId': n.id,
-            'tab': ?n.targetTabIndex,
-            'groupId': ?n.targetGroupId,
-            'eventId': ?n.targetEventId,
-            'route': ?n.targetRoute,
-          },
-        );
-      }
-    }
+    final hasNewIncomingAlert =
+        alertUnseenNotificationsForCurrentUser(remoteList);
 
     if (isSuppressingRemoteNotifSync && !hasNewIncomingAlert) {
       return;
@@ -280,9 +244,6 @@ class LmtCubit extends LmtBaseCubit
     if (hasNewIncomingAlert ||
         remoteList.length != state.notifications.length) {
       emit(state.copyWith(notifications: remoteList));
-    }
-    if (hasNewIncomingAlert && !state.isSyncing) {
-      syncNow();
     }
   }
 

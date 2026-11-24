@@ -96,17 +96,79 @@ class LocalNotificationService {
   static Future<String> requestWebPermission() =>
       WebNotificationBridge.requestPermission();
 
+  /// Ensures browser Web Audio context is unlocked after a user tap/gesture.
+  static Future<void> unlockWebAudioFromGesture() =>
+      WebNotificationBridge.unlockFromUserGesture();
+
+  /// Requests OS-level notification permission safely AFTER the Flutter Activity
+  /// / browser gesture is active (fixes Android 13+ silent permission failures).
+  static Future<bool> requestOsPermissions() async {
+    if (kIsWeb) {
+      final status = await WebNotificationBridge.requestPermission();
+      return status == 'granted';
+    }
+    try {
+      await init();
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidImpl != null) {
+        final granted = await androidImpl.requestNotificationsPermission();
+        await androidImpl.requestExactAlarmsPermission();
+        if (granted != null) return granted;
+        return await androidImpl.areNotificationsEnabled() ?? true;
+      }
+      final iosImpl = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      if (iosImpl != null) {
+        return await iosImpl.requestPermissions(
+              alert: true,
+              badge: true,
+              sound: true,
+            ) ??
+            false;
+      }
+      return true;
+    } catch (e) {
+      debugPrint('requestOsPermissions error: $e');
+      return false;
+    }
+  }
+
+  /// Checks whether OS status-bar notifications are currently allowed.
+  static Future<bool> areOsNotificationsEnabled() async {
+    if (kIsWeb) {
+      return WebNotificationBridge.permissionStatus == 'granted';
+    }
+    try {
+      await init();
+      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidImpl != null) {
+        return await androidImpl.areNotificationsEnabled() ?? true;
+      }
+      final iosImpl = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      if (iosImpl != null) {
+        final perms = await iosImpl.checkPermissions();
+        return perms?.isEnabled ?? true;
+      }
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// Optional callback invoked when the user taps any OS notification banner.
   static void Function(String? payload)? onNotificationTapped;
 
   /// Stores a cold-start notification payload until the UI/Cubit listener attaches.
   static String? pendingLaunchPayload;
 
-  static const String _normalChannelId = 'lmt_normal_notifications_v2';
-  static const String _calendarChannelId = 'lmt_calendar_notifications_v2';
-  static const String _chatMessageChannelId = 'lmt_chat_message_tone_v1';
-  static const String _postInteractionsChannelId = 'lmt_post_interactions_v1';
-  static const String _messageReactsChannelId = 'lmt_message_reacts_v1';
+  static const String _normalChannelId = 'lmt_normal_notifications_v3';
+  static const String _calendarChannelId = 'lmt_calendar_notifications_v3';
+  static const String _chatMessageChannelId = 'lmt_chat_message_tone_v2';
+  static const String _postInteractionsChannelId = 'lmt_post_interactions_v2';
+  static const String _messageReactsChannelId = 'lmt_message_reacts_v2';
 
   static const AndroidNotificationDetails _normalAndroidDetails =
       AndroidNotificationDetails(
@@ -119,6 +181,7 @@ class LocalNotificationService {
     visibility: NotificationVisibility.public,
     playSound: true,
     sound: RawResourceAndroidNotificationSound('normal_notifications'),
+    audioAttributesUsage: AudioAttributesUsage.notification,
     enableVibration: true,
     enableLights: true,
     fullScreenIntent: false,
@@ -139,6 +202,7 @@ class LocalNotificationService {
     visibility: NotificationVisibility.public,
     playSound: true,
     sound: RawResourceAndroidNotificationSound('calendar_notifications'),
+    audioAttributesUsage: AudioAttributesUsage.notification,
     enableVibration: true,
     enableLights: true,
     fullScreenIntent: true,
@@ -158,6 +222,7 @@ class LocalNotificationService {
     visibility: NotificationVisibility.public,
     playSound: true,
     sound: RawResourceAndroidNotificationSound('chat_message_tone'),
+    audioAttributesUsage: AudioAttributesUsage.notification,
     enableVibration: true,
     enableLights: true,
     fullScreenIntent: false,
@@ -178,6 +243,7 @@ class LocalNotificationService {
     visibility: NotificationVisibility.public,
     playSound: true,
     sound: RawResourceAndroidNotificationSound('post_interactions'),
+    audioAttributesUsage: AudioAttributesUsage.notification,
     enableVibration: true,
     enableLights: true,
     fullScreenIntent: false,
@@ -198,6 +264,7 @@ class LocalNotificationService {
     visibility: NotificationVisibility.public,
     playSound: true,
     sound: RawResourceAndroidNotificationSound('message_reacts'),
+    audioAttributesUsage: AudioAttributesUsage.notification,
     enableVibration: true,
     enableLights: true,
     fullScreenIntent: false,
@@ -267,12 +334,14 @@ class LocalNotificationService {
     } catch (_) {}
 
     if (kIsWeb) {
+      WebNotificationBridge.init(
+        LmtNotificationTone.values.map((t) => t.webAssetPath),
+      );
       _initialized = true;
       return;
     }
 
     try {
-
       const androidInit =
           AndroidInitializationSettings('@drawable/ic_notification');
       const iosInit = DarwinInitializationSettings(
@@ -307,12 +376,19 @@ class LocalNotificationService {
       final androidImpl = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       if (androidImpl != null) {
-        await androidImpl.requestNotificationsPermission();
-        await androidImpl.requestExactAlarmsPermission();
-
-        // Remove legacy cached channels so Android picks up the new dual channels
-        await androidImpl.deleteNotificationChannel('lmt_high_importance_channel');
-        await androidImpl.deleteNotificationChannel('lmt_custom_tone_channel_v1');
+        // Delete legacy/cached channels so Android creates fresh channels with
+        // intact raw sounds and AudioAttributesUsage.notification.
+        for (final legacyId in const [
+          'lmt_high_importance_channel',
+          'lmt_custom_tone_channel_v1',
+          'lmt_normal_notifications_v2',
+          'lmt_calendar_notifications_v2',
+          'lmt_chat_message_tone_v1',
+          'lmt_post_interactions_v1',
+          'lmt_message_reacts_v1',
+        ]) {
+          await androidImpl.deleteNotificationChannel(legacyId);
+        }
 
         await androidImpl.createNotificationChannel(
           const AndroidNotificationChannel(
@@ -323,6 +399,7 @@ class LocalNotificationService {
             importance: Importance.max,
             playSound: true,
             sound: RawResourceAndroidNotificationSound('normal_notifications'),
+            audioAttributesUsage: AudioAttributesUsage.notification,
             enableVibration: true,
           ),
         );
@@ -336,6 +413,7 @@ class LocalNotificationService {
             importance: Importance.max,
             playSound: true,
             sound: RawResourceAndroidNotificationSound('calendar_notifications'),
+            audioAttributesUsage: AudioAttributesUsage.notification,
             enableVibration: true,
           ),
         );
@@ -349,6 +427,7 @@ class LocalNotificationService {
             importance: Importance.max,
             playSound: true,
             sound: RawResourceAndroidNotificationSound('chat_message_tone'),
+            audioAttributesUsage: AudioAttributesUsage.notification,
             enableVibration: true,
           ),
         );
@@ -362,6 +441,7 @@ class LocalNotificationService {
             importance: Importance.max,
             playSound: true,
             sound: RawResourceAndroidNotificationSound('post_interactions'),
+            audioAttributesUsage: AudioAttributesUsage.notification,
             enableVibration: true,
           ),
         );
@@ -375,18 +455,9 @@ class LocalNotificationService {
             importance: Importance.max,
             playSound: true,
             sound: RawResourceAndroidNotificationSound('message_reacts'),
+            audioAttributesUsage: AudioAttributesUsage.notification,
             enableVibration: true,
           ),
-        );
-      }
-
-      final iosImpl = _plugin.resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin>();
-      if (iosImpl != null) {
-        await iosImpl.requestPermissions(
-          alert: true,
-          badge: true,
-          sound: true,
         );
       }
 
@@ -444,8 +515,47 @@ class LocalNotificationService {
         payload: encodedPayload,
       );
     } catch (e) {
-      debugPrint('showInstantNotification error: $e');
+      debugPrint('showInstantNotification primary error, trying fallback: $e');
+      try {
+        await _plugin.show(
+          _stableIdFromString(idKey),
+          title,
+          body,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'lmt_fallback_alerts_v1',
+              'L.M.T Alerts',
+              importance: Importance.max,
+              priority: Priority.high,
+              playSound: true,
+              icon: '@mipmap/ic_launcher',
+            ),
+            iOS: _normalIosDetails,
+          ),
+          payload: encodedPayload,
+        );
+      } catch (e2) {
+        debugPrint('showInstantNotification fallback error: $e2');
+      }
     }
+  }
+
+  /// Unlocks audio (Web/iOS Safari), requests OS notification permission if
+  /// missing, and immediately fires a test notification using [tone].
+  static Future<bool> testToneAndAlert({
+    LmtNotificationTone tone = LmtNotificationTone.chatMessage,
+    required String title,
+    required String body,
+  }) async {
+    await unlockWebAudioFromGesture();
+    final granted = await requestOsPermissions();
+    await showInstantNotification(
+      idKey: 'test_alert_${DateTime.now().millisecondsSinceEpoch}',
+      title: title,
+      body: body,
+      tone: tone,
+    );
+    return granted;
   }
 
   static void _scheduleWebTimer({

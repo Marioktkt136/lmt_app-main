@@ -77,6 +77,43 @@ class _ChattingRoomState extends State<ChattingRoom> {
     _isPushingGroup = false;
   }
 
+  Future<void> _confirmAndLeaveGroup(
+    BuildContext context,
+    ChatGroupModel group,
+  ) async {
+    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text(isArabic ? 'مغادرة المجموعة؟' : 'Exit Group?'),
+        content: Text(
+          isArabic
+              ? 'هل أنت متأكد من مغادرة "${group.name}"؟'
+              : 'Are you sure you want to exit "${group.name}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(isArabic ? 'إلغاء' : 'Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(isArabic ? 'مغادرة' : 'Exit'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    if (_desktopSelectedGroupId == group.id) {
+      setState(() => _desktopSelectedGroupId = null);
+    }
+    await context.read<LmtCubit>().leaveChatGroup(group.id);
+  }
+
   Widget _buildGroupListPane({
     required BuildContext context,
     required LmtState state,
@@ -87,7 +124,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
     final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final primary = AppColors.primaryOf(context);
     final textSecondary = AppColors.textSecondaryOf(context);
-    final canManageGroups = state.currentUser.role.canManageGroups;
+    final canCreateGroups = state.currentUser.role.canManageGroups;
     final canDeleteGroups = state.currentUser.role.canDeleteGroups;
 
     return Column(
@@ -112,7 +149,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
                 style: TextStyle(fontSize: 11.sp),
               ),
             ),
-            if (canManageGroups) ...[
+            if (canCreateGroups) ...[
               SizedBox(width: 6.w),
               IconButton.filled(
                 style: IconButton.styleFrom(backgroundColor: primary),
@@ -123,7 +160,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
             ],
           ],
         ),
-        SizedBox(height: 10.h),
+        SizedBox(height: 6.h),
         Expanded(
           child: groups.isEmpty
               ? LmtEmptyState(
@@ -134,19 +171,28 @@ class _ChattingRoomState extends State<ChattingRoom> {
                 )
               : ListView.separated(
                   physics: const BouncingScrollPhysics(),
-                  padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 6.h),
+                  padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 4.h),
                   itemCount: groups.length,
-                  separatorBuilder: (_, _) => SizedBox(height: 10.h),
+                  separatorBuilder: (_, _) => Divider(
+                    height: 1,
+                    indent: 72.w,
+                    endIndent: 10.w,
+                    color: AppColors.borderOf(context).withValues(alpha: 0.45),
+                  ),
                   itemBuilder: (context, index) {
                     final group = groups[index];
                     final lastMsg = state.lastMessageForGroup(group.id);
-                    final msgCount = state.messagesForGroup(group.id).length;
+                    final unreadCount =
+                        state.unreadMessagesCountForGroup(group.id);
+                    final canEditThisGroup =
+                        group.canUserEditGroup(state.currentUser);
 
                     return ChatGroupTile(
                       group: group,
                       lastMessage: lastMsg,
-                      messageCount: msgCount,
-                      canEditGroups: canManageGroups,
+                      unreadCount: unreadCount,
+                      currentUserId: state.currentUser.id,
+                      canEditGroups: canEditThisGroup,
                       canDeleteGroups: canDeleteGroups,
                       isSelected: isSplit && activeDesktopId == group.id,
                       onTap: () => _openGroup(group.id, forceSplit: isSplit),
@@ -158,6 +204,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
                         state,
                         existingGroup: group,
                       ),
+                      onLeave: () => _confirmAndLeaveGroup(context, group),
                       onDelete: () =>
                           context.read<LmtCubit>().deleteChatGroup(group.id),
                     );
@@ -188,8 +235,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
           if (_searchQuery.trim().isEmpty) return true;
           final q = _searchQuery.toLowerCase();
           return g.name.toLowerCase().contains(q) ||
-              g.description.toLowerCase().contains(q) ||
-              g.adminName.toLowerCase().contains(q);
+              g.description.toLowerCase().contains(q);
         }).toList();
 
         return LayoutBuilder(

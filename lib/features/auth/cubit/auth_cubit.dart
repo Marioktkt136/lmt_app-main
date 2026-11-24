@@ -104,6 +104,10 @@ mixin AuthCubitMixin on LmtBaseCubit {
     );
     await AppPreferences.setRememberMe(rememberMe);
 
+    final effectiveNotifications =
+        refreshedSnapshot?.notifications ?? state.notifications;
+    await seedKnownNotificationsForUser(matched.id, effectiveNotifications);
+
     emit(
       state.copyWith(
         sloganOfYear: refreshedSnapshot?.sloganOfYear ?? state.sloganOfYear,
@@ -114,13 +118,15 @@ mixin AuthCubitMixin on LmtBaseCubit {
         sharedFiles: refreshedSnapshot?.sharedFiles ?? state.sharedFiles,
         calendarEvents:
             refreshedSnapshot?.calendarEvents ?? state.calendarEvents,
-        notifications: refreshedSnapshot?.notifications ?? state.notifications,
+        notifications: effectiveNotifications,
+        khelwaDays: refreshedSnapshot?.khelwaDays ?? state.khelwaDays,
         currentUser: matched,
         members: currentMembers,
         activeLayoutTab: 0,
         clearSelectedChatGroup: true,
       ),
     );
+    alertUnseenNotificationsForCurrentUser(effectiveNotifications);
     await persistState();
     return matched;
   }
@@ -177,6 +183,8 @@ mixin AuthCubitMixin on LmtBaseCubit {
       accessToken: jwtToken,
       refreshToken: 'refresh_${user.id}_2026',
     );
+    await seedKnownNotificationsForUser(user.id, state.notifications);
+
     emit(
       state.copyWith(
         currentUser: user,
@@ -185,6 +193,7 @@ mixin AuthCubitMixin on LmtBaseCubit {
         clearSelectedChatGroup: true,
       ),
     );
+    alertUnseenNotificationsForCurrentUser(state.notifications);
     await persistState();
     return user;
   }

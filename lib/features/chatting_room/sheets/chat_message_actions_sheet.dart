@@ -169,16 +169,6 @@ void showChatMessageActionsSheet({
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: message.content));
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        isArabic
-                            ? 'تم نسخ الرسالة للحافظة'
-                            : 'Message copied to clipboard',
-                      ),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
                 },
               ),
               ListTile(
@@ -379,17 +369,6 @@ void showChatForwardDialog(
                         targetGroupId: grp.id,
                       );
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        isArabic
-                            ? 'تم إعادة توجيه الرسالة إلى ${grp.name}'
-                            : 'Forwarded to ${grp.name}',
-                      ),
-                      backgroundColor: AppColors.accentGreenOf(context),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
                 },
               ),
             ),

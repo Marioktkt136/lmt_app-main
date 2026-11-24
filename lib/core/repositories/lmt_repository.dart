@@ -39,6 +39,9 @@ class LmtRepositorySnapshot {
   /// All application notifications.
   final List<AppNotificationModel> notifications;
 
+  /// Daily Khelwa check-in lists keyed by date (`yyyy-MM-dd`).
+  final List<KhelwaDayModel> khelwaDays;
+
   /// Creates an [LmtRepositorySnapshot].
   const LmtRepositorySnapshot({
     required this.biometricEnabled,
@@ -52,6 +55,7 @@ class LmtRepositorySnapshot {
     required this.sharedFiles,
     required this.calendarEvents,
     required this.notifications,
+    this.khelwaDays = const [],
   });
 }
 
@@ -90,6 +94,17 @@ abstract class LmtRepository {
   /// Streams live merged repository snapshots whenever any remote cloud
   /// collection updates, enabling real-time multi-device Auto-Sync.
   Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
+
+  /// Atomically records [memberId] / [memberName] in today's remote Khelwa day
+  /// document (`khelwa_days/{dateKey}`) without overwriting concurrent check-ins.
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {}
+
+  /// Clears all check-ins for [dateKey] across the database (Admin only).
+  Future<void> resetKhelwaDay({required String dateKey}) async {}
 }
 
 /// Concrete local-first implementation of [LmtRepository].
@@ -112,6 +127,7 @@ class LmtLocalRepositoryImpl implements LmtRepository {
     List<SharedFileModel> sharedFiles = LmtSeedData.initialSharedFiles;
     List<CalendarEventModel> calendarEvents = LmtSeedData.initialEvents;
     List<AppNotificationModel> notifications = LmtSeedData.initialNotifications;
+    List<KhelwaDayModel> khelwaDays = const [];
     MemberModel currentUser = members.first;
 
     if (cachedJson != null && cachedJson.isNotEmpty) {
@@ -156,6 +172,11 @@ class LmtLocalRepositoryImpl implements LmtRepository {
                   AppNotificationModel.fromJson(e as Map<String, dynamic>))
               .toList();
         }
+        if (decoded['khelwaDays'] is List) {
+          khelwaDays = (decoded['khelwaDays'] as List)
+              .map((e) => KhelwaDayModel.fromJson(e as Map<String, dynamic>))
+              .toList();
+        }
         if (decoded['currentUser'] is Map<String, dynamic>) {
           currentUser = MemberModel.fromJson(
             decoded['currentUser'] as Map<String, dynamic>,
@@ -188,6 +209,7 @@ class LmtLocalRepositoryImpl implements LmtRepository {
       sharedFiles: sharedFiles,
       calendarEvents: calendarEvents,
       notifications: notifications,
+      khelwaDays: khelwaDays,
     );
   }
 
@@ -227,4 +249,14 @@ class LmtLocalRepositoryImpl implements LmtRepository {
 
   @override
   Stream<LmtRepositorySnapshot> watchLiveSnapshots() => const Stream.empty();
+
+  @override
+  Future<void> recordKhelwaCheckIn({
+    required String dateKey,
+    required String memberId,
+    required String memberName,
+  }) async {}
+
+  @override
+  Future<void> resetKhelwaDay({required String dateKey}) async {}
 }

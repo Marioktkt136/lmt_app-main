@@ -48,8 +48,12 @@ class GroupConversationRoom extends StatefulWidget {
 }
 
 class _GroupConversationRoomState extends State<GroupConversationRoom> {
+  static const double _bottomThresholdPx = 56.0;
+  static const double _showFabThresholdPx = 180.0;
+
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _listViewportKey = GlobalKey();
   final Map<String, GlobalKey> _messageKeys = {};
 
   ChatMessageModel? _replyingTo;
@@ -59,9 +63,14 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   Timer? _recordingTimer;
   Timer? _typingHideTimer;
   Timer? _highlightClearTimer;
+  Timer? _seenSyncThrottleTimer;
   bool _isTyping = false;
   DateTime? _lastTypingHeartbeatAt;
   bool _isMarkingSeen = false;
+  bool _showScrollToBottom = false;
+  String? _sessionUnreadAnchorMessageId;
+  int _sessionUnreadCount = 0;
+  bool _didInitialUnreadCheck = false;
   String? _playingVoiceMessageId;
   String? _highlightedMessageId;
   List<String> _savedStickers = const [];
@@ -71,21 +80,154 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   void initState() {
     super.initState();
     _loadSavedStickers();
+    _scrollController.addListener(_onScrollChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final cubit = context.read<LmtCubit>();
         _cubitRef = cubit;
         cubit.startWatchingGroupTyping(widget.group.id);
+        _initializeUnreadAnchorAndScroll();
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant GroupConversationRoom oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.group.id != widget.group.id) {
+      _cubitRef?.stopWatchingGroupTyping(oldWidget.group.id);
+      _didInitialUnreadCheck = false;
+      _sessionUnreadAnchorMessageId = null;
+      _sessionUnreadCount = 0;
+      _showScrollToBottom = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          final cubit = context.read<LmtCubit>();
+          _cubitRef = cubit;
+          cubit.startWatchingGroupTyping(widget.group.id);
+          _initializeUnreadAnchorAndScroll();
+        }
+      });
+    }
+  }
+
+  void _onScrollChanged() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final pixels = _scrollController.position.pixels;
+    final shouldShowFab = pixels > _showFabThresholdPx;
+    if (shouldShowFab != _showScrollToBottom) {
+      setState(() => _showScrollToBottom = shouldShowFab);
+    }
+    _scheduleVisibleSeenSync();
+  }
+
+  void _scheduleVisibleSeenSync() {
+    _seenSyncThrottleTimer?.cancel();
+    _seenSyncThrottleTimer = Timer(const Duration(milliseconds: 160), () {
+      if (mounted) {
         _syncSeenReceipts();
       }
     });
   }
 
+  Future<void> _initializeUnreadAnchorAndScroll() async {
+    if (!mounted || _didInitialUnreadCheck) return;
+    final cubit = context.read<LmtCubit>();
+    if (!cubit.state.isInitialized) return;
+    _didInitialUnreadCheck = true;
+
+    final messages = cubit.state.messagesForGroup(widget.group.id);
+    final uid = cubit.state.currentUser.id;
+    final firstUnreadIdx = messages.indexWhere(
+      (m) => m.senderId != uid && !m.seenBy.any((s) => s.memberId == uid),
+    );
+
+    if (firstUnreadIdx == -1) {
+      await _syncSeenReceipts();
+      return;
+    }
+
+    final anchorId = messages[firstUnreadIdx].id;
+    final unreadCount = messages
+        .where(
+          (m) => m.senderId != uid && !m.seenBy.any((s) => s.memberId == uid),
+        )
+        .length;
+
+    setState(() {
+      _sessionUnreadAnchorMessageId = anchorId;
+      _sessionUnreadCount = unreadCount;
+    });
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await _scrollToMessage(
+      anchorId,
+      messages,
+      alignment: 0.78,
+      highlight: false,
+    );
+    if (!mounted) return;
+    await _syncSeenReceipts();
+  }
+
   Future<void> _syncSeenReceipts() async {
     if (_isMarkingSeen || !mounted) return;
+    final cubit = context.read<LmtCubit>();
+    final messages = cubit.state.messagesForGroup(widget.group.id);
+    final uid = cubit.state.currentUser.id;
+    final hasAnyUnseen = messages.any(
+      (m) => m.senderId != uid && !m.seenBy.any((s) => s.memberId == uid),
+    );
+    if (!hasAnyUnseen) return;
+
     _isMarkingSeen = true;
     try {
-      await context.read<LmtCubit>().markGroupMessagesSeen(widget.group.id);
+      final atBottom = !_scrollController.hasClients ||
+          _scrollController.position.pixels <= _bottomThresholdPx;
+      if (atBottom) {
+        await cubit.markGroupMessagesSeen(widget.group.id);
+        return;
+      }
+
+      // User is paused/scrolled above the latest message: mark only up to the
+      // bottom edge of the visible viewport so deeper unseen messages below
+      // retain their unseen status until scrolled into view.
+      final viewportRender = _listViewportKey.currentContext?.findRenderObject();
+      var maxVisibleIdx = -1;
+      if (viewportRender is RenderBox && viewportRender.hasSize) {
+        final viewportBottomY = viewportRender
+            .localToGlobal(Offset(0, viewportRender.size.height))
+            .dy;
+        for (var i = 0; i < messages.length; i++) {
+          final ctx = _messageKeys[messages[i].id]?.currentContext;
+          final render = ctx?.findRenderObject();
+          if (render is RenderBox && render.attached && render.hasSize) {
+            final itemTopY = render.localToGlobal(Offset.zero).dy;
+            if (itemTopY <= viewportBottomY + 24.0) {
+              maxVisibleIdx = i;
+            }
+          }
+        }
+      }
+
+      if (maxVisibleIdx == -1 && _sessionUnreadAnchorMessageId != null) {
+        final anchorIdx =
+            messages.indexWhere((m) => m.id == _sessionUnreadAnchorMessageId);
+        if (anchorIdx != -1) {
+          maxVisibleIdx = anchorIdx;
+        }
+      }
+
+      if (maxVisibleIdx >= 0) {
+        final visibleIds = <String>{
+          for (var i = 0; i <= maxVisibleIdx; i++) messages[i].id,
+        };
+        await cubit.markGroupMessagesSeen(
+          widget.group.id,
+          onlyMessageIds: visibleIds,
+        );
+      }
     } finally {
       _isMarkingSeen = false;
     }
@@ -102,6 +244,8 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     _recordingTimer?.cancel();
     _typingHideTimer?.cancel();
     _highlightClearTimer?.cancel();
+    _seenSyncThrottleTimer?.cancel();
+    _scrollController.removeListener(_onScrollChanged);
     if (_isTyping) {
       _cubitRef?.setTypingInGroup(groupId: widget.group.id, isTyping: false);
     }
@@ -112,36 +256,30 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     super.dispose();
   }
 
-  Future<void> _jumpToOriginalMessage(
+  Future<void> _scrollToMessage(
     String targetMessageId,
-    List<ChatMessageModel> messages,
-  ) async {
+    List<ChatMessageModel> messages, {
+    double alignment = 0.45,
+    bool highlight = true,
+  }) async {
     final targetIdx = messages.indexWhere((m) => m.id == targetMessageId);
     if (targetIdx == -1) {
       if (!mounted) return;
-      final isArabic = Localizations.localeOf(context).languageCode == 'ar';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isArabic
-                ? 'لم يتم العثور على الرسالة الأصلية'
-                : 'Original message not found',
-          ),
-        ),
-      );
       return;
     }
 
-    _highlightClearTimer?.cancel();
-    setState(() => _highlightedMessageId = targetMessageId);
+    if (highlight) {
+      _highlightClearTimer?.cancel();
+      setState(() => _highlightedMessageId = targetMessageId);
+    }
 
     final directContext = _messageKeys[targetMessageId]?.currentContext;
     if (directContext != null) {
       await Scrollable.ensureVisible(
         directContext,
-        duration: const Duration(milliseconds: 350),
+        duration: const Duration(milliseconds: 300),
         curve: Curves.easeOutCubic,
-        alignment: 0.45,
+        alignment: alignment,
       );
     } else if (_scrollController.hasClients) {
       final totalItems = messages.length;
@@ -150,23 +288,19 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       if (maxExtent > 0 && totalItems > 1) {
         final estimatedOffset =
             ((reversedIdx / (totalItems - 1)) * maxExtent).clamp(0.0, maxExtent);
-        await _scrollController.animateTo(
-          estimatedOffset,
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeOutCubic,
-        );
+        _scrollController.jumpTo(estimatedOffset);
       }
 
-      for (var attempt = 0; attempt < 18; attempt++) {
+      for (var attempt = 0; attempt < 24; attempt++) {
         await WidgetsBinding.instance.endOfFrame;
         if (!mounted) return;
         final ctx = _messageKeys[targetMessageId]?.currentContext;
         if (ctx != null && ctx.mounted) {
           await Scrollable.ensureVisible(
             ctx,
-            duration: const Duration(milliseconds: 280),
+            duration: const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
-            alignment: 0.45,
+            alignment: alignment,
           );
           break;
         }
@@ -188,7 +322,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       }
     }
 
-    if (!mounted) return;
+    if (!mounted || !highlight) return;
     _highlightClearTimer?.cancel();
     _highlightClearTimer = Timer(const Duration(milliseconds: 2000), () {
       if (!mounted) return;
@@ -197,6 +331,12 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       }
     });
   }
+
+  Future<void> _jumpToOriginalMessage(
+    String targetMessageId,
+    List<ChatMessageModel> messages,
+  ) =>
+      _scrollToMessage(targetMessageId, messages);
 
   void _handleTextChanged(String value) {
     _typingHideTimer?.cancel();
@@ -233,13 +373,17 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   }
 
   void _scrollToLatest() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (_scrollController.hasClients) {
-        _scrollController.animateTo(
+        await _scrollController.animateTo(
           0.0,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
         );
+      }
+      if (mounted) {
+        setState(() => _showScrollToBottom = false);
+        await _syncSeenReceipts();
       }
     });
   }
@@ -259,15 +403,27 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       );
       if (!mounted) return;
       if (!edited) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+        showDialog<void>(
+          context: context,
+          builder: (dialogCtx) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.schedule_rounded, color: AppColors.warning),
+                const SizedBox(width: 8),
+                Text(isArabic ? 'انتهت مهلة التعديل' : 'Edit Window Expired'),
+              ],
+            ),
             content: Text(
               isArabic
                   ? 'انتهى الوقت المتاح لتعديل هذه الرسالة (الحد الأقصى 15 دقيقة)'
                   : 'Edit window expired (messages can only be edited within 15 minutes)',
             ),
-            backgroundColor: AppColors.warning,
-            behavior: SnackBarBehavior.floating,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogCtx),
+                child: Text(isArabic ? 'حسناً' : 'OK'),
+              ),
+            ],
           ),
         );
       }
@@ -304,15 +460,27 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     if (!mounted) return;
 
     if (!granted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+      showDialog<void>(
+        context: context,
+        builder: (dialogCtx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.mic_off_rounded, color: AppColors.error),
+              const SizedBox(width: 8),
+              Text(isArabic ? 'إذن الميكروفون' : 'Microphone Permission'),
+            ],
+          ),
           content: Text(
             isArabic
                 ? 'يرجى السماح بإذن الميكروفون (Microphone Permission) لتسجيل الرسائل الصوتية 🎤'
                 : 'Please grant Microphone permission to record voice notes 🎤',
           ),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: Text(isArabic ? 'حسناً' : 'OK'),
+            ),
+          ],
         ),
       );
       return;
@@ -402,7 +570,6 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   }
 
   Future<void> _captureCameraAndSend() async {
-    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
     final picked = await DeviceFileHelper.capturePhotoFromCamera(context);
     if (!mounted || picked == null || picked.path == null) return;
 
@@ -422,21 +589,11 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     if (!mounted) return;
     setState(() => _replyingTo = null);
     _scrollToLatest();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          isArabic ? 'تم التقاط وإرسال الصورة 📷✅' : 'Photo captured & sent 📷✅',
-        ),
-        backgroundColor: AppColors.accentGreenOf(context),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   Future<void> _saveStickerMessage(ChatMessageModel msg) async {
     final path = msg.attachmentPath?.trim();
     if (path == null || path.isEmpty) return;
-    final isArabic = Localizations.localeOf(context).languageCode == 'ar';
 
     if (!_savedStickers.contains(path)) {
       final updated = [path, ..._savedStickers];
@@ -445,18 +602,6 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
         setState(() => _savedStickers = updated);
       }
     }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          isArabic
-              ? 'تم حفظ الملصق في ملصقاتك المحفوظة ⭐'
-              : 'Sticker saved to your Saved Stickers ⭐',
-        ),
-        backgroundColor: AppColors.accentGreenOf(context),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   @override
@@ -465,12 +610,15 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       builder: (context, state) {
         final isArabic = Localizations.localeOf(context).languageCode == 'ar';
         final messages = state.messagesForGroup(widget.group.id);
-        final hasUnseenIncoming = messages.any(
-          (m) =>
-              m.senderId != state.currentUser.id &&
-              !m.seenBy.any((s) => s.memberId == state.currentUser.id),
-        );
-        if (hasUnseenIncoming && !_isMarkingSeen) {
+        final liveUnreadCount = state.unreadMessagesCountForGroup(widget.group.id);
+        if (!_didInitialUnreadCheck && state.isInitialized) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _initializeUnreadAnchorAndScroll();
+          });
+        } else if (liveUnreadCount > 0 &&
+            !_isMarkingSeen &&
+            (!_scrollController.hasClients ||
+                _scrollController.position.pixels <= _bottomThresholdPx)) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _syncSeenReceipts();
           });
@@ -496,6 +644,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
               SizedBox(height: 8.h),
             ],
             Expanded(
+              key: _listViewportKey,
               child: messages.isEmpty
                   ? LmtEmptyState(
                       icon: Icons.chat_bubble_outline_rounded,
@@ -503,69 +652,101 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                           ? 'ابدأ المحادثة الآن في ${widget.group.name}'
                           : 'Start chatting in ${widget.group.name}',
                     )
-                  : ListView.builder(
-                      controller: _scrollController,
-                      reverse: true,
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final msg = messages[messages.length - 1 - index];
-                        final isMe = msg.senderId == state.currentUser.id;
-                        final senderAvatarOverride = state.members
-                            .where((m) => m.id == msg.senderId)
-                            .map((m) => m.avatarPath)
-                            .firstOrNull;
-                        final itemKey = _messageKeys.putIfAbsent(
-                          msg.id,
-                          GlobalKey.new,
-                        );
+                  : Stack(
+                      children: [
+                        ListView.builder(
+                          controller: _scrollController,
+                          reverse: true,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: messages.length,
+                          itemBuilder: (context, index) {
+                            final msg = messages[messages.length - 1 - index];
+                            final isMe = msg.senderId == state.currentUser.id;
+                            final senderAvatarOverride = state.members
+                                .where((m) => m.id == msg.senderId)
+                                .map((m) => m.avatarPath)
+                                .firstOrNull;
+                            final itemKey = _messageKeys.putIfAbsent(
+                              msg.id,
+                              GlobalKey.new,
+                            );
 
-                        return KeyedSubtree(
-                          key: itemKey,
-                          child: ChatMessageBubble(
-                            msg: msg,
-                            isMe: isMe,
-                            senderAvatarOverride: senderAvatarOverride,
-                            isPlayingVoice: _playingVoiceMessageId == msg.id,
-                            isHighlighted: _highlightedMessageId == msg.id,
-                            onTapReplyPreview: msg.replyToMessageId != null
-                                ? () => _jumpToOriginalMessage(
-                                      msg.replyToMessageId!,
-                                      messages,
-                                    )
-                                : null,
-                            onShowActions: () => showChatMessageActionsSheet(
-                              context: context,
-                              state: state,
-                              group: widget.group,
-                              message: msg,
-                              onSaveSticker: _saveStickerMessage,
+                            final bubble = ChatMessageBubble(
+                              msg: msg,
+                              isMe: isMe,
+                              senderAvatarOverride: senderAvatarOverride,
+                              isPlayingVoice: _playingVoiceMessageId == msg.id,
+                              isHighlighted: _highlightedMessageId == msg.id,
+                              onTapReplyPreview: msg.replyToMessageId != null
+                                  ? () => _jumpToOriginalMessage(
+                                        msg.replyToMessageId!,
+                                        messages,
+                                      )
+                                  : null,
+                              onShowActions: () => showChatMessageActionsSheet(
+                                context: context,
+                                state: state,
+                                group: widget.group,
+                                message: msg,
+                                onSaveSticker: _saveStickerMessage,
+                                onReply: (target) => setState(() {
+                                  _replyingTo = target;
+                                  _editingMessage = null;
+                                }),
+                                onEdit: (target) => setState(() {
+                                  _editingMessage = target;
+                                  _replyingTo = null;
+                                  _messageController.text = target.content;
+                                }),
+                              ),
+                              onShowSeenBy: () =>
+                                  showChatSeenBySheet(context, msg),
+                              onToggleReaction: (emoji) => context
+                                  .read<LmtCubit>()
+                                  .toggleMessageReaction(
+                                    messageId: msg.id,
+                                    emoji: emoji,
+                                  ),
+                              onToggleVoicePlay: () => _togglePlayVoiceNote(msg),
                               onReply: (target) => setState(() {
                                 _replyingTo = target;
                                 _editingMessage = null;
                               }),
-                              onEdit: (target) => setState(() {
-                                _editingMessage = target;
-                                _replyingTo = null;
-                                _messageController.text = target.content;
-                              }),
+                              onSaveSticker: _saveStickerMessage,
+                            );
+
+                            final showUnreadBannerHere =
+                                msg.id == _sessionUnreadAnchorMessageId &&
+                                    _sessionUnreadCount > 0;
+
+                            return KeyedSubtree(
+                              key: itemKey,
+                              child: showUnreadBannerHere
+                                  ? Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        _UnreadMessagesStopBanner(
+                                          count: _sessionUnreadCount,
+                                          isArabic: isArabic,
+                                        ),
+                                        bubble,
+                                      ],
+                                    )
+                                  : bubble,
+                            );
+                          },
+                        ),
+                        if (_showScrollToBottom)
+                          PositionedDirectional(
+                            end: 10.w,
+                            bottom: 10.h,
+                            child: _ScrollToBottomFab(
+                              unreadCount: liveUnreadCount,
+                              onPressed: _scrollToLatest,
                             ),
-                            onShowSeenBy: () => showChatSeenBySheet(context, msg),
-                            onToggleReaction: (emoji) => context
-                                .read<LmtCubit>()
-                                .toggleMessageReaction(
-                                  messageId: msg.id,
-                                  emoji: emoji,
-                                ),
-                            onToggleVoicePlay: () => _togglePlayVoiceNote(msg),
-                            onReply: (target) => setState(() {
-                              _replyingTo = target;
-                              _editingMessage = null;
-                            }),
-                            onSaveSticker: _saveStickerMessage,
                           ),
-                        );
-                      },
+                      ],
                     ),
             ),
             Builder(
@@ -623,6 +804,120 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
         ),
         );
       },
+    );
+  }
+}
+
+class _UnreadMessagesStopBanner extends StatelessWidget {
+  final int count;
+  final bool isArabic;
+
+  const _UnreadMessagesStopBanner({
+    required this.count,
+    required this.isArabic,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const badgeGreen = Color(0xFF25D366);
+    final label = isArabic
+        ? '$count رسائل غير مقروءة'
+        : '$count unread ${count == 1 ? 'message' : 'messages'}';
+
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 10.h),
+      padding: EdgeInsets.symmetric(vertical: 6.h),
+      decoration: BoxDecoration(
+        color: badgeGreen.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12.r),
+      ),
+      child: Center(
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 4.h),
+          decoration: BoxDecoration(
+            color: AppColors.cardSurfaceOf(context),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: badgeGreen.withValues(alpha: 0.45)),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5.sp,
+              fontWeight: FontWeight.bold,
+              color: badgeGreen,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScrollToBottomFab extends StatelessWidget {
+  final int unreadCount;
+  final VoidCallback onPressed;
+
+  const _ScrollToBottomFab({
+    required this.unreadCount,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const badgeGreen = Color(0xFF25D366);
+    final primary = AppColors.primaryOf(context);
+    final surface = AppColors.cardSurfaceOf(context);
+    final iconColor = AppColors.textPrimaryOf(context);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Material(
+          elevation: 5,
+          shape: const CircleBorder(),
+          color: surface,
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onPressed,
+            child: Container(
+              width: 42.w,
+              height: 42.w,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: primary.withValues(alpha: 0.25),
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.keyboard_double_arrow_down_rounded,
+                size: 22.sp,
+                color: iconColor,
+              ),
+            ),
+          ),
+        ),
+        if (unreadCount > 0)
+          Positioned(
+            top: -6,
+            right: -4,
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
+              decoration: BoxDecoration(
+                color: badgeGreen,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                unreadCount > 99 ? '99+' : '$unreadCount',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.sp,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
