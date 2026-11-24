@@ -308,6 +308,41 @@ class WebNotificationBridge {
     unawaited(playToneAsset(toneAssetPath));
 
     if (!isSupported || permissionStatus != 'granted') return false;
+
+    // Prefer active ServiceWorkerRegistration.showNotification FIRST because
+    // it delivers alerts reliably on Android Chrome / Desktop lock screens &
+    // backgrounded tabs where the window Notification() constructor is blocked.
+    try {
+      final navObj = web.window.navigator as JSObject;
+      final sw = navObj.getProperty<JSObject?>('serviceWorker'.toJS);
+      if (sw != null) {
+        final controller = sw.getProperty<JSAny?>('controller'.toJS);
+        if (controller != null && !controller.isUndefinedOrNull) {
+          final reg = await sw
+              .getProperty<JSPromise<JSObject>>('ready'.toJS)
+              .toDart
+              .timeout(const Duration(milliseconds: 600));
+          final opts = JSObject()
+            ..setProperty('body'.toJS, body.toJS)
+            ..setProperty('icon'.toJS, 'icons/Icon-192.png?v=3'.toJS)
+            ..setProperty('badge'.toJS, 'icons/Icon-192.png?v=3'.toJS)
+            ..setProperty('tag'.toJS, idKey.toJS)
+            ..setProperty('renotify'.toJS, true.toJS);
+          if (payload != null && payload.isNotEmpty) {
+            opts.setProperty('data'.toJS, payload.toJS);
+          }
+          await reg
+              .callMethod<JSPromise<JSAny?>>(
+                'showNotification'.toJS,
+                title.toJS,
+                opts,
+              )
+              .toDart;
+          return true;
+        }
+      }
+    } catch (_) {}
+
     try {
       final notif = web.Notification(
         title,
@@ -329,8 +364,6 @@ class WebNotificationBridge {
       );
       return true;
     } catch (_) {
-      // Fallback for mobile Android Chrome / iOS PWA where Notification()
-      // constructor requires ServiceWorkerRegistration.showNotification().
       try {
         final navObj = web.window.navigator as JSObject;
         final sw = navObj.getProperty<JSObject?>('serviceWorker'.toJS);
@@ -342,7 +375,9 @@ class WebNotificationBridge {
         final opts = JSObject()
           ..setProperty('body'.toJS, body.toJS)
           ..setProperty('icon'.toJS, 'icons/Icon-192.png?v=3'.toJS)
-          ..setProperty('tag'.toJS, idKey.toJS);
+          ..setProperty('badge'.toJS, 'icons/Icon-192.png?v=3'.toJS)
+          ..setProperty('tag'.toJS, idKey.toJS)
+          ..setProperty('renotify'.toJS, true.toJS);
         await reg
             .callMethod<JSPromise<JSAny?>>(
               'showNotification'.toJS,

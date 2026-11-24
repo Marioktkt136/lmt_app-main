@@ -84,6 +84,24 @@ class _InMemoryLmtRepo implements LmtRepository {
   Future<void> resetKhelwaDay({required String dateKey}) async {
     resetKhelwaCalls.add(dateKey);
   }
+
+  @override
+  Future<void> persistLocalSnapshot({
+    required Map<String, dynamic> stateJson,
+    required String currentUserId,
+  }) async {}
+
+  @override
+  Future<void> sendChatMessageToCloud({
+    required ChatMessageModel message,
+    AppNotificationModel? notification,
+  }) async {}
+
+  @override
+  Future<void> markMessagesSeenInCloud({
+    required List<ChatMessageModel> updatedMessages,
+    required SeenStatusModel viewerReceipt,
+  }) async {}
 }
 
 const _user1 = MemberModel(

@@ -39,8 +39,13 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   static const Duration _remoteTimeout = Duration(seconds: 8);
   static const int _maxBatchOps = 400;
 
-  /// Tracks serialized JSON payloads last seen or written per collection & doc ID.
+  /// Tracks serialized canonical JSON payloads (excluding `updatedByUid`) last
+  /// seen or written per collection & doc ID.
   final Map<String, Map<String, String>> _lastSyncedDocs = {};
+
+  /// Tracks document IDs actually delivered to or authored by the UI layer so
+  /// concurrent remote additions are never deleted before reaching state.
+  final Map<String, Set<String>> _deliveredDocIds = {};
 
   /// Live decoded doc maps per collection used by [watchLiveSnapshots].
   final Map<String, Map<String, Map<String, dynamic>>> _liveDocs = {};
@@ -75,6 +80,33 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     return trimmed.length <= maxLen ? trimmed : fallback;
   }
 
+  String _clampRequiredText(dynamic raw, int maxLen, String fallback) {
+    if (raw is! String) return fallback;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return fallback;
+    return trimmed.length <= maxLen ? trimmed : trimmed.substring(0, maxLen);
+  }
+
+  String? _clampNullableText(
+    dynamic raw,
+    int minLen,
+    int maxLen, {
+    bool allowEmpty = false,
+  }) {
+    if (raw == null) return null;
+    if (raw is! String) return null;
+    final trimmed = raw.trim();
+    if (!allowEmpty && trimmed.length < minLen) return null;
+    return trimmed.length <= maxLen ? trimmed : trimmed.substring(0, maxLen);
+  }
+
+  /// Strips volatile audit metadata (`updatedByUid`) so diffing compares actual
+  /// domain payloads across users without rewriting untouched collections.
+  String _canonicalDocJson(Map<String, dynamic> doc) {
+    final copy = Map<String, dynamic>.from(doc)..remove('updatedByUid');
+    return jsonEncode(copy);
+  }
+
   /// Strips sensitive credentials before storing member directory records in
   /// Firestore and attaches the current anonymous auth UID for auditability.
   Map<String, dynamic> _prepareDocForCloud(
@@ -97,12 +129,20 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           AppAssets.accountIcon,
         );
       }
+      if (copy.containsKey('senderName')) {
+        copy['senderName'] =
+            _clampRequiredText(copy['senderName'], 120, 'L.M.T Member');
+      }
       if (copy.containsKey('creatorAvatar')) {
         copy['creatorAvatar'] = _clampBoundedPath(
           copy['creatorAvatar'],
           500,
           AppAssets.accountIcon,
         );
+      }
+      if (copy.containsKey('creatorName')) {
+        copy['creatorName'] =
+            _clampRequiredText(copy['creatorName'], 120, 'L.M.T Member');
       }
       if (copy.containsKey('imagePath')) {
         copy['imagePath'] = _clampBoundedPath(
@@ -122,6 +162,102 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       if (copy['localFilePath'] is String &&
           (copy['localFilePath'] as String).length > 1000) {
         copy['localFilePath'] = null;
+      }
+      if (copy.containsKey('replyToPreview')) {
+        copy['replyToPreview'] = _clampNullableText(
+          copy['replyToPreview'],
+          0,
+          1000,
+          allowEmpty: true,
+        );
+      }
+      if (copy.containsKey('replyToSenderName')) {
+        copy['replyToSenderName'] =
+            _clampNullableText(copy['replyToSenderName'], 1, 120);
+      }
+      if (copy.containsKey('forwardedFromGroup')) {
+        copy['forwardedFromGroup'] =
+            _clampNullableText(copy['forwardedFromGroup'], 1, 150);
+      }
+      if (copy.containsKey('fileSize')) {
+        copy['fileSize'] = _clampNullableText(copy['fileSize'], 1, 50);
+      }
+      if (copy['content'] is String) {
+        final contentStr = copy['content'] as String;
+        final isChatMessage = copy.containsKey('groupId') && copy.containsKey('type');
+        final typeStr = copy['type'] as String? ?? 'text';
+        if (isChatMessage && typeStr == 'text' && contentStr.trim().isEmpty) {
+          copy['content'] = ' ';
+        } else if (contentStr.length > 5000) {
+          copy['content'] = contentStr.substring(0, 5000);
+        }
+      }
+      if (copy['seenBy'] is List) {
+        final msgSenderId = (copy['senderId'] as String? ?? '').trim();
+        final cleanedSeen = <Map<String, dynamic>>[];
+        final seenMemberIds = <String>{};
+        for (final entry in (copy['seenBy'] as List).whereType<Map>()) {
+          final seen = Map<String, dynamic>.from(entry);
+          final mid = _clampNullableText(seen['memberId'], 1, 64);
+          if (mid == null || mid == msgSenderId || !seenMemberIds.add(mid)) {
+            continue;
+          }
+          seen['memberId'] = mid;
+          seen['memberName'] =
+              _clampRequiredText(seen['memberName'], 120, 'L.M.T Member');
+          seen['avatarPath'] = _clampBoundedPath(
+            seen['avatarPath'],
+            500,
+            AppAssets.accountIcon,
+          );
+          if (seen['timestamp'] is! String ||
+              (seen['timestamp'] as String).length < 19) {
+            seen['timestamp'] = DateTime.now().toIso8601String();
+          }
+          seen['hasListened'] = seen['hasListened'] == true;
+          cleanedSeen.add(seen);
+          if (cleanedSeen.length >= 500) break;
+        }
+        copy['seenBy'] = cleanedSeen;
+      }
+      if (copy['reactions'] is Map) {
+        final cleanedReactions = <String, List<String>>{};
+        (copy['reactions'] as Map).forEach((k, v) {
+          final key = k.toString().trim();
+          if (key.isEmpty || key.length > 16 || cleanedReactions.length >= 50) {
+            return;
+          }
+          if (v is List) {
+            final names = v
+                .map((e) => e.toString().trim())
+                .where((s) => s.isNotEmpty)
+                .map((s) => s.length <= 120 ? s : s.substring(0, 120))
+                .take(200)
+                .toList();
+            if (names.isNotEmpty) {
+              cleanedReactions[key] = names;
+            }
+          }
+        });
+        copy['reactions'] = cleanedReactions;
+      }
+      if (copy['comments'] is List) {
+        final cleanedComments = <Map<String, dynamic>>[];
+        for (final entry in (copy['comments'] as List).whereType<Map>()) {
+          final c = Map<String, dynamic>.from(entry);
+          c['id'] = _clampRequiredText(c['id'], 64, 'cmt_${cleanedComments.length}');
+          c['authorId'] = _clampRequiredText(c['authorId'], 64, 'LMT-2026-001');
+          c['authorName'] = _clampRequiredText(c['authorName'], 120, 'L.M.T Member');
+          c['authorAvatar'] = _clampBoundedPath(
+            c['authorAvatar'],
+            500,
+            AppAssets.accountIcon,
+          );
+          c['content'] = _clampRequiredText(c['content'], 2000, '💬');
+          cleanedComments.add(c);
+          if (cleanedComments.length >= 500) break;
+        }
+        copy['comments'] = cleanedComments;
       }
     }
     copy['updatedByUid'] = uid;
@@ -190,12 +326,51 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     final encodedMap = <String, String>{};
     final rawMap = <String, Map<String, dynamic>>{};
     for (final doc in docs) {
-      final data = Map<String, dynamic>.from(doc.data());
-      encodedMap[doc.id] = jsonEncode(data);
-      rawMap[doc.id] = {...data, 'id': doc.id};
+      final data = {...doc.data(), 'id': doc.id};
+      encodedMap[doc.id] = _canonicalDocJson(data);
+      rawMap[doc.id] = data;
     }
     _lastSyncedDocs[collectionName] = encodedMap;
     _liveDocs[collectionName] = rawMap;
+  }
+
+  /// Unions incoming `seenBy` receipts from remote live docs into a local
+  /// chat message document so concurrent Seen writes across devices never wipe
+  /// another member's receipt.
+  Map<String, dynamic> _mergeRemoteSeenReceiptsIntoMessage(
+    String msgId,
+    Map<String, dynamic> localDoc,
+  ) {
+    final remoteDoc = _liveDocs[_chatMessagesCol]?[msgId];
+    if (remoteDoc == null) return localDoc;
+    final remoteSeen = remoteDoc['seenBy'];
+    if (remoteSeen is! List || remoteSeen.isEmpty) return localDoc;
+
+    final senderId = (localDoc['senderId'] as String? ?? '').trim();
+    final mergedById = <String, Map<String, dynamic>>{};
+
+    void ingest(dynamic rawList) {
+      if (rawList is! List) return;
+      for (final item in rawList.whereType<Map>()) {
+        final map = Map<String, dynamic>.from(item);
+        final memberId = (map['memberId'] as String? ?? '').trim();
+        if (memberId.isEmpty || memberId == senderId) continue;
+        final prev = mergedById[memberId];
+        if (prev == null) {
+          mergedById[memberId] = map;
+        } else {
+          final listened =
+              (prev['hasListened'] == true) || (map['hasListened'] == true);
+          mergedById[memberId] = {...prev, ...map, 'hasListened': listened};
+        }
+      }
+    }
+
+    ingest(remoteSeen);
+    ingest(localDoc['seenBy']);
+    final updated = Map<String, dynamic>.from(localDoc);
+    updated['seenBy'] = mergedById.values.take(500).toList();
+    return updated;
   }
 
   Future<void> _commitCollectionSafely({
@@ -221,38 +396,115 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   }) async {
     final colRef = db.collection(collectionName);
     final previousMap = _lastSyncedDocs[collectionName] ?? const {};
+    final deliveredIds = _deliveredDocIds[collectionName] ?? const <String>{};
+    final previousRawMap = _liveDocs[collectionName] ?? const {};
     final nextMap = <String, String>{};
     final nextRawMap = <String, Map<String, dynamic>>{};
-    final operations = <void Function(WriteBatch)>[];
+    final ops = <({String id, bool isDelete, Map<String, dynamic>? data})>[];
 
-    for (final data in docs) {
-      final id = data['id'] as String?;
+    for (final raw in docs) {
+      final id = raw['id'] as String?;
       if (id == null || id.trim().isEmpty) continue;
-      final encoded = jsonEncode(data);
-      nextMap[id] = encoded;
+      final data = collectionName == _chatMessagesCol
+          ? _mergeRemoteSeenReceiptsIntoMessage(id, raw)
+          : raw;
+      final canonical = _canonicalDocJson(data);
+      nextMap[id] = canonical;
       nextRawMap[id] = data;
-      if (previousMap[id] != encoded) {
-        operations.add((batch) => batch.set(colRef.doc(id), data));
+      if (previousMap[id] != canonical) {
+        ops.add((id: id, isDelete: false, data: data));
       }
     }
 
-    for (final staleId in previousMap.keys) {
+    // Only delete documents that were actually delivered into the client UI
+    // state and intentionally removed locally — NEVER delete remote docs that
+    // arrived asynchronously before LmtCubit consumed the live snapshot.
+    for (final entry in previousMap.entries) {
+      final staleId = entry.key;
       if (!nextMap.containsKey(staleId)) {
-        operations.add((batch) => batch.delete(colRef.doc(staleId)));
+        if (deliveredIds.contains(staleId)) {
+          ops.add((id: staleId, isDelete: true, data: null));
+        } else {
+          nextMap[staleId] = entry.value;
+          final raw = previousRawMap[staleId];
+          if (raw != null) {
+            nextRawMap[staleId] = raw;
+          }
+        }
       }
     }
 
-    for (var i = 0; i < operations.length; i += _maxBatchOps) {
-      final batch = db.batch();
-      final end = (i + _maxBatchOps).clamp(0, operations.length);
-      for (var j = i; j < end; j++) {
-        operations[j](batch);
+    final succeededIds = <String>{};
+    final failedIds = <String>{};
+
+    for (var i = 0; i < ops.length; i += _maxBatchOps) {
+      final slice = ops.sublist(i, (i + _maxBatchOps).clamp(0, ops.length));
+      try {
+        final batch = db.batch();
+        for (final op in slice) {
+          if (op.isDelete) {
+            batch.delete(colRef.doc(op.id));
+          } else {
+            batch.set(colRef.doc(op.id), op.data!);
+          }
+        }
+        await batch.commit().timeout(_remoteTimeout);
+        for (final op in slice) {
+          succeededIds.add(op.id);
+        }
+      } catch (batchErr) {
+        debugPrint(
+          'Firestore batch fallback [$collectionName] (${slice.length} ops): $batchErr',
+        );
+        for (final op in slice) {
+          try {
+            if (op.isDelete) {
+              await colRef.doc(op.id).delete().timeout(_remoteTimeout);
+            } else {
+              await colRef.doc(op.id).set(op.data!).timeout(_remoteTimeout);
+            }
+            succeededIds.add(op.id);
+          } catch (singleErr) {
+            failedIds.add(op.id);
+            debugPrint(
+              'Firestore single-doc error [$collectionName/${op.id}]: $singleErr',
+            );
+          }
+        }
       }
-      await batch.commit().timeout(_remoteTimeout);
+    }
+
+    for (final fid in failedIds) {
+      if (previousMap.containsKey(fid)) {
+        nextMap[fid] = previousMap[fid]!;
+        final prevRaw = previousRawMap[fid];
+        if (prevRaw != null) {
+          nextRawMap[fid] = prevRaw;
+        }
+      } else {
+        nextMap.remove(fid);
+        nextRawMap.remove(fid);
+      }
+    }
+
+    // Re-absorb any remote docs pushed by watchCollection while batch.commit
+    // was awaiting network, provided this commit did not intentionally delete them.
+    final latestLive = _liveDocs[collectionName] ?? const {};
+    final latestSynced = _lastSyncedDocs[collectionName] ?? const {};
+    for (final entry in latestLive.entries) {
+      final id = entry.key;
+      if (!nextRawMap.containsKey(id) && !succeededIds.contains(id)) {
+        nextRawMap[id] = entry.value;
+        final synced = latestSynced[id];
+        if (synced != null) {
+          nextMap[id] = synced;
+        }
+      }
     }
 
     _lastSyncedDocs[collectionName] = nextMap;
     _liveDocs[collectionName] = nextRawMap;
+    _deliveredDocIds[collectionName] = nextRawMap.keys.toSet();
   }
 
   Future<void> _syncBrandingDoc(
@@ -402,6 +654,16 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       },
       currentUserId: matchedSaved?.id ?? '',
     );
+
+    _deliveredDocIds[_membersCol] = membersMap.keys.toSet();
+    _deliveredDocIds[_memberAuthCol] = authMap.keys.toSet();
+    _deliveredDocIds[_chatGroupsCol] = groupsMap.keys.toSet();
+    _deliveredDocIds[_chatMessagesCol] = messagesMap.keys.toSet();
+    _deliveredDocIds[_postsCol] = postsMap.keys.toSet();
+    _deliveredDocIds[_sharedFilesCol] = filesMap.keys.toSet();
+    _deliveredDocIds[_calendarEventsCol] = eventsMap.keys.toSet();
+    _deliveredDocIds[_notificationsCol] = notifsMap.keys.toSet();
+    _deliveredDocIds[_khelwaDaysCol] = khelwaDaysMap.keys.toSet();
 
     return LmtRepositorySnapshot(
       biometricEnabled: fallback.biometricEnabled,
@@ -594,28 +856,112 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           .get()
           .timeout(_remoteTimeout);
 
-      _recordSnapshotPayloads(_membersCol, membersSnap.docs);
-      _recordSnapshotPayloads(_memberAuthCol, memberAuthSnap.docs);
-      _recordSnapshotPayloads(_chatGroupsCol, groupsSnap.docs);
-      _recordSnapshotPayloads(_chatMessagesCol, messagesSnap.docs);
-      _recordSnapshotPayloads(_postsCol, postsSnap.docs);
-      _recordSnapshotPayloads(_sharedFilesCol, filesSnap.docs);
-      _recordSnapshotPayloads(_calendarEventsCol, eventsSnap.docs);
-      _recordSnapshotPayloads(_notificationsCol, notifsSnap.docs);
-      _recordSnapshotPayloads(_khelwaDaysCol, khelwaDaysSnap.docs);
+      if (!_persistInFlight) {
+        _recordSnapshotPayloads(_membersCol, membersSnap.docs);
+        _recordSnapshotPayloads(_memberAuthCol, memberAuthSnap.docs);
+        _recordSnapshotPayloads(_chatGroupsCol, groupsSnap.docs);
+        _recordSnapshotPayloads(_chatMessagesCol, messagesSnap.docs);
+        _recordSnapshotPayloads(_postsCol, postsSnap.docs);
+        _recordSnapshotPayloads(_sharedFilesCol, filesSnap.docs);
+        _recordSnapshotPayloads(_calendarEventsCol, eventsSnap.docs);
+        _recordSnapshotPayloads(_notificationsCol, notifsSnap.docs);
+        _recordSnapshotPayloads(_khelwaDaysCol, khelwaDaysSnap.docs);
 
-      final brandingData = brandingSnap.data();
-      if (brandingData != null) {
-        _lastSyncedDocs[_teamConfigCol] = {
-          _brandingDocId: jsonEncode(brandingData),
-        };
-        _liveBrandingDoc = Map<String, dynamic>.from(brandingData);
+        final brandingData = brandingSnap.data();
+        if (brandingData != null) {
+          _lastSyncedDocs[_teamConfigCol] = {
+            _brandingDocId: jsonEncode(brandingData),
+          };
+          _liveBrandingDoc = Map<String, dynamic>.from(brandingData);
+        }
       }
 
-      return await _assembleSnapshot(fallback: local);
+      final assembled = await _assembleSnapshot(fallback: local);
+      return await _recoverUnsyncedLocalSeenReceipts(assembled, local: local);
     } catch (_) {
       return local;
     }
+  }
+
+  Future<LmtRepositorySnapshot> _recoverUnsyncedLocalSeenReceipts(
+    LmtRepositorySnapshot remote, {
+    required LmtRepositorySnapshot local,
+  }) async {
+    final viewer = remote.currentUser;
+    if (local.currentUser.id != viewer.id) return remote;
+    final isLoggedIn = await AppPreferences.isLoggedIn();
+    if (!isLoggedIn) return remote;
+
+    final localByMsgId = <String, ChatMessageModel>{
+      for (final m in local.chatMessages) m.id: m,
+    };
+    final toFlush = <ChatMessageModel>[];
+    SeenStatusModel? flushReceipt;
+    var changed = false;
+
+    final mergedMessages = remote.chatMessages.map((remoteMsg) {
+      if (remoteMsg.senderId == viewer.id) return remoteMsg;
+      final localMsg = localByMsgId[remoteMsg.id];
+      if (localMsg == null) return remoteMsg;
+      if (remoteMsg.sentAt.difference(localMsg.sentAt).abs() >
+          const Duration(seconds: 2)) {
+        return remoteMsg;
+      }
+      final localReceipt =
+          localMsg.seenBy.where((s) => s.memberId == viewer.id).firstOrNull;
+      if (localReceipt == null) return remoteMsg;
+
+      final remoteIdx =
+          remoteMsg.seenBy.indexWhere((s) => s.memberId == viewer.id);
+      if (remoteIdx == -1) {
+        changed = true;
+        final updated = remoteMsg.copyWith(
+          seenBy: [...remoteMsg.seenBy, localReceipt],
+        );
+        toFlush.add(updated);
+        flushReceipt ??= localReceipt;
+        return updated;
+      }
+      if (localReceipt.hasListened && !remoteMsg.seenBy[remoteIdx].hasListened) {
+        changed = true;
+        final existing = remoteMsg.seenBy[remoteIdx];
+        final nextSeen = List<SeenStatusModel>.from(remoteMsg.seenBy);
+        nextSeen[remoteIdx] = SeenStatusModel(
+          memberId: existing.memberId,
+          memberName: existing.memberName,
+          avatarPath: existing.avatarPath,
+          timestamp: existing.timestamp,
+          hasListened: true,
+        );
+        return remoteMsg.copyWith(seenBy: nextSeen);
+      }
+      return remoteMsg;
+    }).toList();
+
+    if (toFlush.isNotEmpty && flushReceipt != null) {
+      unawaited(
+        markMessagesSeenInCloud(
+          updatedMessages: toFlush,
+          viewerReceipt: flushReceipt!,
+        ),
+      );
+    }
+
+    if (!changed) return remote;
+    return LmtRepositorySnapshot(
+      biometricEnabled: remote.biometricEnabled,
+      sloganOfYear: remote.sloganOfYear,
+      verseOfYear: remote.verseOfYear,
+      currentUser: remote.currentUser,
+      members: remote.members,
+      chatGroups: remote.chatGroups,
+      chatMessages: mergedMessages,
+      posts: remote.posts,
+      sharedFiles: remote.sharedFiles,
+      calendarEvents: remote.calendarEvents,
+      notifications: remote.notifications,
+      khelwaDays: remote.khelwaDays,
+    );
   }
 
   @override
@@ -1018,6 +1364,156 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
       return list;
     });
+  }
+
+  @override
+  Future<void> sendChatMessageToCloud({
+    required ChatMessageModel message,
+    AppNotificationModel? notification,
+  }) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+
+      final msgPayload = _prepareDocForCloud(message.toJson(), uid);
+      _liveDocs[_chatMessagesCol] ??= {};
+      _deliveredDocIds[_chatMessagesCol] ??= {};
+      _liveDocs[_chatMessagesCol]![message.id] = msgPayload;
+      _deliveredDocIds[_chatMessagesCol]!.add(message.id);
+
+      final writes = <Future<void>>[
+        db
+            .collection(_chatMessagesCol)
+            .doc(message.id)
+            .set(msgPayload)
+            .timeout(_remoteTimeout)
+            .then((_) {
+          _lastSyncedDocs[_chatMessagesCol] ??= {};
+          _lastSyncedDocs[_chatMessagesCol]![message.id] =
+              _canonicalDocJson(msgPayload);
+        }),
+      ];
+
+      if (notification != null) {
+        final notifPayload = _prepareDocForCloud(notification.toJson(), uid);
+        _liveDocs[_notificationsCol] ??= {};
+        _deliveredDocIds[_notificationsCol] ??= {};
+        _liveDocs[_notificationsCol]![notification.id] = notifPayload;
+        _deliveredDocIds[_notificationsCol]!.add(notification.id);
+        writes.add(
+          db
+              .collection(_notificationsCol)
+              .doc(notification.id)
+              .set(notifPayload)
+              .timeout(_remoteTimeout)
+              .then((_) {
+            _lastSyncedDocs[_notificationsCol] ??= {};
+            _lastSyncedDocs[_notificationsCol]![notification.id] =
+                _canonicalDocJson(notifPayload);
+          }),
+        );
+      }
+
+      await Future.wait(writes);
+    } catch (e) {
+      debugPrint('Firestore sendChatMessageToCloud error: $e');
+    }
+  }
+
+  @override
+  Future<void> markMessagesSeenInCloud({
+    required List<ChatMessageModel> updatedMessages,
+    required SeenStatusModel viewerReceipt,
+  }) async {
+    final db = _db;
+    if (db == null || updatedMessages.isEmpty) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      final safeReceipt = <String, dynamic>{
+        'memberId': _clampRequiredText(viewerReceipt.memberId, 64, 'viewer'),
+        'memberName':
+            _clampRequiredText(viewerReceipt.memberName, 120, 'L.M.T Member'),
+        'avatarPath': _clampBoundedPath(
+          viewerReceipt.avatarPath,
+          500,
+          AppAssets.accountIcon,
+        ),
+        'timestamp': viewerReceipt.timestamp.toIso8601String(),
+        'hasListened': viewerReceipt.hasListened,
+      };
+
+      final targets = updatedMessages
+          .where((m) => m.senderId != viewerReceipt.memberId)
+          .toList(growable: false);
+      if (targets.isEmpty) return;
+
+      const int chunkSize = 10;
+      for (var i = 0; i < targets.length; i += chunkSize) {
+        final chunk = targets.sublist(
+          i,
+          (i + chunkSize) > targets.length ? targets.length : (i + chunkSize),
+        );
+        await Future.wait(
+          chunk.map((msg) async {
+            final docRef = db.collection(_chatMessagesCol).doc(msg.id);
+            Map<String, dynamic>? committedPayload;
+            await db.runTransaction((tx) async {
+              final snap = await tx.get(docRef);
+              if (!snap.exists) {
+                final fullPayload = _prepareDocForCloud(msg.toJson(), uid);
+                tx.set(docRef, fullPayload);
+                committedPayload = fullPayload;
+                return;
+              }
+
+              final current = Map<String, dynamic>.from(snap.data() ?? const {});
+              final merged = _mergeRemoteSeenReceiptsIntoMessage(msg.id, {
+                ...current,
+                'seenBy': [
+                  ...(current['seenBy'] as List<dynamic>? ?? const []),
+                  safeReceipt,
+                ],
+              });
+              final sanitized = _prepareDocForCloud(
+                {...current, 'seenBy': merged['seenBy']},
+                uid,
+              );
+              tx.set(docRef, sanitized);
+              committedPayload = sanitized;
+            }).timeout(_remoteTimeout);
+
+            final payload = committedPayload;
+            if (payload != null) {
+              _lastSyncedDocs[_chatMessagesCol] ??= {};
+              _liveDocs[_chatMessagesCol] ??= {};
+              _deliveredDocIds[_chatMessagesCol] ??= {};
+              _lastSyncedDocs[_chatMessagesCol]![msg.id] =
+                  _canonicalDocJson(payload);
+              _liveDocs[_chatMessagesCol]![msg.id] = payload;
+              _deliveredDocIds[_chatMessagesCol]!.add(msg.id);
+            }
+          }),
+        );
+      }
+    } catch (e) {
+      debugPrint('Firestore markMessagesSeenInCloud error: $e');
+    }
+  }
+
+  @override
+  Future<void> persistLocalSnapshot({
+    required Map<String, dynamic> stateJson,
+    required String currentUserId,
+  }) async {
+    await localCache.persistSnapshot(
+      stateJson: stateJson,
+      currentUserId: currentUserId,
+    );
   }
 
   @override

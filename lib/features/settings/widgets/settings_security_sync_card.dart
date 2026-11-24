@@ -1,13 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../../core/services/background_sync_bridge.dart';
 import '../../../core/services/shorebird_update_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/theme/typography.dart';
 import '../../../core/widgets/shorebird_welcome_dialog.dart';
 import '../../auth/services/biometric_auth_service.dart';
+import '../../auth/services/biometric_session_lock_controller.dart';
 import '../../auth/widgets/biometric_fallback_dialog.dart';
 import '../cubit/settings_cubit.dart';
 
@@ -35,13 +38,21 @@ class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
   final BiometricAuthService _biometricService = BiometricAuthService();
   bool _isCheckingBiometric = false;
   bool _isCheckingUpdates = false;
-  String _versionLabel = 'v1.0.1+2';
+  bool _ignoringBatteryOptimizations = true;
+  String _versionLabel = 'v1.0.2+3';
 
   @override
   void initState() {
     super.initState();
     _biometricService.warmUp();
     _loadCurrentVersion();
+    _loadBatteryOptimizationStatus();
+  }
+
+  Future<void> _loadBatteryOptimizationStatus() async {
+    final ok = await BackgroundSyncBridge.isIgnoringBatteryOptimizations();
+    if (!mounted) return;
+    setState(() => _ignoringBatteryOptimizations = ok);
   }
 
   Future<void> _loadCurrentVersion() async {
@@ -124,6 +135,7 @@ class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
     }
 
     setState(() => _isCheckingBiometric = true);
+    BiometricSessionLockController.instance.suppressNextResumeLock();
     try {
       final result = await _biometricService.authenticate(
         userId: cubit.state.currentUser.id,
@@ -318,6 +330,63 @@ class _SettingsSecuritySyncCardState extends State<SettingsSecuritySyncCard> {
                 label: Text(isArabic ? 'مزامنة' : 'Sync'),
               ),
             ),
+            if (!kIsWeb &&
+                defaultTargetPlatform == TargetPlatform.android) ...[
+              const Divider(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(
+                  backgroundColor: (_ignoringBatteryOptimizations
+                          ? accentGreen
+                          : AppColors.warning)
+                      .withValues(alpha: 0.14),
+                  child: Icon(
+                    Icons.notifications_active_rounded,
+                    color: _ignoringBatteryOptimizations
+                        ? accentGreen
+                        : AppColors.warning,
+                  ),
+                ),
+                title: Text(
+                  isArabic
+                      ? 'استلام الإشعارات بالخلفية وشاشة القفل'
+                      : 'Lock-Screen & Background Notifications',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13.sp,
+                    color: textPrimary,
+                  ),
+                ),
+                subtitle: Text(
+                  _ignoringBatteryOptimizations
+                      ? (isArabic
+                          ? 'مفعل ✅ — مستثنى من قيود توفير البطارية'
+                          : 'Active ✅ — Unrestricted background alerts')
+                      : (isArabic
+                          ? 'اسمح بالعمل في الخلفية لضمان وصول التنبيهات والشاشة مقفولة'
+                          : 'Allow unrestricted battery so alerts arrive while locked'),
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    color: _ignoringBatteryOptimizations
+                        ? accentGreen
+                        : AppColors.warning,
+                  ),
+                ),
+                trailing: _ignoringBatteryOptimizations
+                    ? Icon(Icons.verified_rounded, color: accentGreen)
+                    : OutlinedButton(
+                        onPressed: () async {
+                          await BackgroundSyncBridge
+                              .requestIgnoreBatteryOptimizations();
+                          await Future<void>.delayed(
+                            const Duration(milliseconds: 600),
+                          );
+                          await _loadBatteryOptimizationStatus();
+                        },
+                        child: Text(isArabic ? 'تفعيل' : 'Allow'),
+                      ),
+              ),
+            ],
             const Divider(),
             ListTile(
               contentPadding: EdgeInsets.zero,

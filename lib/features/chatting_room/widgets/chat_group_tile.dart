@@ -78,7 +78,9 @@ class ChatGroupTile extends StatelessWidget {
     final last = lastMessage;
     final isSentByMe = last != null && last.senderId == currentUserId;
     final hasAnyOtherSeen = isSentByMe &&
-        last.seenBy.any((s) => s.memberId != currentUserId);
+        last.seenBy.any(
+          (s) => s.memberId != currentUserId && s.memberId != last.senderId,
+        );
 
     final previewText = last != null
         ? (isSentByMe
@@ -143,7 +145,9 @@ class ChatGroupTile extends StatelessWidget {
                       children: [
                         if (isSentByMe) ...[
                           Icon(
-                            Icons.done_all_rounded,
+                            hasAnyOtherSeen
+                                ? Icons.done_all_rounded
+                                : Icons.check_rounded,
                             size: 16.sp,
                             color: hasAnyOtherSeen ? _readBlue : textSecondary,
                           ),

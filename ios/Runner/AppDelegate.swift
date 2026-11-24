@@ -6,6 +6,9 @@ import PhotosUI
 import UIKit
 import UserNotifications
 
+import BackgroundTasks
+import UserNotifications
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let channelName = "com.example.lmt/native_media"
@@ -25,6 +28,8 @@ import UserNotifications
     if #available(iOS 10.0, *) {
       UNUserNotificationCenter.current().delegate = self as UNUserNotificationCenterDelegate
     }
+    LmtIosBackgroundSync.shared.registerBackgroundTasks()
+    application.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
     let ok = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     if !isChannelRegistered,
        let controller = window?.rootViewController as? FlutterViewController {
@@ -47,6 +52,35 @@ import UserNotifications
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handleMethodCall(call, result: result)
     }
+    LmtIosBackgroundSync.shared.registerChannel(messenger: messenger)
+  }
+
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    LmtIosBackgroundSync.shared.scheduleAppRefreshIfNeeded()
+    super.applicationDidEnterBackground(application)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+  ) {
+    LmtIosBackgroundSync.shared.pollAndAlertIfNeeded { hasNew in
+      DispatchQueue.main.async {
+        completionHandler(hasNew ? .newData : .noData)
+      }
+    }
+  }
+
+  @available(iOS 10.0, *)
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    if let payload = response.notification.request.content.userInfo["lmt_notif_payload"] as? String {
+      LmtIosBackgroundSync.shared.handleNotificationTapPayload(payload)
+    }
+    super.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
   }
 
   private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -691,6 +725,397 @@ extension AppDelegate: UIImagePickerControllerDelegate, UINavigationControllerDe
   }
 }
 
+/// iOS background fetch coordinator querying Firestore REST for unseen
+/// notifications while the screen is locked or app is backgrounded.
+private final class LmtIosBackgroundSync {
+  static let shared = LmtIosBackgroundSync()
+
+  private let channelName = "com.example.lmt/background_sync"
+  private let bgTaskId = "com.example.lmt.bgfetch"
+  private let defaults = UserDefaults.standard
+  private let lock = NSLock()
+
+  private let keyLoggedIn = "lmt_bg_logged_in"
+  private let keyUserId = "lmt_bg_user_id"
+  private let keyApiKey = "lmt_bg_api_key"
+  private let keyProjectId = "lmt_bg_project_id"
+  private let keyIdToken = "lmt_bg_id_token"
+  private let keyTokenTs = "lmt_bg_token_ts"
+  private let keyAlertedPrefix = "lmt_bg_alerted_"
+  private let keyPendingNativePrefix = "lmt_bg_pending_native_"
+
+  private var methodChannel: FlutterMethodChannel?
+  private var pendingLaunchPayload: String?
+  private var registeredBgTasks = false
+
+  private init() {}
+
+  func registerChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: channelName, binaryMessenger: messenger)
+    methodChannel = channel
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleMethodCall(call, result: result)
+    }
+  }
+
+  func registerBackgroundTasks() {
+    guard !registeredBgTasks else { return }
+    registeredBgTasks = true
+    if #available(iOS 13.0, *) {
+      BGTaskScheduler.shared.register(forTaskWithIdentifier: bgTaskId, using: nil) { [weak self] task in
+        guard let refreshTask = task as? BGAppRefreshTask else {
+          task.setTaskCompleted(success: false)
+          return
+        }
+        self?.handleAppRefresh(task: refreshTask)
+      }
+    }
+  }
+
+  func scheduleAppRefreshIfNeeded() {
+    guard isSessionActive() else { return }
+    if #available(iOS 13.0, *) {
+      let request = BGAppRefreshTaskRequest(identifier: bgTaskId)
+      request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+      try? BGTaskScheduler.shared.submit(request)
+    }
+  }
+
+  @available(iOS 13.0, *)
+  private func handleAppRefresh(task: BGAppRefreshTask) {
+    scheduleAppRefreshIfNeeded()
+    let session = URLSession.shared
+    task.expirationHandler = {
+      session.invalidateAndCancel()
+    }
+    pollAndAlertIfNeeded { _ in
+      task.setTaskCompleted(success: true)
+    }
+  }
+
+  func handleNotificationTapPayload(_ payload: String) {
+    let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    if let channel = methodChannel {
+      pendingLaunchPayload = nil
+      DispatchQueue.main.async {
+        channel.invokeMethod("onBackgroundNotificationTapped", arguments: trimmed)
+      }
+    } else {
+      pendingLaunchPayload = trimmed
+    }
+  }
+
+  func isSessionActive() -> Bool {
+    return defaults.bool(forKey: keyLoggedIn)
+      && !(defaults.string(forKey: keyUserId) ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+      && !(defaults.string(forKey: keyApiKey) ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+      && !(defaults.string(forKey: keyProjectId) ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+  }
+
+  private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    switch call.method {
+    case "syncSessionConfig":
+      let loggedIn = (args?["isLoggedIn"] as? Bool) ?? false
+      let userId = ((args?["userId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let apiKey = ((args?["apiKey"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let projectId = ((args?["projectId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let idToken = (args?["idToken"] as? String)?.trimmingCharacters(in: .whitespaces)
+      let alertedIds = (args?["alertedIds"] as? [String]) ?? []
+
+      lock.lock()
+      defaults.set(loggedIn && !userId.isEmpty, forKey: keyLoggedIn)
+      defaults.set(userId, forKey: keyUserId)
+      defaults.set(apiKey, forKey: keyApiKey)
+      defaults.set(projectId, forKey: keyProjectId)
+      if let token = idToken, !token.isEmpty {
+        defaults.set(token, forKey: keyIdToken)
+        defaults.set(Date().timeIntervalSince1970, forKey: keyTokenTs)
+      } else if !loggedIn {
+        defaults.removeObject(forKey: keyIdToken)
+        defaults.removeObject(forKey: keyTokenTs)
+      }
+      if loggedIn && !userId.isEmpty && !alertedIds.isEmpty {
+        appendIdsLocked(forKey: "\(keyAlertedPrefix)\(userId)", ids: alertedIds)
+      }
+      lock.unlock()
+
+      if loggedIn && !userId.isEmpty {
+        scheduleAppRefreshIfNeeded()
+      } else if #available(iOS 13.0, *) {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: bgTaskId)
+      }
+      result(nil)
+
+    case "recordAlertedIds":
+      let userId = ((args?["userId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let ids = (args?["ids"] as? [String]) ?? []
+      if !userId.isEmpty && !ids.isEmpty {
+        lock.lock()
+        appendIdsLocked(forKey: "\(keyAlertedPrefix)\(userId)", ids: ids)
+        lock.unlock()
+      }
+      result(nil)
+
+    case "consumeNativeAlertedIds":
+      let userId = ((args?["userId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      var consumed: [String] = []
+      if !userId.isEmpty {
+        lock.lock()
+        let key = "\(keyPendingNativePrefix)\(userId)"
+        consumed = defaults.stringArray(forKey: key) ?? []
+        defaults.removeObject(forKey: key)
+        lock.unlock()
+      }
+      result(consumed)
+
+    case "consumeLaunchPayload":
+      let payload = pendingLaunchPayload
+      pendingLaunchPayload = nil
+      result(payload)
+
+    case "isIgnoringBatteryOptimizations":
+      result(true)
+
+    case "requestIgnoreBatteryOptimizations":
+      result(nil)
+
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  func pollAndAlertIfNeeded(completion: @escaping (Bool) -> Void) {
+    guard isSessionActive() else {
+      completion(false)
+      return
+    }
+    let userId = (defaults.string(forKey: keyUserId) ?? "").trimmingCharacters(in: .whitespaces)
+    let apiKey = (defaults.string(forKey: keyApiKey) ?? "").trimmingCharacters(in: .whitespaces)
+    let projectId = (defaults.string(forKey: keyProjectId) ?? "").trimmingCharacters(in: .whitespaces)
+    let storedToken = defaults.string(forKey: keyIdToken)
+    let tokenAge = Date().timeIntervalSince1970 - defaults.double(forKey: keyTokenTs)
+
+    let proceedWithToken: (String?) -> Void = { [weak self] token in
+      guard let self = self, let token = token, !token.isEmpty else {
+        completion(false)
+        return
+      }
+      self.fetchNotifications(projectId: projectId, idToken: token) { items in
+        guard let items = items, !items.isEmpty else {
+          completion(false)
+          return
+        }
+        self.dispatchUnseenNotifications(items, userId: userId, completion: completion)
+      }
+    }
+
+    if let token = storedToken, !token.isEmpty, tokenAge < (45 * 60) {
+      proceedWithToken(token)
+    } else {
+      refreshAnonymousToken(apiKey: apiKey, completion: proceedWithToken)
+    }
+  }
+
+  private func refreshAnonymousToken(apiKey: String, completion: @escaping (String?) -> Void) {
+    guard let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=\(apiKey)") else {
+      completion(nil)
+      return
+    }
+    var req = URLRequest(url: url, timeoutInterval: 10)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = #"{"returnSecureToken":true}"#.data(using: .utf8)
+
+    URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
+      guard let self = self,
+            let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+            let data = data,
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let token = (obj["idToken"] as? String)?.trimmingCharacters(in: .whitespaces),
+            !token.isEmpty else {
+        completion(nil)
+        return
+      }
+      self.lock.lock()
+      self.defaults.set(token, forKey: self.keyIdToken)
+      self.defaults.set(Date().timeIntervalSince1970, forKey: self.keyTokenTs)
+      self.lock.unlock()
+      completion(token)
+    }.resume()
+  }
+
+  private func fetchNotifications(
+    projectId: String,
+    idToken: String,
+    completion: @escaping ([[String: Any]]?) -> Void
+  ) {
+    guard let url = URL(string: "https://firestore.googleapis.com/v1/projects/\(projectId)/databases/(default)/documents:runQuery") else {
+      completion(nil)
+      return
+    }
+    var req = URLRequest(url: url, timeoutInterval: 10)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+    let bodyObj: [String: Any] = [
+      "structuredQuery": [
+        "from": [["collectionId": "notifications"]],
+        "orderBy": [["field": ["fieldPath": "dateTime"], "direction": "DESCENDING"]],
+        "limit": 25
+      ]
+    ]
+    req.httpBody = try? JSONSerialization.data(withJSONObject: bodyObj)
+
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+      guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+            let data = data,
+            let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        completion(nil)
+        return
+      }
+      let docs = entries.compactMap { $0["document"] as? [String: Any] }
+      completion(docs)
+    }.resume()
+  }
+
+  private func dispatchUnseenNotifications(
+    _ docs: [[String: Any]],
+    userId: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    lock.lock()
+    let alerted = Set(defaults.stringArray(forKey: "\(keyAlertedPrefix)\(userId)") ?? [])
+    lock.unlock()
+
+    let now = Date()
+    var newlyAlerted: [String] = []
+    let center = UNUserNotificationCenter.current()
+
+    for doc in docs {
+      guard let fields = doc["fields"] as? [String: Any] else { continue }
+      let fallbackId = ((doc["name"] as? String) ?? "").components(separatedBy: "/").last ?? ""
+      let id = (fsString(fields, "id").isEmpty ? fallbackId : fsString(fields, "id"))
+      if id.isEmpty || alerted.contains(id) { continue }
+      if fsBool(fields, "isRead") { continue }
+      let excluded = fsStringArray(fields, "excludedMemberIds")
+      if excluded.contains(userId) { continue }
+      let targeted = fsStringArray(fields, "targetMemberIds")
+      if !targeted.isEmpty && !targeted.contains(userId) { continue }
+      guard let date = parseIso8601(fsString(fields, "dateTime")),
+            abs(now.timeIntervalSince(date)) <= 24 * 60 * 60 else { continue }
+
+      let title = fsString(fields, "title").isEmpty ? "L.M.T App" : fsString(fields, "title")
+      let description = fsString(fields, "description")
+      if title.isEmpty && description.isEmpty { continue }
+
+      let category = fsString(fields, "category")
+      let rawTone = fsString(fields, "tone")
+      let tone = rawTone.isEmpty
+        ? (category == "calendar" ? "calendar" : (category == "chat" ? "chatMessage" : "normal"))
+        : rawTone
+
+      var payloadDict: [String: Any] = ["notifId": id]
+      if let tab = fsInt(fields, "targetTabIndex") { payloadDict["tab"] = tab }
+      let groupId = fsString(fields, "targetGroupId")
+      if !groupId.isEmpty { payloadDict["groupId"] = groupId }
+      let eventId = fsString(fields, "targetEventId")
+      if !eventId.isEmpty { payloadDict["eventId"] = eventId }
+      let route = fsString(fields, "targetRoute")
+      if !route.isEmpty { payloadDict["route"] = route }
+
+      let payloadData = (try? JSONSerialization.data(withJSONObject: payloadDict)) ?? Data()
+      let payloadStr = String(data: payloadData, encoding: .utf8) ?? ""
+
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = description
+      content.userInfo = ["lmt_notif_payload": payloadStr]
+      if tone == "calendar",
+         Bundle.main.url(forResource: "calendar_notifications", withExtension: "wav") != nil {
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("calendar_notifications.wav"))
+      } else if Bundle.main.url(forResource: "normal_notifications", withExtension: "wav") != nil {
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("normal_notifications.wav"))
+      } else {
+        content.sound = .default
+      }
+
+      let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+      center.add(request, withCompletionHandler: nil)
+      newlyAlerted.append(id)
+    }
+
+    if !newlyAlerted.isEmpty {
+      lock.lock()
+      appendIdsLocked(forKey: "\(keyAlertedPrefix)\(userId)", ids: newlyAlerted)
+      appendIdsLocked(forKey: "\(keyPendingNativePrefix)\(userId)", ids: newlyAlerted)
+      lock.unlock()
+      completion(true)
+    } else {
+      completion(false)
+    }
+  }
+
+  private func appendIdsLocked(forKey key: String, ids: [String]) {
+    var list = defaults.stringArray(forKey: key) ?? []
+    for id in ids {
+      let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty && !list.contains(trimmed) {
+        list.append(trimmed)
+      }
+    }
+    if list.count > 300 {
+      list = Array(list.suffix(300))
+    }
+    defaults.set(list, forKey: key)
+  }
+
+  private func fsString(_ fields: [String: Any], _ key: String) -> String {
+    guard let map = fields[key] as? [String: Any],
+          let str = map["stringValue"] as? String else { return "" }
+    return str.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func fsBool(_ fields: [String: Any], _ key: String) -> Bool {
+    guard let map = fields[key] as? [String: Any],
+          let b = map["booleanValue"] as? Bool else { return false }
+    return b
+  }
+
+  private func fsInt(_ fields: [String: Any], _ key: String) -> Int? {
+    guard let map = fields[key] as? [String: Any],
+          let s = map["integerValue"] as? String else { return nil }
+    return Int(s)
+  }
+
+  private func fsStringArray(_ fields: [String: Any], _ key: String) -> [String] {
+    guard let map = fields[key] as? [String: Any],
+          let arrMap = map["arrayValue"] as? [String: Any],
+          let vals = arrMap["values"] as? [[String: Any]] else { return [] }
+    return vals.compactMap { ($0["stringValue"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+  }
+
+  private func parseIso8601(_ raw: String) -> Date? {
+    guard !raw.isEmpty else { return nil }
+    if #available(iOS 11.0, *) {
+      let f = ISO8601DateFormatter()
+      f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      if let d = f.date(from: raw) { return d }
+      f.formatOptions = [.withInternetDateTime]
+      if let d = f.date(from: raw) { return d }
+    }
+    for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss"] {
+      let df = DateFormatter()
+      df.locale = Locale(identifier: "en_US_POSIX")
+      df.dateFormat = fmt
+      if let d = df.date(from: raw) { return d }
+    }
+    return nil
+  }
+}
+
 // MARK: - PHPickerViewControllerDelegate (iOS 14+)
 
 @available(iOS 14.0, *)
@@ -745,5 +1170,396 @@ extension AppDelegate: PHPickerViewControllerDelegate {
 
       self.completePicker(with: nil)
     }
+  }
+}
+
+/// iOS background fetch coordinator querying Firestore REST for unseen
+/// notifications while the screen is locked or app is backgrounded.
+private final class LmtIosBackgroundSync {
+  static let shared = LmtIosBackgroundSync()
+
+  private let channelName = "com.example.lmt/background_sync"
+  private let bgTaskId = "com.example.lmt.bgfetch"
+  private let defaults = UserDefaults.standard
+  private let lock = NSLock()
+
+  private let keyLoggedIn = "lmt_bg_logged_in"
+  private let keyUserId = "lmt_bg_user_id"
+  private let keyApiKey = "lmt_bg_api_key"
+  private let keyProjectId = "lmt_bg_project_id"
+  private let keyIdToken = "lmt_bg_id_token"
+  private let keyTokenTs = "lmt_bg_token_ts"
+  private let keyAlertedPrefix = "lmt_bg_alerted_"
+  private let keyPendingNativePrefix = "lmt_bg_pending_native_"
+
+  private var methodChannel: FlutterMethodChannel?
+  private var pendingLaunchPayload: String?
+  private var registeredBgTasks = false
+
+  private init() {}
+
+  func registerChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: channelName, binaryMessenger: messenger)
+    methodChannel = channel
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleMethodCall(call, result: result)
+    }
+  }
+
+  func registerBackgroundTasks() {
+    guard !registeredBgTasks else { return }
+    registeredBgTasks = true
+    if #available(iOS 13.0, *) {
+      BGTaskScheduler.shared.register(forTaskWithIdentifier: bgTaskId, using: nil) { [weak self] task in
+        guard let refreshTask = task as? BGAppRefreshTask else {
+          task.setTaskCompleted(success: false)
+          return
+        }
+        self?.handleAppRefresh(task: refreshTask)
+      }
+    }
+  }
+
+  func scheduleAppRefreshIfNeeded() {
+    guard isSessionActive() else { return }
+    if #available(iOS 13.0, *) {
+      let request = BGAppRefreshTaskRequest(identifier: bgTaskId)
+      request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+      try? BGTaskScheduler.shared.submit(request)
+    }
+  }
+
+  @available(iOS 13.0, *)
+  private func handleAppRefresh(task: BGAppRefreshTask) {
+    scheduleAppRefreshIfNeeded()
+    let session = URLSession.shared
+    task.expirationHandler = {
+      session.invalidateAndCancel()
+    }
+    pollAndAlertIfNeeded { _ in
+      task.setTaskCompleted(success: true)
+    }
+  }
+
+  func handleNotificationTapPayload(_ payload: String) {
+    let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    if let channel = methodChannel {
+      pendingLaunchPayload = nil
+      DispatchQueue.main.async {
+        channel.invokeMethod("onBackgroundNotificationTapped", arguments: trimmed)
+      }
+    } else {
+      pendingLaunchPayload = trimmed
+    }
+  }
+
+  func isSessionActive() -> Bool {
+    return defaults.bool(forKey: keyLoggedIn)
+      && !(defaults.string(forKey: keyUserId) ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+      && !(defaults.string(forKey: keyApiKey) ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+      && !(defaults.string(forKey: keyProjectId) ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+  }
+
+  private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    switch call.method {
+    case "syncSessionConfig":
+      let loggedIn = (args?["isLoggedIn"] as? Bool) ?? false
+      let userId = ((args?["userId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let apiKey = ((args?["apiKey"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let projectId = ((args?["projectId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let idToken = (args?["idToken"] as? String)?.trimmingCharacters(in: .whitespaces)
+      let alertedIds = (args?["alertedIds"] as? [String]) ?? []
+
+      lock.lock()
+      defaults.set(loggedIn && !userId.isEmpty, forKey: keyLoggedIn)
+      defaults.set(userId, forKey: keyUserId)
+      defaults.set(apiKey, forKey: keyApiKey)
+      defaults.set(projectId, forKey: keyProjectId)
+      if let token = idToken, !token.isEmpty {
+        defaults.set(token, forKey: keyIdToken)
+        defaults.set(Date().timeIntervalSince1970, forKey: keyTokenTs)
+      } else if !loggedIn {
+        defaults.removeObject(forKey: keyIdToken)
+        defaults.removeObject(forKey: keyTokenTs)
+      }
+      if loggedIn && !userId.isEmpty && !alertedIds.isEmpty {
+        appendIdsLocked(forKey: "\(keyAlertedPrefix)\(userId)", ids: alertedIds)
+      }
+      lock.unlock()
+
+      if loggedIn && !userId.isEmpty {
+        scheduleAppRefreshIfNeeded()
+      } else if #available(iOS 13.0, *) {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: bgTaskId)
+      }
+      result(nil)
+
+    case "recordAlertedIds":
+      let userId = ((args?["userId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      let ids = (args?["ids"] as? [String]) ?? []
+      if !userId.isEmpty && !ids.isEmpty {
+        lock.lock()
+        appendIdsLocked(forKey: "\(keyAlertedPrefix)\(userId)", ids: ids)
+        lock.unlock()
+      }
+      result(nil)
+
+    case "consumeNativeAlertedIds":
+      let userId = ((args?["userId"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+      var consumed: [String] = []
+      if !userId.isEmpty {
+        lock.lock()
+        let key = "\(keyPendingNativePrefix)\(userId)"
+        consumed = defaults.stringArray(forKey: key) ?? []
+        defaults.removeObject(forKey: key)
+        lock.unlock()
+      }
+      result(consumed)
+
+    case "consumeLaunchPayload":
+      let payload = pendingLaunchPayload
+      pendingLaunchPayload = nil
+      result(payload)
+
+    case "isIgnoringBatteryOptimizations":
+      result(true)
+
+    case "requestIgnoreBatteryOptimizations":
+      result(nil)
+
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  func pollAndAlertIfNeeded(completion: @escaping (Bool) -> Void) {
+    guard isSessionActive() else {
+      completion(false)
+      return
+    }
+    let userId = (defaults.string(forKey: keyUserId) ?? "").trimmingCharacters(in: .whitespaces)
+    let apiKey = (defaults.string(forKey: keyApiKey) ?? "").trimmingCharacters(in: .whitespaces)
+    let projectId = (defaults.string(forKey: keyProjectId) ?? "").trimmingCharacters(in: .whitespaces)
+    let storedToken = defaults.string(forKey: keyIdToken)
+    let tokenAge = Date().timeIntervalSince1970 - defaults.double(forKey: keyTokenTs)
+
+    let proceedWithToken: (String?) -> Void = { [weak self] token in
+      guard let self = self, let token = token, !token.isEmpty else {
+        completion(false)
+        return
+      }
+      self.fetchNotifications(projectId: projectId, idToken: token) { items in
+        guard let items = items, !items.isEmpty else {
+          completion(false)
+          return
+        }
+        self.dispatchUnseenNotifications(items, userId: userId, completion: completion)
+      }
+    }
+
+    if let token = storedToken, !token.isEmpty, tokenAge < (45 * 60) {
+      proceedWithToken(token)
+    } else {
+      refreshAnonymousToken(apiKey: apiKey, completion: proceedWithToken)
+    }
+  }
+
+  private func refreshAnonymousToken(apiKey: String, completion: @escaping (String?) -> Void) {
+    guard let url = URL(string: "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=\(apiKey)") else {
+      completion(nil)
+      return
+    }
+    var req = URLRequest(url: url, timeoutInterval: 10)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = #"{"returnSecureToken":true}"#.data(using: .utf8)
+
+    URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
+      guard let self = self,
+            let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+            let data = data,
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let token = (obj["idToken"] as? String)?.trimmingCharacters(in: .whitespaces),
+            !token.isEmpty else {
+        completion(nil)
+        return
+      }
+      self.lock.lock()
+      self.defaults.set(token, forKey: self.keyIdToken)
+      self.defaults.set(Date().timeIntervalSince1970, forKey: self.keyTokenTs)
+      self.lock.unlock()
+      completion(token)
+    }.resume()
+  }
+
+  private func fetchNotifications(
+    projectId: String,
+    idToken: String,
+    completion: @escaping ([[String: Any]]?) -> Void
+  ) {
+    guard let url = URL(string: "https://firestore.googleapis.com/v1/projects/\(projectId)/databases/(default)/documents:runQuery") else {
+      completion(nil)
+      return
+    }
+    var req = URLRequest(url: url, timeoutInterval: 10)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+    let bodyObj: [String: Any] = [
+      "structuredQuery": [
+        "from": [["collectionId": "notifications"]],
+        "orderBy": [["field": ["fieldPath": "dateTime"], "direction": "DESCENDING"]],
+        "limit": 25
+      ]
+    ]
+    req.httpBody = try? JSONSerialization.data(withJSONObject: bodyObj)
+
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+      guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+            let data = data,
+            let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        completion(nil)
+        return
+      }
+      let docs = entries.compactMap { $0["document"] as? [String: Any] }
+      completion(docs)
+    }.resume()
+  }
+
+  private func dispatchUnseenNotifications(
+    _ docs: [[String: Any]],
+    userId: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    lock.lock()
+    let alerted = Set(defaults.stringArray(forKey: "\(keyAlertedPrefix)\(userId)") ?? [])
+    lock.unlock()
+
+    let now = Date()
+    var newlyAlerted: [String] = []
+    let center = UNUserNotificationCenter.current()
+
+    for doc in docs {
+      guard let fields = doc["fields"] as? [String: Any] else { continue }
+      let fallbackId = ((doc["name"] as? String) ?? "").components(separatedBy: "/").last ?? ""
+      let id = (fsString(fields, "id").isEmpty ? fallbackId : fsString(fields, "id"))
+      if id.isEmpty || alerted.contains(id) { continue }
+      if fsBool(fields, "isRead") { continue }
+      let excluded = fsStringArray(fields, "excludedMemberIds")
+      if excluded.contains(userId) { continue }
+      let targeted = fsStringArray(fields, "targetMemberIds")
+      if !targeted.isEmpty && !targeted.contains(userId) { continue }
+      guard let date = parseIso8601(fsString(fields, "dateTime")),
+            abs(now.timeIntervalSince(date)) <= 24 * 60 * 60 else { continue }
+
+      let title = fsString(fields, "title").isEmpty ? "L.M.T App" : fsString(fields, "title")
+      let description = fsString(fields, "description")
+      if title.isEmpty && description.isEmpty { continue }
+
+      let category = fsString(fields, "category")
+      let rawTone = fsString(fields, "tone")
+      let tone = rawTone.isEmpty
+        ? (category == "calendar" ? "calendar" : (category == "chat" ? "chatMessage" : "normal"))
+        : rawTone
+
+      var payloadDict: [String: Any] = ["notifId": id]
+      if let tab = fsInt(fields, "targetTabIndex") { payloadDict["tab"] = tab }
+      let groupId = fsString(fields, "targetGroupId")
+      if !groupId.isEmpty { payloadDict["groupId"] = groupId }
+      let eventId = fsString(fields, "targetEventId")
+      if !eventId.isEmpty { payloadDict["eventId"] = eventId }
+      let route = fsString(fields, "targetRoute")
+      if !route.isEmpty { payloadDict["route"] = route }
+
+      let payloadData = (try? JSONSerialization.data(withJSONObject: payloadDict)) ?? Data()
+      let payloadStr = String(data: payloadData, encoding: .utf8) ?? ""
+
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = description
+      content.userInfo = ["lmt_notif_payload": payloadStr]
+      if tone == "calendar",
+         Bundle.main.url(forResource: "calendar_notifications", withExtension: "wav") != nil {
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("calendar_notifications.wav"))
+      } else if Bundle.main.url(forResource: "normal_notifications", withExtension: "wav") != nil {
+        content.sound = UNNotificationSound(named: UNNotificationSoundName("normal_notifications.wav"))
+      } else {
+        content.sound = .default
+      }
+
+      let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+      center.add(request, withCompletionHandler: nil)
+      newlyAlerted.append(id)
+    }
+
+    if !newlyAlerted.isEmpty {
+      lock.lock()
+      appendIdsLocked(forKey: "\(keyAlertedPrefix)\(userId)", ids: newlyAlerted)
+      appendIdsLocked(forKey: "\(keyPendingNativePrefix)\(userId)", ids: newlyAlerted)
+      lock.unlock()
+      completion(true)
+    } else {
+      completion(false)
+    }
+  }
+
+  private func appendIdsLocked(forKey key: String, ids: [String]) {
+    var list = defaults.stringArray(forKey: key) ?? []
+    for id in ids {
+      let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty && !list.contains(trimmed) {
+        list.append(trimmed)
+      }
+    }
+    if list.count > 300 {
+      list = Array(list.suffix(300))
+    }
+    defaults.set(list, forKey: key)
+  }
+
+  private func fsString(_ fields: [String: Any], _ key: String) -> String {
+    guard let map = fields[key] as? [String: Any],
+          let str = map["stringValue"] as? String else { return "" }
+    return str.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func fsBool(_ fields: [String: Any], _ key: String) -> Bool {
+    guard let map = fields[key] as? [String: Any],
+          let b = map["booleanValue"] as? Bool else { return false }
+    return b
+  }
+
+  private func fsInt(_ fields: [String: Any], _ key: String) -> Int? {
+    guard let map = fields[key] as? [String: Any],
+          let s = map["integerValue"] as? String else { return nil }
+    return Int(s)
+  }
+
+  private func fsStringArray(_ fields: [String: Any], _ key: String) -> [String] {
+    guard let map = fields[key] as? [String: Any],
+          let arrMap = map["arrayValue"] as? [String: Any],
+          let vals = arrMap["values"] as? [[String: Any]] else { return [] }
+    return vals.compactMap { ($0["stringValue"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+  }
+
+  private func parseIso8601(_ raw: String) -> Date? {
+    guard !raw.isEmpty else { return nil }
+    if #available(iOS 11.0, *) {
+      let f = ISO8601DateFormatter()
+      f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      if let d = f.date(from: raw) { return d }
+      f.formatOptions = [.withInternetDateTime]
+      if let d = f.date(from: raw) { return d }
+    }
+    for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss"] {
+      let df = DateFormatter()
+      df.locale = Locale(identifier: "en_US_POSIX")
+      df.dateFormat = fmt
+      if let d = df.date(from: raw) { return d }
+    }
+    return nil
   }
 }

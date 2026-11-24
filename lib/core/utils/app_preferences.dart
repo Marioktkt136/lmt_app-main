@@ -19,6 +19,8 @@ class AppPreferences {
   static const String _lastUpdateDateKey = 'last_app_update_date';
   static const String _pendingUpdateWelcomeKey =
       'pending_shorebird_update_welcome';
+  static const String _lastShownPopupSignatureKey =
+      'last_shown_shorebird_popup_sig';
   static const String _alertedNotifPrefix = 'lmt_alerted_notifs_v1_';
   static const String _webAuthnCredPrefix = 'lmt_webauthn_cred_v1_';
 
@@ -231,6 +233,18 @@ class AppPreferences {
     } else {
       await prefs.setString(_pendingUpdateWelcomeKey, value);
     }
+  }
+
+  /// Tracks the popup signature (`pending:...` or `active:...`) already shown
+  /// so the Shorebird update welcome dialog appears only once per update.
+  static Future<String?> getLastShownPopupSignature() async {
+    final prefs = await _prefs();
+    return prefs.getString(_lastShownPopupSignatureKey);
+  }
+
+  static Future<void> setLastShownPopupSignature(String signature) async {
+    final prefs = await _prefs();
+    await prefs.setString(_lastShownPopupSignatureKey, signature);
   }
 
   // Per-user persisted OS notification IDs so alerts fire once reliably.

@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../data/lmt_seed_data.dart';
 import '../models/lmt_models.dart';
 import '../repositories/lmt_repository.dart';
+import '../services/background_sync_bridge.dart';
 import '../services/local_notification_service.dart';
 import '../utils/app_preferences.dart';
 
@@ -231,7 +232,10 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
   static int _notificationSeq = 0;
   final LmtRepository repository;
   final Set<String> knownNotificationIds = <String>{};
+  final Map<String, ChatMessageModel> pendingOutgoingMessages =
+      <String, ChatMessageModel>{};
   DateTime? _suppressRemoteNotifUntil;
+  DateTime? _lastPendingChatRetryAt;
 
   /// Whether remote notification snapshot syncing is paused right after a
   /// local write to prevent stale delete/read bounces without spawning Timers.
@@ -253,6 +257,122 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
             notifications: LmtSeedData.initialNotifications,
           ),
         );
+
+  /// Merges [remoteMessages] with any unconfirmed [pendingOutgoingMessages]
+  /// and preserves local `seenBy` (and `hasListened`) receipts belonging to
+  /// [state.currentUser] so concurrent live snapshots or syncs never revert reads.
+  ChatMessagesMergeResult mergeRemoteChatMessages(
+    List<ChatMessageModel> remoteMessages,
+  ) {
+    final viewerId = state.currentUser.id;
+    final remoteMsgIds = remoteMessages.map((m) => m.id).toSet();
+    pendingOutgoingMessages.removeWhere((id, _) => remoteMsgIds.contains(id));
+    final now = DateTime.now();
+    pendingOutgoingMessages.removeWhere(
+      (_, msg) => now.difference(msg.sentAt).inMinutes >= 5,
+    );
+
+    final localViewerReceiptByMsgId = <String, SeenStatusModel>{};
+    for (final localMsg in state.chatMessages) {
+      if (localMsg.senderId == viewerId) continue;
+      final receipt =
+          localMsg.seenBy.where((s) => s.memberId == viewerId).firstOrNull;
+      if (receipt != null) {
+        localViewerReceiptByMsgId[localMsg.id] = receipt;
+      }
+    }
+
+    final unsyncedSeenMessages = <ChatMessageModel>[];
+    final merged = <ChatMessageModel>[];
+    for (final remoteMsg in remoteMessages) {
+      final localReceipt = localViewerReceiptByMsgId[remoteMsg.id];
+      if (localReceipt == null || remoteMsg.senderId == viewerId) {
+        merged.add(remoteMsg);
+        continue;
+      }
+      final remoteIdx =
+          remoteMsg.seenBy.indexWhere((s) => s.memberId == viewerId);
+      if (remoteIdx == -1) {
+        final preserved = remoteMsg.copyWith(
+          seenBy: [...remoteMsg.seenBy, localReceipt],
+        );
+        merged.add(preserved);
+        unsyncedSeenMessages.add(preserved);
+      } else if (localReceipt.hasListened &&
+          !remoteMsg.seenBy[remoteIdx].hasListened) {
+        final existing = remoteMsg.seenBy[remoteIdx];
+        final upgradedSeen = List<SeenStatusModel>.from(remoteMsg.seenBy);
+        upgradedSeen[remoteIdx] = SeenStatusModel(
+          memberId: existing.memberId,
+          memberName: existing.memberName,
+          avatarPath: existing.avatarPath,
+          timestamp: existing.timestamp,
+          hasListened: true,
+        );
+        merged.add(remoteMsg.copyWith(seenBy: upgradedSeen));
+      } else {
+        merged.add(remoteMsg);
+      }
+    }
+
+    var hasUnconfirmedPending = false;
+    if (pendingOutgoingMessages.isNotEmpty) {
+      for (final pending in pendingOutgoingMessages.values) {
+        if (!remoteMsgIds.contains(pending.id)) {
+          merged.add(pending);
+          hasUnconfirmedPending = true;
+        }
+      }
+      merged.sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    }
+
+    return ChatMessagesMergeResult(
+      messages: merged,
+      hasUnconfirmedPending: hasUnconfirmedPending,
+      unsyncedSeenMessages: unsyncedSeenMessages,
+    );
+  }
+
+  /// Retries any unconfirmed outgoing chat messages or locally recorded seen
+  /// receipts that have not yet appeared in the cloud snapshot.
+  void retryPendingChatWrites(
+    ChatMessagesMergeResult merged, {
+    bool force = false,
+  }) {
+    if (!state.isOnline) return;
+    if (!merged.hasUnconfirmedPending && merged.unsyncedSeenMessages.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    final cooldownExpired = force ||
+        _lastPendingChatRetryAt == null ||
+        now.difference(_lastPendingChatRetryAt!).inSeconds >= 4;
+    if (!cooldownExpired) return;
+    _lastPendingChatRetryAt = now;
+
+    for (final pending in pendingOutgoingMessages.values) {
+      unawaited(repository.sendChatMessageToCloud(message: pending));
+    }
+    if (merged.unsyncedSeenMessages.isNotEmpty) {
+      final v = state.currentUser;
+      final receipt = merged.unsyncedSeenMessages.first.seenBy
+              .where((s) => s.memberId == v.id)
+              .firstOrNull ??
+          SeenStatusModel(
+            memberId: v.id,
+            memberName: v.name,
+            avatarPath: v.avatarPath,
+            timestamp: now,
+            hasListened: false,
+          );
+      unawaited(
+        repository.markMessagesSeenInCloud(
+          updatedMessages: merged.unsyncedSeenMessages,
+          viewerReceipt: receipt,
+        ),
+      );
+    }
+  }
 
   /// Persists the current state snapshot to the underlying [LmtRepository].
   Future<void> persistState() async {
@@ -328,6 +448,7 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
 
     if (newlyAlerted.isNotEmpty) {
       unawaited(AppPreferences.addAlertedNotificationIds(userId, newlyAlerted));
+      unawaited(BackgroundSyncBridge.recordAlertedIds(userId, newlyAlerted));
       return true;
     }
     return false;
@@ -356,6 +477,7 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     final userId = state.currentUser.id;
     knownNotificationIds.add('$userId::$resolvedId');
     unawaited(AppPreferences.addAlertedNotificationIds(userId, [resolvedId]));
+    unawaited(BackgroundSyncBridge.recordAlertedIds(userId, [resolvedId]));
     if (state.notifications.any((n) => n.id == resolvedId)) {
       return;
     }
@@ -401,4 +523,22 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
 
     emit(state.copyWith(notifications: [notif, ...state.notifications]));
   }
+}
+
+/// Result of merging remote chat messages with local pending sends and reads.
+class ChatMessagesMergeResult {
+  /// Merged chronological list of chat messages for state emission.
+  final List<ChatMessageModel> messages;
+
+  /// Whether any locally sent outgoing message is still awaiting remote echo.
+  final bool hasUnconfirmedPending;
+
+  /// Messages whose local `seenBy` receipt for `currentUser` is absent remotely.
+  final List<ChatMessageModel> unsyncedSeenMessages;
+
+  const ChatMessagesMergeResult({
+    required this.messages,
+    required this.hasUnconfirmedPending,
+    required this.unsyncedSeenMessages,
+  });
 }

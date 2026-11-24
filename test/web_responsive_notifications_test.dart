@@ -116,6 +116,25 @@ class _StreamableRepo implements LmtRepository {
   @override
   Future<void> resetKhelwaDay({required String dateKey}) async {}
 
+  @override
+  Future<void> persistLocalSnapshot({
+    required Map<String, dynamic> stateJson,
+    required String currentUserId,
+  }) =>
+      persistSnapshot(stateJson: stateJson, currentUserId: currentUserId);
+
+  @override
+  Future<void> sendChatMessageToCloud({
+    required ChatMessageModel message,
+    AppNotificationModel? notification,
+  }) async {}
+
+  @override
+  Future<void> markMessagesSeenInCloud({
+    required List<ChatMessageModel> updatedMessages,
+    required SeenStatusModel viewerReceipt,
+  }) async {}
+
   Future<void> dispose() async {
     await notifController.close();
     await liveSnapshotController.close();

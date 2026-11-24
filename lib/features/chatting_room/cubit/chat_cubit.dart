@@ -13,6 +13,7 @@ typedef ChatCubit = LmtCubit;
 /// reactions, live typing indicators, real seen receipts, forwarding, editing,
 /// and deletion logic.
 mixin ChatCubitMixin on LmtBaseCubit {
+  static int _outgoingMessageSeq = 0;
   final Map<String, StreamSubscription<List<TypingMemberStatus>>>
       _typingSubscriptions = {};
 
@@ -417,9 +418,26 @@ mixin ChatCubitMixin on LmtBaseCubit {
   }) async {
     final now = DateTime.now();
     final senderId = state.currentUser.id;
+    final rawPreview = replyTo == null
+        ? null
+        : (replyTo.content.trim().isNotEmpty
+            ? replyTo.content.trim()
+            : _messagePreviewText(replyTo.type, replyTo.content));
+    final safePreview = rawPreview == null
+        ? null
+        : (rawPreview.length <= 1000
+            ? rawPreview
+            : rawPreview.substring(0, 1000));
+    final safeReplySender = replyTo?.senderName.trim();
+    final boundedReplySender =
+        (safeReplySender == null || safeReplySender.isEmpty)
+            ? null
+            : (safeReplySender.length <= 120
+                ? safeReplySender
+                : safeReplySender.substring(0, 120));
 
     final message = ChatMessageModel(
-      id: 'msg_${now.millisecondsSinceEpoch}',
+      id: 'msg_${now.microsecondsSinceEpoch}_${++_outgoingMessageSeq}',
       groupId: groupId,
       senderId: senderId,
       senderName: state.currentUser.name,
@@ -431,19 +449,17 @@ mixin ChatCubitMixin on LmtBaseCubit {
       fileSize: fileSize,
       voiceDurationSeconds: voiceDurationSeconds,
       replyToMessageId: replyTo?.id,
-      replyToSenderName: replyTo?.senderName,
-      replyToPreview: replyTo == null
-          ? null
-          : (replyTo.content.trim().isNotEmpty
-              ? replyTo.content
-              : _messagePreviewText(replyTo.type, replyTo.content)),
+      replyToSenderName: boundedReplySender,
+      replyToPreview: safePreview,
       seenBy: const [],
       sentAt: now,
     );
 
+    pendingOutgoingMessages[message.id] = message;
     final updatedMessages = [...state.chatMessages, message];
     emit(state.copyWith(chatMessages: updatedMessages));
 
+    AppNotificationModel? sentNotification;
     final group = state.chatGroups.where((g) => g.id == groupId).firstOrNull;
     if (group != null) {
       final recipients =
@@ -460,10 +476,18 @@ mixin ChatCubitMixin on LmtBaseCubit {
           targetMemberIds: recipients,
           excludedMemberIds: [senderId],
         );
+        sentNotification = state.notifications.firstOrNull;
       }
     }
 
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: senderId,
+    );
+    await repository.sendChatMessageToCloud(
+      message: message,
+      notification: sentNotification,
+    );
   }
 
   /// Marks all messages from other members inside [groupId] as seen by the
@@ -520,8 +544,33 @@ mixin ChatCubitMixin on LmtBaseCubit {
     }).toList();
 
     if (!hasChanges) return;
+    final viewerReceipt = SeenStatusModel(
+      memberId: viewer.id,
+      memberName: viewer.name,
+      avatarPath: viewer.avatarPath,
+      timestamp: now,
+      hasListened: false,
+    );
+    final changedMessages = updatedMessages
+        .where(
+          (m) =>
+              m.groupId == groupId &&
+              m.senderId != viewer.id &&
+              m.seenBy.any(
+                (s) => s.memberId == viewer.id && s.timestamp == now,
+              ),
+        )
+        .toList();
+
     emit(state.copyWith(chatMessages: updatedMessages));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: viewer.id,
+    );
+    await repository.markMessagesSeenInCloud(
+      updatedMessages: changedMessages,
+      viewerReceipt: viewerReceipt,
+    );
   }
 
   /// Records that the current user listened to a voice note message (only when
@@ -664,8 +713,14 @@ mixin ChatCubitMixin on LmtBaseCubit {
 
     final now = DateTime.now();
     final senderId = state.currentUser.id;
+    final safeForwardSource = (sourceGroup ?? 'Chat Group').trim();
+    final boundedForwardSource = safeForwardSource.isEmpty
+        ? 'Chat Group'
+        : (safeForwardSource.length <= 150
+            ? safeForwardSource
+            : safeForwardSource.substring(0, 150));
     final forwarded = ChatMessageModel(
-      id: 'msg_${now.millisecondsSinceEpoch}',
+      id: 'msg_${now.microsecondsSinceEpoch}_${++_outgoingMessageSeq}',
       groupId: targetGroupId,
       senderId: senderId,
       senderName: state.currentUser.name,
@@ -676,13 +731,15 @@ mixin ChatCubitMixin on LmtBaseCubit {
       attachmentPath: message.attachmentPath,
       fileSize: message.fileSize,
       voiceDurationSeconds: message.voiceDurationSeconds,
-      forwardedFromGroup: sourceGroup ?? 'Chat Group',
+      forwardedFromGroup: boundedForwardSource,
       seenBy: const [],
       sentAt: now,
     );
 
+    pendingOutgoingMessages[forwarded.id] = forwarded;
     emit(state.copyWith(chatMessages: [...state.chatMessages, forwarded]));
 
+    AppNotificationModel? sentNotification;
     final targetGroup =
         state.chatGroups.where((g) => g.id == targetGroupId).firstOrNull;
     if (targetGroup != null) {
@@ -700,10 +757,18 @@ mixin ChatCubitMixin on LmtBaseCubit {
           targetMemberIds: recipients,
           excludedMemberIds: [senderId],
         );
+        sentNotification = state.notifications.firstOrNull;
       }
     }
 
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: senderId,
+    );
+    await repository.sendChatMessageToCloud(
+      message: forwarded,
+      notification: sentNotification,
+    );
   }
 
   /// Maximum window after sending during which the sender may edit a message.
@@ -734,6 +799,9 @@ mixin ChatCubitMixin on LmtBaseCubit {
       content: newContent.trim(),
       isEdited: true,
     );
+    if (pendingOutgoingMessages.containsKey(updated.id)) {
+      pendingOutgoingMessages[updated.id] = updated;
+    }
     final updatedList = List<ChatMessageModel>.from(state.chatMessages);
     updatedList[index] = updated;
 
@@ -758,6 +826,7 @@ mixin ChatCubitMixin on LmtBaseCubit {
       return false;
     }
 
+    pendingOutgoingMessages.remove(messageId);
     final updatedList =
         state.chatMessages.where((m) => m.id != messageId).toList();
     emit(state.copyWith(chatMessages: updatedList));

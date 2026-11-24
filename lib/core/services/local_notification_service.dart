@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../../features/auth/services/biometric_session_lock_controller.dart';
 import 'web_notification_bridge.dart';
 
 /// Custom audio channels for L.M.T OS & Web notifications.
@@ -107,6 +108,7 @@ class LocalNotificationService {
       final status = await WebNotificationBridge.requestPermission();
       return status == 'granted';
     }
+    BiometricSessionLockController.instance.suppressNextResumeLock();
     try {
       await init();
       final androidImpl = _plugin.resolvePlatformSpecificImplementation<

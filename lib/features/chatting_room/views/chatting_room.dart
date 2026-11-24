@@ -33,6 +33,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
   bool _showPinnedOnly = false;
   bool _isPushingGroup = false;
   String? _desktopSelectedGroupId;
+  final Set<String> _userActivatedDesktopGroups = <String>{};
 
   @override
   void initState() {
@@ -62,6 +63,7 @@ class _ChattingRoomState extends State<ChattingRoom> {
     }
 
     context.read<LmtCubit>().selectChatGroup(null);
+    _userActivatedDesktopGroups.add(groupId);
     if (forceSplit ?? _isDesktopSplit(context)) {
       setState(() => _desktopSelectedGroupId = groupId);
       return;
@@ -294,6 +296,14 @@ class _ChattingRoomState extends State<ChattingRoom> {
                           key: ValueKey('desktop_room_${activeGroup.id}'),
                           group: activeGroup,
                           showInlineHeader: true,
+                          autoMarkSeen: _userActivatedDesktopGroups
+                              .contains(activeGroup.id),
+                          onUserInteracted: () {
+                            if (_userActivatedDesktopGroups
+                                .add(activeGroup.id)) {
+                              setState(() {});
+                            }
+                          },
                           onBack: () =>
                               setState(() => _desktopSelectedGroupId = null),
                         ),

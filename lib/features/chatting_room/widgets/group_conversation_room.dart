@@ -11,6 +11,7 @@ import '../../../core/utils/app_preferences.dart';
 import '../../../core/utils/device_file_helper.dart';
 import '../../../core/widgets/adaptive_layout.dart';
 import '../../../core/widgets/lmt_empty_state.dart';
+import '../../auth/services/biometric_session_lock_controller.dart';
 import '../cubit/chat_cubit.dart';
 import '../sheets/chat_attachment_menu_sheet.dart';
 import '../sheets/chat_message_actions_sheet.dart';
@@ -35,19 +36,31 @@ class GroupConversationRoom extends StatefulWidget {
   /// [GroupConversationPage] which places it in `Scaffold.appBar`).
   final bool showInlineHeader;
 
+  /// Whether viewing this room should automatically record Seen receipts.
+  ///
+  /// Set to `false` for non-selected desktop split-view previews until the
+  /// user explicitly clicks or interacts with the group.
+  final bool autoMarkSeen;
+
+  /// Optional callback fired when the user directly interacts with this room.
+  final VoidCallback? onUserInteracted;
+
   /// Creates a [GroupConversationRoom].
   const GroupConversationRoom({
     super.key,
     required this.group,
     required this.onBack,
     this.showInlineHeader = false,
+    this.autoMarkSeen = true,
+    this.onUserInteracted,
   });
 
   @override
   State<GroupConversationRoom> createState() => _GroupConversationRoomState();
 }
 
-class _GroupConversationRoomState extends State<GroupConversationRoom> {
+class _GroupConversationRoomState extends State<GroupConversationRoom>
+    with WidgetsBindingObserver {
   static const double _bottomThresholdPx = 56.0;
   static const double _showFabThresholdPx = 180.0;
 
@@ -67,6 +80,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   bool _isTyping = false;
   DateTime? _lastTypingHeartbeatAt;
   bool _isMarkingSeen = false;
+  final Set<String> _lastMeasuredVisibleIds = <String>{};
   bool _showScrollToBottom = false;
   String? _sessionUnreadAnchorMessageId;
   int _sessionUnreadCount = 0;
@@ -79,6 +93,9 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    BiometricSessionLockController.instance.isLocked
+        .addListener(_onBiometricLockChanged);
     _loadSavedStickers();
     _scrollController.addListener(_onScrollChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -89,6 +106,56 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
         _initializeUnreadAnchorAndScroll();
       }
     });
+  }
+
+  void _onBiometricLockChanged() {
+    if (!mounted) return;
+    if (!BiometricSessionLockController.instance.isLocked.value &&
+        _canMarkMessagesSeenNow) {
+      _scheduleVisibleSeenSync();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        mounted &&
+        _canMarkMessagesSeenNow) {
+      _scheduleVisibleSeenSync();
+    } else if ((state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden) &&
+        mounted &&
+        widget.autoMarkSeen &&
+        !BiometricSessionLockController.instance.isLocked.value &&
+        _cubitRef != null) {
+      final inInactiveChatTab = widget.showInlineHeader &&
+          context.findAncestorWidgetOfExactType<PageView>() != null &&
+          _cubitRef!.state.activeLayoutTab != 1;
+      if (!inInactiveChatTab) {
+        _flushSeenOnLeaveOrBackground();
+      }
+    }
+  }
+
+  bool get _canMarkMessagesSeenNow {
+    if (!mounted || !widget.autoMarkSeen) return false;
+    if (BiometricSessionLockController.instance.isLocked.value) return false;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == AppLifecycleState.paused ||
+        lifecycle == AppLifecycleState.hidden ||
+        lifecycle == AppLifecycleState.inactive) {
+      return false;
+    }
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    if (widget.showInlineHeader &&
+        _cubitRef != null &&
+        context.findAncestorWidgetOfExactType<PageView>() != null &&
+        _cubitRef!.state.activeLayoutTab != 1) {
+      return false;
+    }
+    return true;
   }
 
   @override
@@ -108,23 +175,32 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
           _initializeUnreadAnchorAndScroll();
         }
       });
+    } else if (!oldWidget.autoMarkSeen && widget.autoMarkSeen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _canMarkMessagesSeenNow) {
+          _syncSeenReceipts();
+        }
+      });
     }
   }
 
   void _onScrollChanged() {
     if (!mounted || !_scrollController.hasClients) return;
+    widget.onUserInteracted?.call();
     final pixels = _scrollController.position.pixels;
     final shouldShowFab = pixels > _showFabThresholdPx;
     if (shouldShowFab != _showScrollToBottom) {
       setState(() => _showScrollToBottom = shouldShowFab);
     }
-    _scheduleVisibleSeenSync();
+    if (_canMarkMessagesSeenNow) {
+      _scheduleVisibleSeenSync();
+    }
   }
 
   void _scheduleVisibleSeenSync() {
     _seenSyncThrottleTimer?.cancel();
     _seenSyncThrottleTimer = Timer(const Duration(milliseconds: 160), () {
-      if (mounted) {
+      if (mounted && _canMarkMessagesSeenNow) {
         _syncSeenReceipts();
       }
     });
@@ -143,7 +219,9 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
     );
 
     if (firstUnreadIdx == -1) {
-      await _syncSeenReceipts();
+      if (_canMarkMessagesSeenNow) {
+        await _syncSeenReceipts();
+      }
       return;
     }
 
@@ -168,11 +246,44 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
       highlight: false,
     );
     if (!mounted) return;
-    await _syncSeenReceipts();
+    if (_canMarkMessagesSeenNow) {
+      await _syncSeenReceipts();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _canMarkMessagesSeenNow) {
+        _syncSeenReceipts();
+      }
+    });
+  }
+
+  bool get _isScrolledToBottom {
+    final hasDim = _scrollController.hasClients &&
+        _scrollController.position.hasContentDimensions;
+    return !hasDim ||
+        _scrollController.position.pixels <= _bottomThresholdPx ||
+        _scrollController.position.maxScrollExtent <= _bottomThresholdPx;
+  }
+
+  void _flushSeenOnLeaveOrBackground() {
+    if (!widget.autoMarkSeen ||
+        BiometricSessionLockController.instance.isLocked.value ||
+        _cubitRef == null) {
+      return;
+    }
+    if (_isScrolledToBottom) {
+      unawaited(_cubitRef!.markGroupMessagesSeen(widget.group.id));
+    } else if (_lastMeasuredVisibleIds.isNotEmpty) {
+      unawaited(
+        _cubitRef!.markGroupMessagesSeen(
+          widget.group.id,
+          onlyMessageIds: Set<String>.from(_lastMeasuredVisibleIds),
+        ),
+      );
+    }
   }
 
   Future<void> _syncSeenReceipts() async {
-    if (_isMarkingSeen || !mounted) return;
+    if (_isMarkingSeen || !_canMarkMessagesSeenNow) return;
     final cubit = context.read<LmtCubit>();
     final messages = cubit.state.messagesForGroup(widget.group.id);
     final uid = cubit.state.currentUser.id;
@@ -183,9 +294,10 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
 
     _isMarkingSeen = true;
     try {
-      final atBottom = !_scrollController.hasClients ||
-          _scrollController.position.pixels <= _bottomThresholdPx;
-      if (atBottom) {
+      if (_isScrolledToBottom) {
+        _lastMeasuredVisibleIds
+          ..clear()
+          ..addAll(messages.map((m) => m.id));
         await cubit.markGroupMessagesSeen(widget.group.id);
         return;
       }
@@ -204,7 +316,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
           final render = ctx?.findRenderObject();
           if (render is RenderBox && render.attached && render.hasSize) {
             final itemTopY = render.localToGlobal(Offset.zero).dy;
-            if (itemTopY <= viewportBottomY + 24.0) {
+            if (itemTopY <= viewportBottomY + 32.0) {
               maxVisibleIdx = i;
             }
           }
@@ -223,6 +335,9 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
         final visibleIds = <String>{
           for (var i = 0; i <= maxVisibleIdx; i++) messages[i].id,
         };
+        _lastMeasuredVisibleIds
+          ..clear()
+          ..addAll(visibleIds);
         await cubit.markGroupMessagesSeen(
           widget.group.id,
           onlyMessageIds: visibleIds,
@@ -241,10 +356,14 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    BiometricSessionLockController.instance.isLocked
+        .removeListener(_onBiometricLockChanged);
     _recordingTimer?.cancel();
     _typingHideTimer?.cancel();
     _highlightClearTimer?.cancel();
     _seenSyncThrottleTimer?.cancel();
+    _flushSeenOnLeaveOrBackground();
     _scrollController.removeListener(_onScrollChanged);
     if (_isTyping) {
       _cubitRef?.setTypingInGroup(groupId: widget.group.id, isTyping: false);
@@ -616,15 +735,17 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
             if (mounted) _initializeUnreadAnchorAndScroll();
           });
         } else if (liveUnreadCount > 0 &&
+            _canMarkMessagesSeenNow &&
             !_isMarkingSeen &&
-            (!_scrollController.hasClients ||
-                _scrollController.position.pixels <= _bottomThresholdPx)) {
+            _isScrolledToBottom) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _syncSeenReceipts();
           });
         }
 
-        return AdaptiveContentBox(
+        return Listener(
+          onPointerDown: (_) => widget.onUserInteracted?.call(),
+          child: AdaptiveContentBox(
           maxWidth: 820,
           child: Column(
             children: [
@@ -801,6 +922,7 @@ class _GroupConversationRoomState extends State<GroupConversationRoom> {
                 onSendText: _handleSendText,
               ),
           ],
+        ),
         ),
         );
       },

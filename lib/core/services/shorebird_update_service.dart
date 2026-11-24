@@ -86,6 +86,7 @@ class ShorebirdUpdateService {
 
   final ShorebirdPlatformBridge _bridge;
   bool _isChecking = false;
+  Future<ShorebirdUpdateCheckResult>? _inFlightCheck;
 
   static String formatVersionLabel({
     required String version,
@@ -101,8 +102,24 @@ class ShorebirdUpdateService {
 
   /// Checks installed version/patch against saved state, triggers Shorebird OTA
   /// download automatically when outdated, and returns a [ShorebirdWelcomeMessage]
-  /// whenever the app just updated or downloaded a new OTA patch.
-  Future<ShorebirdUpdateCheckResult> checkAndSyncUpdates() async {
+  /// at most once per newly downloaded or newly activated release/patch.
+  Future<ShorebirdUpdateCheckResult> checkAndSyncUpdates() {
+    final existing = _inFlightCheck;
+    if (existing != null) return existing;
+    final run = _runSerializedCheck();
+    _inFlightCheck = run;
+    return run;
+  }
+
+  Future<ShorebirdUpdateCheckResult> _runSerializedCheck() async {
+    try {
+      return await _runCheckAndSyncUpdates();
+    } finally {
+      _inFlightCheck = null;
+    }
+  }
+
+  Future<ShorebirdUpdateCheckResult> _runCheckAndSyncUpdates() async {
     final appVer = await _bridge.appVersionReader();
     int? currentPatchNum;
     bool isAvailable = false;
@@ -130,6 +147,7 @@ class ShorebirdUpdateService {
 
     final previousSig = await AppPreferences.getLastWelcomedAppVersion();
     final pendingRaw = await AppPreferences.getPendingUpdateWelcome();
+    final lastShownPopup = await AppPreferences.getLastShownPopupSignature();
     ShorebirdWelcomeMessage? welcome;
 
     // 1. Check whether this cold start booted onto a newer release or patch.
@@ -146,19 +164,24 @@ class ShorebirdUpdateService {
         final parsed = DateTime.tryParse(parts.last);
         if (parsed != null) activatedAt = parsed;
       }
+      final activePopupSig = 'active:$currentSig';
       await AppPreferences.setLastWelcomedAppVersion(currentSig);
       await AppPreferences.setLastUpdateDate(activatedAt);
       await AppPreferences.setPendingUpdateWelcome(null);
-      welcome = ShorebirdWelcomeMessage(
-        versionLabel: displayVersion,
-        updatedAt: activatedAt,
-        restartRequired: false,
-      );
+      if (lastShownPopup != activePopupSig) {
+        await AppPreferences.setLastShownPopupSignature(activePopupSig);
+        welcome = ShorebirdWelcomeMessage(
+          versionLabel: displayVersion,
+          updatedAt: activatedAt,
+          restartRequired: false,
+        );
+      }
     } else if (previousSig == null) {
       // Initial baseline install: store signature cleanly so the next OTA
       // patch or APK upgrade welcomes the user with version & update date.
       await AppPreferences.setLastWelcomedAppVersion(currentSig);
       await AppPreferences.setLastUpdateDate(DateTime.now());
+      await AppPreferences.setLastShownPopupSignature('active:$currentSig');
     }
 
     // 2. Check Shorebird servers and automatically download any pending OTA patch.
@@ -180,13 +203,20 @@ class ShorebirdUpdateService {
             '$nextLabel|${downloadedAt.toIso8601String()}',
           );
           status = UpdateStatus.restartRequired;
-          welcome ??= ShorebirdWelcomeMessage(
-            versionLabel: nextLabel,
-            updatedAt: downloadedAt,
-            restartRequired: true,
-          );
+          final pendingPopupSig =
+              'pending:${appVer.version}+${appVer.buildNumber}#patch_$nextPatchNum';
+          final updatedShown = await AppPreferences.getLastShownPopupSignature();
+          if (welcome == null && updatedShown != pendingPopupSig) {
+            await AppPreferences.setLastShownPopupSignature(pendingPopupSig);
+            welcome = ShorebirdWelcomeMessage(
+              versionLabel: nextLabel,
+              updatedAt: downloadedAt,
+              restartRequired: true,
+            );
+          }
         } else if (status == UpdateStatus.restartRequired) {
           final nextPatch = await updater.readNextPatch();
+          final nextPatchNum = nextPatch?.number ?? currentPatchNum ?? 0;
           final nextLabel = formatVersionLabel(
             version: appVer.version,
             buildNumber: appVer.buildNumber,
@@ -197,11 +227,17 @@ class ShorebirdUpdateService {
             final parsed = DateTime.tryParse(pendingRaw.split('|').last);
             if (parsed != null) downloadedAt = parsed;
           }
-          welcome ??= ShorebirdWelcomeMessage(
-            versionLabel: nextLabel,
-            updatedAt: downloadedAt,
-            restartRequired: true,
-          );
+          final pendingPopupSig =
+              'pending:${appVer.version}+${appVer.buildNumber}#patch_$nextPatchNum';
+          final updatedShown = await AppPreferences.getLastShownPopupSignature();
+          if (welcome == null && updatedShown != pendingPopupSig) {
+            await AppPreferences.setLastShownPopupSignature(pendingPopupSig);
+            welcome = ShorebirdWelcomeMessage(
+              versionLabel: nextLabel,
+              updatedAt: downloadedAt,
+              restartRequired: true,
+            );
+          }
         }
       } catch (e) {
         debugPrint('Shorebird check/update error: $e');

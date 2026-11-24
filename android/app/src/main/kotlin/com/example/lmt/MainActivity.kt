@@ -43,6 +43,16 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         GeneratedPluginRegistrant.registerWith(flutterEngine)
 
+        LmtBackgroundNotificationManager.handleLaunchIntent(intent, fromNewIntent = false)
+        val bgSyncChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            LmtBackgroundNotificationManager.CHANNEL_NAME
+        )
+        LmtBackgroundNotificationManager.attachChannel(bgSyncChannel)
+        bgSyncChannel.setMethodCallHandler { call, result ->
+            LmtBackgroundNotificationManager.onMethodCall(this, call, result)
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -552,5 +562,26 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         return destFile.absolutePath
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        LmtBackgroundNotificationManager.handleLaunchIntent(intent, fromNewIntent = true)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        LmtBackgroundNotificationManager.setActivityResumed(this, true)
+    }
+
+    override fun onPause() {
+        LmtBackgroundNotificationManager.setActivityResumed(this, false)
+        super.onPause()
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        LmtBackgroundNotificationManager.detachChannel()
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 }

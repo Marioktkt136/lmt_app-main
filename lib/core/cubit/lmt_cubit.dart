@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../features/auth/cubit/auth_cubit.dart';
+import '../../features/auth/services/biometric_session_lock_controller.dart';
 import '../../features/calendar/cubit/calendar_cubit.dart';
 import '../../features/chatting_room/cubit/chat_cubit.dart';
 import '../../features/dashboard/cubit/shared_files_cubit.dart';
@@ -16,6 +18,7 @@ import '../data/lmt_seed_data.dart';
 import '../models/lmt_models.dart';
 import '../repositories/lmt_repository.dart';
 import '../routes/app_router.dart';
+import '../services/background_sync_bridge.dart';
 import '../services/local_notification_service.dart';
 import '../utils/app_assets.dart';
 import '../utils/app_preferences.dart';
@@ -51,6 +54,7 @@ class LmtCubit extends LmtBaseCubit
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<List<AppNotificationModel>>? _notificationsSubscription;
   StreamSubscription<LmtRepositorySnapshot>? _liveSyncSubscription;
+  Timer? _webBackgroundSyncTimer;
 
   LmtCubit({LmtRepository? repository})
       : super(repository: repository ?? const LmtLocalRepositoryImpl()) {
@@ -101,7 +105,11 @@ class LmtCubit extends LmtBaseCubit
       snapshot.currentUser.id,
       snapshot.notifications,
     );
+    await reconcileBackgroundNotifications(userId: snapshot.currentUser.id);
     final hasSession = await AppPreferences.isLoggedIn();
+    BiometricSessionLockController.instance.setBiometricEnabled(
+      snapshot.biometricEnabled,
+    );
 
     emit(
       state.copyWith(
@@ -127,22 +135,74 @@ class LmtCubit extends LmtBaseCubit
     _startConnectivityListener();
     _startNotificationsListener();
     _startLiveSyncListener();
+    _startWebBackgroundKeepAlive();
     scheduleEndOfDayKhelwaSummaryTimer();
+
+    if (hasSession) {
+      unawaited(
+        AppPreferences.getAlertedNotificationIds(snapshot.currentUser.id).then(
+          (ids) => BackgroundSyncBridge.syncSessionConfig(
+            isLoggedIn: true,
+            userId: snapshot.currentUser.id,
+            alertedIds: ids,
+          ),
+        ),
+      );
+    } else {
+      unawaited(BackgroundSyncBridge.clearSession());
+    }
+
     await scheduleAllCalendarNotifications();
     await syncDueCalendarReminders();
 
-    LocalNotificationService.onNotificationTapped = (payload) {
+    void handleTapPayload(String? payload) {
       syncDueCalendarReminders();
       handleNotificationPayload(payload);
       final nav = AppRouter.navigatorKey.currentState;
       if (nav != null && nav.canPop()) {
         nav.popUntil((route) => route.isFirst);
       }
-    };
-    if (LocalNotificationService.pendingLaunchPayload != null) {
+    }
+
+    LocalNotificationService.onNotificationTapped = handleTapPayload;
+    BackgroundSyncBridge.onBackgroundNotificationTapped = handleTapPayload;
+    BackgroundSyncBridge.ensureHandlerInstalled();
+
+    final nativeLaunchPayload = await BackgroundSyncBridge.consumeLaunchPayload();
+    if (nativeLaunchPayload != null && nativeLaunchPayload.isNotEmpty) {
+      handleNotificationPayload(nativeLaunchPayload);
+    } else if (LocalNotificationService.pendingLaunchPayload != null) {
       handleNotificationPayload(LocalNotificationService.pendingLaunchPayload);
       LocalNotificationService.pendingLaunchPayload = null;
     }
+  }
+
+  /// Pulls any notification IDs already alerted natively while the app was
+  /// locked or closed so foreground streams never duplicate them.
+  Future<void> reconcileBackgroundNotifications({String? userId}) async {
+    final targetUserId = userId ?? state.currentUser.id;
+    final nativeAlerted =
+        await BackgroundSyncBridge.consumeNativeAlertedIds(targetUserId);
+    for (final id in nativeAlerted) {
+      knownNotificationIds.add('$targetUserId::$id');
+    }
+  }
+
+  void _startWebBackgroundKeepAlive() {
+    if (!kIsWeb) return;
+    _webBackgroundSyncTimer?.cancel();
+    _webBackgroundSyncTimer = Timer.periodic(
+      const Duration(seconds: 25),
+      (_) async {
+        if (isClosed || !state.isInitialized || state.isSyncing) return;
+        final loggedIn = await AppPreferences.isLoggedIn();
+        if (!loggedIn) return;
+        try {
+          final remote = await repository.loadSnapshot();
+          await _onRemoteLiveSnapshot(remote);
+        } catch (_) {}
+      },
+    );
   }
 
   void _startConnectivityListener() {
@@ -197,6 +257,11 @@ class LmtCubit extends LmtBaseCubit
             ? state.notifications
             : remote.notifications;
 
+    // Protect freshly sent outgoing messages from disappearing if a concurrent
+    // snapshot arrives before their Firestore write lands, and confirm any
+    // pending message that now appears in the remote snapshot.
+    final mergedChat = mergeRemoteChatMessages(remote.chatMessages);
+
     emit(
       state.copyWith(
         lastSyncedAt: DateTime.now(),
@@ -206,7 +271,7 @@ class LmtCubit extends LmtBaseCubit
         members: remote.members.isNotEmpty ? remote.members : state.members,
         chatGroups:
             remote.chatGroups.isNotEmpty ? remote.chatGroups : state.chatGroups,
-        chatMessages: remote.chatMessages,
+        chatMessages: mergedChat.messages,
         posts: remote.posts,
         sharedFiles: remote.sharedFiles,
         calendarEvents: remote.calendarEvents,
@@ -214,6 +279,8 @@ class LmtCubit extends LmtBaseCubit
         khelwaDays: remote.khelwaDays,
       ),
     );
+
+    retryPendingChatWrites(mergedChat);
 
     if (eventsChanged) {
       await scheduleAllCalendarNotifications();
@@ -252,6 +319,7 @@ class LmtCubit extends LmtBaseCubit
     cancelKhelwaTimer();
     cancelCalendarTimers();
     cancelTypingWatchers();
+    _webBackgroundSyncTimer?.cancel();
     _connectivitySubscription?.cancel();
     _notificationsSubscription?.cancel();
     _liveSyncSubscription?.cancel();

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../features/auth/services/biometric_session_lock_controller.dart';
 import '../models/lmt_models.dart';
 import '../services/native_media_service.dart';
 import 'app_assets.dart';
@@ -81,6 +82,7 @@ class DeviceFileHelper {
     if (kIsWeb) {
       return pickFallbackOrWebFile(context, type: FileType.image);
     }
+    BiometricSessionLockController.instance.suppressNextResumeLock();
     try {
       final resultMap = await NativeMediaService.captureCameraPhoto();
       if (resultMap != null) {
@@ -206,6 +208,7 @@ class DeviceFileHelper {
         allowedExtensions: allowedExtensions,
       );
     }
+    BiometricSessionLockController.instance.suppressNextResumeLock();
     try {
       final resultMap = await NativeMediaService.pickDeviceFile(
         type: type.name,

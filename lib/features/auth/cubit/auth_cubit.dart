@@ -3,7 +3,9 @@ import 'dart:convert';
 import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/repositories/lmt_repository.dart';
+import '../../../core/services/background_sync_bridge.dart';
 import '../../../core/utils/app_preferences.dart';
+import '../services/biometric_session_lock_controller.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
 
@@ -127,6 +129,15 @@ mixin AuthCubitMixin on LmtBaseCubit {
       ),
     );
     alertUnseenNotificationsForCurrentUser(effectiveNotifications);
+    final bioEnabled = await AppPreferences.isBiometricEnabled();
+    BiometricSessionLockController.instance.onExplicitLoginSuccess(
+      biometricEnabled: bioEnabled,
+    );
+    await BackgroundSyncBridge.syncSessionConfig(
+      isLoggedIn: true,
+      userId: matched.id,
+      alertedIds: await AppPreferences.getAlertedNotificationIds(matched.id),
+    );
     await persistState();
     return matched;
   }
@@ -194,12 +205,22 @@ mixin AuthCubitMixin on LmtBaseCubit {
       ),
     );
     alertUnseenNotificationsForCurrentUser(state.notifications);
+    BiometricSessionLockController.instance.onExplicitLoginSuccess(
+      biometricEnabled: true,
+    );
+    await BackgroundSyncBridge.syncSessionConfig(
+      isLoggedIn: true,
+      userId: user.id,
+      alertedIds: await AppPreferences.getAlertedNotificationIds(user.id),
+    );
     await persistState();
     return user;
   }
 
   /// Signs out the active user cleanly and clears local session tokens.
   Future<void> logout() async {
+    BiometricSessionLockController.instance.resetToLoggedOut();
+    await BackgroundSyncBridge.clearSession();
     await AppPreferences.clearLogin();
     emit(
       state.copyWith(

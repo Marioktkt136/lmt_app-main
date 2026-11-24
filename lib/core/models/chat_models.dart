@@ -302,10 +302,11 @@ class ChatMessageModel extends Equatable {
       }
     });
 
+    final parsedSenderId = json['senderId'] as String? ?? '';
     return ChatMessageModel(
       id: json['id'] as String? ?? '',
       groupId: json['groupId'] as String? ?? '',
-      senderId: json['senderId'] as String? ?? '',
+      senderId: parsedSenderId,
       senderName: json['senderName'] as String? ?? '',
       senderAvatar: json['senderAvatar'] as String? ?? AppAssets.accountIcon,
       senderRole: UserRole.fromString(json['senderRole'] as String? ?? 'member'),
@@ -322,6 +323,7 @@ class ChatMessageModel extends Equatable {
       reactions: parsedReactions,
       seenBy: (json['seenBy'] as List<dynamic>?)
               ?.map((e) => SeenStatusModel.fromJson(e as Map<String, dynamic>))
+              .where((s) => s.memberId != parsedSenderId)
               .toList() ??
           const [],
       sentAt: DateTime.tryParse(json['sentAt'] as String? ?? '') ??

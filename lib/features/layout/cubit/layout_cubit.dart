@@ -71,28 +71,35 @@ mixin LayoutCubitMixin on LmtBaseCubit {
   /// tone for any newly arrived unread notifications targeting the active user.
   Future<void> syncNow() async {
     emit(state.copyWith(isSyncing: true));
-    await persistState();
-    final remote = await repository.loadSnapshot();
-    await seedKnownNotificationsForUser(
-      state.currentUser.id,
-      remote.notifications,
-    );
-    alertUnseenNotificationsForCurrentUser(remote.notifications);
+    try {
+      final remote = await repository.loadSnapshot();
+      final mergedChat = mergeRemoteChatMessages(remote.chatMessages);
+      retryPendingChatWrites(mergedChat, force: true);
 
-    emit(
-      state.copyWith(
-        isSyncing: false,
-        lastSyncedAt: DateTime.now(),
-        members: remote.members,
-        chatGroups: remote.chatGroups,
-        chatMessages: remote.chatMessages,
-        posts: remote.posts,
-        sharedFiles: remote.sharedFiles,
-        calendarEvents: remote.calendarEvents,
-        notifications: remote.notifications,
-        khelwaDays: remote.khelwaDays,
-      ),
-    );
+      await seedKnownNotificationsForUser(
+        state.currentUser.id,
+        remote.notifications,
+      );
+      alertUnseenNotificationsForCurrentUser(remote.notifications);
+
+      emit(
+        state.copyWith(
+          isSyncing: false,
+          lastSyncedAt: DateTime.now(),
+          members: remote.members,
+          chatGroups: remote.chatGroups,
+          chatMessages: mergedChat.messages,
+          posts: remote.posts,
+          sharedFiles: remote.sharedFiles,
+          calendarEvents: remote.calendarEvents,
+          notifications: remote.notifications,
+          khelwaDays: remote.khelwaDays,
+        ),
+      );
+    } catch (_) {
+      emit(state.copyWith(isSyncing: false));
+      rethrow;
+    }
   }
 
   /// Resets application state back to the default L.M.T seed data.

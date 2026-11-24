@@ -2,6 +2,7 @@ import '../../../core/cubit/lmt_cubit.dart';
 import '../../../core/models/lmt_models.dart';
 import '../../../core/services/local_notification_service.dart';
 import '../../../core/utils/app_preferences.dart';
+import '../../auth/services/biometric_session_lock_controller.dart';
 
 export '../../../core/cubit/lmt_cubit.dart';
 
@@ -173,6 +174,7 @@ mixin ProfileCubitMixin on LmtBaseCubit {
 
   /// Enables or disables biometric authentication in user preferences.
   Future<void> setBiometricEnabled(bool enabled) async {
+    BiometricSessionLockController.instance.setBiometricEnabled(enabled);
     await AppPreferences.setBiometricEnabled(enabled);
     emit(state.copyWith(biometricEnabled: enabled));
   }

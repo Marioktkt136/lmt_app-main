@@ -13,6 +13,8 @@ import 'core/routes/routes.dart';
 import 'core/services/local_notification_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/app_preferences.dart';
+import 'features/auth/services/biometric_session_lock_controller.dart';
+import 'features/auth/widgets/biometric_lock_overlay.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -67,13 +69,29 @@ class LMTApp extends StatefulWidget {
   State<LMTApp> createState() => LMTAppState();
 }
 
-class LMTAppState extends State<LMTApp> {
+class LMTAppState extends State<LMTApp> with WidgetsBindingObserver {
   late ThemeMode _themeMode;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _themeMode = widget.initialThemeMode;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final lockController = BiometricSessionLockController.instance;
+    lockController.handleAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted) {
+      di.sl<LmtCubit>().reconcileBackgroundNotifications();
+    }
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
@@ -119,6 +137,27 @@ class LMTAppState extends State<LMTApp> {
                 themeMode: _themeMode,
                 initialRoute: Routes.splash,
                 onGenerateRoute: AppRouter.generateRoute,
+                builder: (context, child) {
+                  return Stack(
+                    children: [
+                      child ?? const SizedBox.shrink(),
+                      ValueListenableBuilder<bool>(
+                        valueListenable:
+                            BiometricSessionLockController.instance.isLocked,
+                        builder: (context, locked, _) {
+                          if (!locked ||
+                              !BiometricSessionLockController
+                                  .instance.isInAuthenticatedShell) {
+                            return const SizedBox.shrink();
+                          }
+                          return const Positioned.fill(
+                            child: BiometricLockOverlay(),
+                          );
+                        },
+                      ),
+                    ],
+                  );
+                },
                 localizationsDelegates: [
                   ...GlobalMaterialLocalizations.delegates,
                   ...context.localizationDelegates,

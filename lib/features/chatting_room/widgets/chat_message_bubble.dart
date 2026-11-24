@@ -367,16 +367,21 @@ class ChatMessageBubble extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                Icons.done_all_rounded,
+                                viewerCount > 0
+                                    ? Icons.done_all_rounded
+                                    : Icons.check_rounded,
                                 size: 14.sp,
-                                color: accentGreen,
+                                color:
+                                    viewerCount > 0 ? accentGreen : textSecondary,
                               ),
                               SizedBox(width: 2.w),
                               Text(
                                 '$viewerCount',
                                 style: TextStyle(
                                   fontSize: 10.sp,
-                                  color: accentGreen,
+                                  color: viewerCount > 0
+                                      ? accentGreen
+                                      : textSecondary,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),

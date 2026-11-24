@@ -6,6 +6,7 @@ import '../../core/routes/routes.dart';
 import '../../core/theme/colors.dart';
 import '../../core/utils/app_assets.dart';
 import '../../core/utils/app_preferences.dart';
+import '../auth/services/biometric_session_lock_controller.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -47,18 +48,24 @@ class _SplashScreenState extends State<SplashScreen>
     Future.delayed(const Duration(seconds: 2), () async {
       final isLoggedIn = await AppPreferences.isLoggedIn();
       final savedUser = await AppPreferences.getSavedUsername();
-      final rememberMe = await AppPreferences.isRememberMeEnabled();
+      final savedUserId = await AppPreferences.getCurrentUserId();
       final biometricEnabled = await AppPreferences.isBiometricEnabled();
       if (!mounted) return;
 
-      final hasValidSession =
-          isLoggedIn && savedUser != null && savedUser.trim().isNotEmpty;
+      final hasValidSession = isLoggedIn &&
+          ((savedUser != null && savedUser.trim().isNotEmpty) ||
+              (savedUserId != null && savedUserId.trim().isNotEmpty));
 
-      // Only skip the Login/Biometric gate when the user already has a saved
-      // remembered session AND turned OFF Biometric Lock in Settings.
-      if (hasValidSession && rememberMe && !biometricEnabled) {
+      // Keep the user permanently signed in across restarts and lock screens;
+      // when Biometric/Face ID is activated, guard the session on open until verified.
+      if (hasValidSession) {
+        BiometricSessionLockController.instance.enterAuthenticatedSession(
+          biometricEnabled: biometricEnabled,
+          lockNow: biometricEnabled,
+        );
         Navigator.pushReplacementNamed(context, Routes.home);
       } else {
+        BiometricSessionLockController.instance.resetToLoggedOut();
         Navigator.pushReplacementNamed(context, Routes.login);
       }
     });

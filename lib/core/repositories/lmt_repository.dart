@@ -105,6 +105,28 @@ abstract class LmtRepository {
 
   /// Clears all check-ins for [dateKey] across the database (Admin only).
   Future<void> resetKhelwaDay({required String dateKey}) async {}
+
+  /// Persists [stateJson] strictly to fast local cache (without triggering a
+  /// full multi-collection cloud overwrite). Defaults to [persistSnapshot].
+  Future<void> persistLocalSnapshot({
+    required Map<String, dynamic> stateJson,
+    required String currentUserId,
+  }) =>
+      persistSnapshot(stateJson: stateJson, currentUserId: currentUserId);
+
+  /// Atomically writes a newly created [message] (and optional companion
+  /// [notification]) to cloud storage without re-writing unrelated collections.
+  Future<void> sendChatMessageToCloud({
+    required ChatMessageModel message,
+    AppNotificationModel? notification,
+  }) async {}
+
+  /// Atomically merges [viewerReceipt] into each message in [updatedMessages]
+  /// on cloud storage so concurrent reads/writes from other members are preserved.
+  Future<void> markMessagesSeenInCloud({
+    required List<ChatMessageModel> updatedMessages,
+    required SeenStatusModel viewerReceipt,
+  }) async {}
 }
 
 /// Concrete local-first implementation of [LmtRepository].
@@ -259,4 +281,23 @@ class LmtLocalRepositoryImpl implements LmtRepository {
 
   @override
   Future<void> resetKhelwaDay({required String dateKey}) async {}
+
+  @override
+  Future<void> persistLocalSnapshot({
+    required Map<String, dynamic> stateJson,
+    required String currentUserId,
+  }) =>
+      persistSnapshot(stateJson: stateJson, currentUserId: currentUserId);
+
+  @override
+  Future<void> sendChatMessageToCloud({
+    required ChatMessageModel message,
+    AppNotificationModel? notification,
+  }) async {}
+
+  @override
+  Future<void> markMessagesSeenInCloud({
+    required List<ChatMessageModel> updatedMessages,
+    required SeenStatusModel viewerReceipt,
+  }) async {}
 }
