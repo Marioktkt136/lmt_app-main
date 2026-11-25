@@ -30,6 +30,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val FILE_PICKER_REQUEST_CODE = 2027
     private val CAMERA_PERMISSION_REQUEST_CODE = 2028
     private val CAMERA_CAPTURE_REQUEST_CODE = 2029
+    private val MULTI_FILE_PICKER_REQUEST_CODE = 2030
 
     private var mediaRecorder: MediaRecorder? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -37,6 +38,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var currentPlayingPath: String? = null
     private var pendingMicResult: MethodChannel.Result? = null
     private var pendingFilePickerResult: MethodChannel.Result? = null
+    private var pendingMultiFilePickerResult: MethodChannel.Result? = null
     private var pendingCameraResult: MethodChannel.Result? = null
     private var pendingCameraFile: File? = null
 
@@ -59,7 +61,23 @@ class MainActivity : FlutterFragmentActivity() {
                     "pickDeviceFile" -> {
                         val pickerType = call.argument<String>("type") ?: "any"
                         val allowedExtensions = call.argument<List<String>>("allowedExtensions")
-                        launchSystemFilePicker(pickerType, allowedExtensions, result)
+                        launchSystemFilePicker(
+                            pickerType,
+                            allowedExtensions,
+                            allowMultiple = false,
+                            result = result
+                        )
+                    }
+
+                    "pickMultipleDeviceFiles" -> {
+                        val pickerType = call.argument<String>("type") ?: "media"
+                        val allowedExtensions = call.argument<List<String>>("allowedExtensions")
+                        launchSystemFilePicker(
+                            pickerType,
+                            allowedExtensions,
+                            allowMultiple = true,
+                            result = result
+                        )
                     }
 
                     "captureCameraPhoto" -> {
@@ -168,10 +186,16 @@ class MainActivity : FlutterFragmentActivity() {
     private fun launchSystemFilePicker(
         pickerType: String,
         allowedExtensions: List<String>?,
+        allowMultiple: Boolean,
         result: MethodChannel.Result
     ) {
+        val requestCode = if (allowMultiple) MULTI_FILE_PICKER_REQUEST_CODE else FILE_PICKER_REQUEST_CODE
         try {
-            pendingFilePickerResult = result
+            if (allowMultiple) {
+                pendingMultiFilePickerResult = result
+            } else {
+                pendingFilePickerResult = result
+            }
 
             // Open the phone's Gallery / Photo Picker directly for image, video, and media picks.
             if (pickerType == "image" || pickerType == "video" || pickerType == "media") {
@@ -181,6 +205,22 @@ class MainActivity : FlutterFragmentActivity() {
                             "image" -> type = "image/*"
                             "video" -> type = "video/*"
                             // Leaving type unset on API 33+ shows BOTH images & videos in Photo Picker.
+                        }
+                        if (allowMultiple) {
+                            putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 20)
+                        }
+                    }
+                } else if (allowMultiple) {
+                    Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        when (pickerType) {
+                            "image" -> type = "image/*"
+                            "video" -> type = "video/*"
+                            else -> {
+                                type = "*/*"
+                                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                            }
                         }
                     }
                 } else {
@@ -198,7 +238,7 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
                 @Suppress("DEPRECATION")
-                startActivityForResult(galleryIntent, FILE_PICKER_REQUEST_CODE)
+                startActivityForResult(galleryIntent, requestCode)
                 return
             }
 
@@ -206,6 +246,9 @@ class MainActivity : FlutterFragmentActivity() {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "*/*"
+                if (allowMultiple) {
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
                 if (pickerType == "custom" && !allowedExtensions.isNullOrEmpty()) {
                     val mimeTypes = allowedExtensions.mapNotNull { ext ->
                         MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
@@ -216,9 +259,13 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
             @Suppress("DEPRECATION")
-            startActivityForResult(intent, FILE_PICKER_REQUEST_CODE)
+            startActivityForResult(intent, requestCode)
         } catch (e: Exception) {
-            pendingFilePickerResult = null
+            if (allowMultiple) {
+                pendingMultiFilePickerResult = null
+            } else {
+                pendingFilePickerResult = null
+            }
             result.error("PICKER_ERROR", e.message, null)
         }
     }
@@ -288,6 +335,30 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             } else {
                 callback?.success(null)
+            }
+        } else if (requestCode == MULTI_FILE_PICKER_REQUEST_CODE) {
+            val callback = pendingMultiFilePickerResult
+            pendingMultiFilePickerResult = null
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                val uris = ArrayList<Uri>()
+                val clip = data.clipData
+                if (clip != null) {
+                    for (i in 0 until clip.itemCount.coerceAtMost(20)) {
+                        clip.getItemAt(i)?.uri?.let { uris.add(it) }
+                    }
+                } else {
+                    data.data?.let { uris.add(it) }
+                }
+                Thread {
+                    try {
+                        val results = uris.map { copyUriToLocalCache(it) }
+                        runOnUiThread { callback?.success(results) }
+                    } catch (e: Exception) {
+                        runOnUiThread { callback?.error("COPY_ERROR", e.message, null) }
+                    }
+                }.start()
+            } else {
+                callback?.success(emptyList<Map<String, Any>>())
             }
         } else if (requestCode == CAMERA_CAPTURE_REQUEST_CODE) {
             val callback = pendingCameraResult

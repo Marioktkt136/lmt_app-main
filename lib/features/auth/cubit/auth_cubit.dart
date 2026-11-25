@@ -138,7 +138,10 @@ mixin AuthCubitMixin on LmtBaseCubit {
       userId: matched.id,
       alertedIds: await AppPreferences.getAlertedNotificationIds(matched.id),
     );
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: matched.id,
+    );
     return matched;
   }
 
@@ -213,7 +216,10 @@ mixin AuthCubitMixin on LmtBaseCubit {
       userId: user.id,
       alertedIds: await AppPreferences.getAlertedNotificationIds(user.id),
     );
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: user.id,
+    );
     return user;
   }
 

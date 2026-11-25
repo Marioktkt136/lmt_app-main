@@ -172,7 +172,7 @@ class NotificationScreen extends StatelessWidget {
                           itemCount: visibleNotifications.length,
                   itemBuilder: (context, index) {
                     final notif = visibleNotifications[index];
-                    final isUnread = !notif.isRead;
+                    final isUnread = !notif.isReadFor(state.currentUser.id);
 
                     return Dismissible(
                       key: ValueKey(notif.id),

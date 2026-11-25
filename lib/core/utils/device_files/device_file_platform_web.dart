@@ -121,44 +121,7 @@ Future<Uint8List> _compactImageBytesIfLarge(
   );
 }
 
-/// Opens the browser native `<input type="file">` picker cleanly on Web.
-Future<PlatformFile?> pickFallbackOrWebFile(
-  BuildContext context, {
-  required FileType type,
-  List<String>? allowedExtensions,
-}) async {
-  final input = web.HTMLInputElement()
-    ..type = 'file'
-    ..accept = _acceptFilterFor(type, allowedExtensions)
-    ..style.display = 'none';
-
-  final completer = Completer<web.File?>();
-
-  void finish(web.File? f) {
-    if (!completer.isCompleted) {
-      completer.complete(f);
-    }
-    input.remove();
-  }
-
-  input.addEventListener(
-    'change',
-    ((web.Event _) {
-      final files = input.files;
-      finish(files != null && files.length > 0 ? files.item(0) : null);
-    }).toJS,
-  );
-  input.addEventListener(
-    'cancel',
-    ((web.Event _) => finish(null)).toJS,
-  );
-
-  web.document.body?.append(input);
-  input.click();
-
-  final selected = await completer.future;
-  if (selected == null) return null;
-
+Future<PlatformFile> _webFileToPlatformFile(web.File selected) async {
   final jsBuffer = await selected.arrayBuffer().toDart;
   var bytes = jsBuffer.toDart.asUint8List();
   final name = selected.name;
@@ -188,6 +151,72 @@ Future<PlatformFile?> pickFallbackOrWebFile(
     size: bytes.lengthInBytes,
     bytes: bytes,
   );
+}
+
+/// Opens the browser native `<input type="file">` picker cleanly on Web.
+Future<PlatformFile?> pickFallbackOrWebFile(
+  BuildContext context, {
+  required FileType type,
+  List<String>? allowedExtensions,
+}) async {
+  final picked = await pickMultipleFallbackOrWebFiles(
+    context,
+    type: type,
+    allowedExtensions: allowedExtensions,
+    allowMultiple: false,
+  );
+  return picked.isEmpty ? null : picked.first;
+}
+
+/// Opens the browser native `<input type="file" multiple>` picker cleanly on Web
+/// so users can pick multiple photos and/or videos simultaneously.
+Future<List<PlatformFile>> pickMultipleFallbackOrWebFiles(
+  BuildContext context, {
+  required FileType type,
+  List<String>? allowedExtensions,
+  bool allowMultiple = true,
+}) async {
+  final input = web.HTMLInputElement()
+    ..type = 'file'
+    ..multiple = allowMultiple
+    ..accept = _acceptFilterFor(type, allowedExtensions)
+    ..style.display = 'none';
+
+  final completer = Completer<List<web.File>>();
+
+  void finish(List<web.File> list) {
+    if (!completer.isCompleted) {
+      completer.complete(list);
+    }
+    input.remove();
+  }
+
+  input.addEventListener(
+    'change',
+    ((web.Event _) {
+      final files = input.files;
+      final out = <web.File>[];
+      if (files != null) {
+        final limit = allowMultiple ? 20 : 1;
+        for (var i = 0; i < files.length && i < limit; i++) {
+          final f = files.item(i);
+          if (f != null) out.add(f);
+        }
+      }
+      finish(out);
+    }).toJS,
+  );
+  input.addEventListener(
+    'cancel',
+    ((web.Event _) => finish(const [])).toJS,
+  );
+
+  web.document.body?.append(input);
+  input.click();
+
+  final selectedFiles = await completer.future;
+  if (selectedFiles.isEmpty) return const [];
+  return Future.wait(selectedFiles.map(_webFileToPlatformFile));
 }
 
 /// Uploads Web-picked file/image bytes to [CloudMediaStorage] and returns a

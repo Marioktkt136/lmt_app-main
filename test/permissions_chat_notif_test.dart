@@ -15,7 +15,7 @@ import 'package:lmt/features/notification_screen/cubit/notifications_cubit.dart'
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _InMemoryRepo implements LmtRepository {
+class _InMemoryRepo extends LmtRepository {
   @override
   Future<LmtRepositorySnapshot> loadSnapshot() async {
     return LmtRepositorySnapshot(

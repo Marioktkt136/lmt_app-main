@@ -28,6 +28,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
     String? mediaPath,
     bool isVideo = false,
     String? videoUrl,
+    List<PostMediaItem> mediaItems = const [],
     List<String> pollOptionsText = const [],
     bool allowMultiplePollChoices = false,
   }) async {
@@ -36,6 +37,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
     final now = DateTime.now();
     final pollOptions = pollOptionsText
         .where((t) => t.trim().isNotEmpty)
+        .take(25)
         .toList()
         .asMap()
         .entries
@@ -48,6 +50,27 @@ mixin PostsCubitMixin on LmtBaseCubit {
         )
         .toList();
 
+    final resolvedItems = mediaItems.isNotEmpty
+        ? mediaItems
+        : ((mediaPath != null && mediaPath.trim().isNotEmpty)
+            ? [
+                PostMediaItem(
+                  path: mediaPath.trim(),
+                  isVideo: isVideo,
+                  videoUrl: videoUrl,
+                ),
+              ]
+            : ((videoUrl != null && videoUrl.trim().isNotEmpty)
+                ? [
+                    PostMediaItem(
+                      path: videoUrl.trim(),
+                      isVideo: true,
+                      videoUrl: videoUrl.trim(),
+                    ),
+                  ]
+                : const <PostMediaItem>[]));
+    final primaryItem = resolvedItems.firstOrNull;
+
     final newPost = PostModel(
       id: 'post_${now.millisecondsSinceEpoch}',
       creatorId: state.currentUser.id,
@@ -58,9 +81,10 @@ mixin PostsCubitMixin on LmtBaseCubit {
       publishTime: now,
       type: type,
       content: content.trim(),
-      mediaPath: mediaPath,
-      isVideo: isVideo,
-      videoUrl: videoUrl,
+      mediaPath: primaryItem?.path ?? mediaPath,
+      isVideo: primaryItem?.isVideo ?? isVideo,
+      videoUrl: primaryItem?.videoUrl ?? videoUrl,
+      mediaItems: resolvedItems,
       pollOptions: pollOptions,
       allowMultiplePollChoices: allowMultiplePollChoices,
       likedByIds: const [],
@@ -75,9 +99,22 @@ mixin PostsCubitMixin on LmtBaseCubit {
       targetTabIndex: 0,
       excludedMemberIds: [state.currentUser.id],
     );
+    final sentNotification = state.notifications.firstOrNull;
+
+    pendingOutgoingPosts[newPost.id] = newPost;
+    if (sentNotification != null) {
+      pendingOutgoingNotifications[newPost.id] = sentNotification;
+    }
 
     emit(state.copyWith(posts: [newPost, ...state.posts]));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: state.currentUser.id,
+    );
+    await repository.savePostToCloud(
+      post: newPost,
+      notification: sentNotification,
+    );
   }
 
   /// Edits an existing post's text content (Admin & Editor).
@@ -91,11 +128,22 @@ mixin PostsCubitMixin on LmtBaseCubit {
 
     final updatedPosts = state.posts.map((post) {
       if (post.id != postId) return post;
-      return post.copyWith(content: trimmed);
+      final edited = post.copyWith(content: trimmed);
+      if (pendingOutgoingPosts.containsKey(postId)) {
+        pendingOutgoingPosts[postId] = edited;
+      }
+      return edited;
     }).toList();
 
     emit(state.copyWith(posts: updatedPosts));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: state.currentUser.id,
+    );
+    await repository.updatePostContentInCloud(
+      postId: postId,
+      content: trimmed,
+    );
   }
 
   /// Deletes a post (Administrator ONLY).
@@ -103,12 +151,18 @@ mixin PostsCubitMixin on LmtBaseCubit {
     if (!state.currentUser.role.canDeletePosts) return;
     if (!state.posts.any((p) => p.id == postId)) return;
 
+    pendingOutgoingPosts.remove(postId);
+    pendingOutgoingNotifications.remove(postId);
     emit(
       state.copyWith(
         posts: state.posts.where((p) => p.id != postId).toList(),
       ),
     );
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: state.currentUser.id,
+    );
+    await repository.deletePostFromCloud(postId: postId);
   }
 
   /// Toggles the current user's Like on a post and notifies ONLY the post
@@ -133,6 +187,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
 
     emit(state.copyWith(posts: updatedPosts));
 
+    AppNotificationModel? sentNotification;
     if (likeAdded && likedPost != null && likedPost!.creatorId != userId) {
       final post = likedPost!;
       final preview = post.content.length > 60
@@ -149,9 +204,18 @@ mixin PostsCubitMixin on LmtBaseCubit {
         targetMemberIds: [post.creatorId],
         excludedMemberIds: [userId],
       );
+      sentNotification = state.notifications.firstOrNull;
     }
 
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: userId,
+    );
+    await repository.togglePostLikeInCloud(
+      postId: postId,
+      memberId: userId,
+      notification: sentNotification,
+    );
   }
 
   /// Casts, toggles, or removes a user's vote on a poll option, respecting
@@ -161,8 +225,10 @@ mixin PostsCubitMixin on LmtBaseCubit {
     required String optionId,
   }) async {
     final userId = state.currentUser.id;
+    var allowMultiple = false;
     final updatedPosts = state.posts.map((post) {
       if (post.id != postId) return post;
+      allowMultiple = post.allowMultiplePollChoices;
 
       if (post.allowMultiplePollChoices) {
         final updatedOptions = post.pollOptions.map((opt) {
@@ -195,7 +261,16 @@ mixin PostsCubitMixin on LmtBaseCubit {
     }).toList();
 
     emit(state.copyWith(posts: updatedPosts));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: userId,
+    );
+    await repository.voteOnPollInCloud(
+      postId: postId,
+      optionId: optionId,
+      memberId: userId,
+      allowMultiple: allowMultiple,
+    );
   }
 
   /// Adds a comment to a post and notifies ONLY the post creator with
@@ -228,6 +303,7 @@ mixin PostsCubitMixin on LmtBaseCubit {
 
     emit(state.copyWith(posts: updatedPosts));
 
+    AppNotificationModel? sentNotification;
     if (commentedPost != null && commentedPost!.creatorId != actorId) {
       pushNotification(
         title: 'تعليق جديد على منشورك 💬',
@@ -238,8 +314,17 @@ mixin PostsCubitMixin on LmtBaseCubit {
         targetMemberIds: [commentedPost!.creatorId],
         excludedMemberIds: [actorId],
       );
+      sentNotification = state.notifications.firstOrNull;
     }
 
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: actorId,
+    );
+    await repository.addPostCommentInCloud(
+      postId: postId,
+      comment: newComment,
+      notification: sentNotification,
+    );
   }
 }

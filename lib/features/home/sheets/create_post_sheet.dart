@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
@@ -43,14 +46,34 @@ class CreatePostSheet extends StatefulWidget {
   State<CreatePostSheet> createState() => _CreatePostSheetState();
 }
 
+class _DraftPostMedia {
+  final String localPreviewPath;
+  final Uint8List? previewBytes;
+  final String fileName;
+  final bool isVideo;
+  String? uploadedPath;
+  bool isUploading = true;
+  String? errorMessage;
+
+  _DraftPostMedia({
+    required this.localPreviewPath,
+    required this.fileName,
+    required this.isVideo,
+    this.previewBytes,
+  });
+}
+
 class _CreatePostSheetState extends State<CreatePostSheet> {
   late PostCategoryType _type = widget.initialType;
   final _contentCtrl = TextEditingController();
   late final List<TextEditingController> _optionCtrls;
-  String? _pickedMediaPath;
-  String? _pickedFileName;
-  bool _isVideo = false;
+  final List<_DraftPostMedia> _mediaDrafts = [];
   bool _allowMultiplePollChoices = false;
+
+  String? get _pickedMediaPath => _mediaDrafts
+      .where((d) => d.uploadedPath != null && d.uploadedPath!.isNotEmpty)
+      .map((d) => d.uploadedPath)
+      .firstOrNull;
 
   @override
   void initState() {
@@ -89,21 +112,66 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
   }
 
   Future<void> _pickMediaFromGallery() async {
-    final file = await DeviceFileHelper.pickFileSafely(
+    final files = await DeviceFileHelper.pickMultipleFilesSafely(
       context,
       type: FileType.media,
     );
-    if (file != null && file.path != null) {
-      final savedPath =
-          await DeviceFileHelper.persistPickedFile(file.path!, file.name);
-      if (!mounted) return;
-      final isVidFile = DeviceFileHelper.isVideoPath(savedPath) ||
+    if (files.isEmpty || !mounted) return;
+
+    const maxMediaItems = 20;
+    final availableSlots = maxMediaItems - _mediaDrafts.length;
+    if (availableSlots <= 0) return;
+
+    final addedDrafts = <_DraftPostMedia>[];
+    final uploadTasks = <Future<void>>[];
+
+    for (final file in files.take(availableSlots)) {
+      final hasSource =
+          (file.path != null && file.path!.isNotEmpty) || file.bytes != null;
+      if (!hasSource) continue;
+
+      final sourcePath = (file.path != null && file.path!.isNotEmpty)
+          ? file.path!
+          : file.name;
+      final isVidFile = DeviceFileHelper.isVideoPath(sourcePath) ||
           DeviceFileHelper.isVideoPath(file.name);
-      setState(() {
-        _pickedMediaPath = savedPath;
-        _pickedFileName = file.name;
-        _isVideo = isVidFile;
-      });
+
+      final draft = _DraftPostMedia(
+        localPreviewPath: sourcePath,
+        previewBytes: file.bytes,
+        fileName: file.name,
+        isVideo: isVidFile,
+      );
+      addedDrafts.add(draft);
+      uploadTasks.add(() async {
+        try {
+          final savedPath = await DeviceFileHelper.persistPickedFile(
+            sourcePath,
+            file.name,
+            bytes: file.bytes,
+          );
+          if (!mounted) return;
+          setState(() {
+            draft.uploadedPath = savedPath;
+            draft.isUploading = false;
+            draft.errorMessage = null;
+          });
+        } catch (e) {
+          if (!mounted) return;
+          setState(() {
+            draft.isUploading = false;
+            draft.errorMessage = e.toString();
+          });
+        }
+      }());
+    }
+
+    if (addedDrafts.isEmpty) return;
+    setState(() {
+      _mediaDrafts.addAll(addedDrafts);
+    });
+    if (uploadTasks.isNotEmpty) {
+      unawaited(Future.wait(uploadTasks));
     }
   }
 
@@ -160,12 +228,26 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
       }
     }
 
+    final readyItems = _type == PostCategoryType.media
+        ? _mediaDrafts
+            .where((d) => d.uploadedPath != null && d.uploadedPath!.isNotEmpty)
+            .map(
+              (d) => PostMediaItem(
+                path: d.uploadedPath!,
+                isVideo: d.isVideo,
+                fileName: d.fileName,
+              ),
+            )
+            .toList()
+        : const <PostMediaItem>[];
+
     widget.cubit.createPost(
       type: _type,
       content: _contentCtrl.text,
-      mediaPath: _type == PostCategoryType.media ? _pickedMediaPath : null,
-      isVideo: _type == PostCategoryType.media && _isVideo,
+      mediaPath: readyItems.isNotEmpty ? readyItems.first.path : null,
+      isVideo: readyItems.isNotEmpty && readyItems.first.isVideo,
       videoUrl: null,
+      mediaItems: readyItems,
       pollOptionsText: _type == PostCategoryType.poll
           ? _optionCtrls.map((c) => c.text).toList()
           : const [],
@@ -259,14 +341,27 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
               ],
               if (_type == PostCategoryType.media)
                 MediaPickerStrip(
-                  pickedMediaPath: _pickedMediaPath,
-                  pickedFileName: _pickedFileName,
-                  isVideo: _isVideo,
-                  onPickFromGallery: _pickMediaFromGallery,
-                  onClearMedia: () => setState(() {
-                    _pickedMediaPath = null;
-                    _pickedFileName = null;
-                    _isVideo = false;
+                  items: _mediaDrafts
+                      .map(
+                        (d) => MediaPickerItem(
+                          previewPath: d.uploadedPath ?? d.localPreviewPath,
+                          previewBytes: d.previewBytes,
+                          fileName: d.fileName,
+                          isVideo: d.isVideo,
+                          isUploading: d.isUploading,
+                          errorMessage: d.errorMessage,
+                        ),
+                      )
+                      .toList(),
+                  isArabic: isArabic,
+                  onPickMore: _pickMediaFromGallery,
+                  onRemoveAt: (idx) => setState(() {
+                    if (idx >= 0 && idx < _mediaDrafts.length) {
+                      _mediaDrafts.removeAt(idx);
+                    }
+                  }),
+                  onClearAll: () => setState(() {
+                    _mediaDrafts.clear();
                   }),
                 ),
               SizedBox(height: 16.h),
@@ -274,9 +369,26 @@ class _CreatePostSheetState extends State<CreatePostSheet> {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton.icon(
-                  onPressed: () => _publish(isArabic),
-                  icon: const Icon(Icons.publish_rounded),
-                  label: Text(isArabic ? 'نشر في التايم لاين' : 'Publish Post'),
+                  onPressed: (_type == PostCategoryType.media &&
+                          _mediaDrafts.any((d) => d.isUploading))
+                      ? null
+                      : () => _publish(isArabic),
+                  icon: (_type == PostCategoryType.media &&
+                          _mediaDrafts.any((d) => d.isUploading))
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.publish_rounded),
+                  label: Text(
+                    (_type == PostCategoryType.media &&
+                            _mediaDrafts.any((d) => d.isUploading))
+                        ? (isArabic
+                            ? 'جاري تجهيز الملفات...'
+                            : 'Uploading media...')
+                        : (isArabic ? 'نشر في التايم لاين' : 'Publish Post'),
+                  ),
                 ),
               ),
             ],

@@ -6,6 +6,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../cubit/layout_cubit.dart';
+import '../../auth/services/biometric_session_lock_controller.dart';
 import '../../../core/services/local_notification_service.dart';
 import '../../../core/services/shorebird_update_service.dart';
 import '../../../core/theme/colors.dart';
@@ -46,6 +47,9 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   late int _selectedIndex;
   PageController? _pageController;
   bool _hasShownUpdateWelcome = false;
+  StreamSubscription<ForegroundNotificationEvent>? _fgNotifSub;
+  ForegroundNotificationEvent? _activeForegroundBanner;
+  Timer? _fgBannerTimer;
 
   Future<void> _syncOsNotificationPermissions({bool requestIfMobile = false}) async {
     if (requestIfMobile && !kIsWeb) {
@@ -61,6 +65,18 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _selectedIndex = widget.initialIndex.clamp(0, _pages.length - 1);
     _pageController = PageController(initialPage: _selectedIndex);
+    _fgNotifSub = LocalNotificationService.foregroundStream.listen((event) {
+      if (!mounted || BiometricSessionLockController.instance.isLocked.value) {
+        return;
+      }
+      _fgBannerTimer?.cancel();
+      setState(() => _activeForegroundBanner = event);
+      _fgBannerTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted && _activeForegroundBanner?.idKey == event.idKey) {
+          setState(() => _activeForegroundBanner = null);
+        }
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final cubit = context.read<LmtCubit>();
@@ -99,9 +115,11 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
       final cubit = context.read<LmtCubit>();
       _syncOsNotificationPermissions();
       cubit.syncDueCalendarReminders();
-      if (!cubit.state.isSyncing) {
-        cubit.syncNow();
-      }
+      cubit.reconcileBackgroundNotifications().then((_) {
+        if (mounted && !cubit.state.isSyncing) {
+          cubit.syncNow();
+        }
+      });
       _checkOtaUpdatesAndWelcome();
     }
   }
@@ -109,6 +127,8 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _fgNotifSub?.cancel();
+    _fgBannerTimer?.cancel();
     _pageController?.dispose();
     _pageController = null;
     super.dispose();
@@ -165,14 +185,17 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
       child: Scaffold(
         backgroundColor: isDark ? const Color(0xFF1A2536) : AppColors.primary,
         drawer: const LmtNavigationDrawer(),
-        body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide =
-                  constraints.maxWidth >= AdaptiveBreakpoints.navRailMinWidth;
-              final isExtendedRail = constraints.maxWidth >=
-                  AdaptiveBreakpoints.navRailExtendedMinWidth;
-              final isArabic = Localizations.localeOf(context).languageCode == 'ar';
+        body: Stack(
+          children: [
+            SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide =
+                      constraints.maxWidth >= AdaptiveBreakpoints.navRailMinWidth;
+                  final isExtendedRail = constraints.maxWidth >=
+                      AdaptiveBreakpoints.navRailExtendedMinWidth;
+                  final isArabic =
+                      Localizations.localeOf(context).languageCode == 'ar';
 
               final surfaceArea = Expanded(
                 child: Container(
@@ -387,6 +410,123 @@ class _LayoutState extends State<Layout> with WidgetsBindingObserver {
                 ],
               );
             },
+          ),
+        ),
+            if (_activeForegroundBanner != null)
+              Positioned(
+                top: MediaQuery.paddingOf(context).top + 8.h,
+                left: 14.w,
+                right: 14.w,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 520),
+                    child: _ForegroundNotificationPill(
+                      event: _activeForegroundBanner!,
+                      onTap: () {
+                        final event = _activeForegroundBanner;
+                        _fgBannerTimer?.cancel();
+                        setState(() => _activeForegroundBanner = null);
+                        if (event?.payload != null &&
+                            event!.payload!.isNotEmpty) {
+                          context
+                              .read<LmtCubit>()
+                              .handleNotificationPayload(event.payload);
+                        }
+                      },
+                      onDismiss: () {
+                        _fgBannerTimer?.cancel();
+                        setState(() => _activeForegroundBanner = null);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ForegroundNotificationPill extends StatelessWidget {
+  final ForegroundNotificationEvent event;
+  final VoidCallback onTap;
+  final VoidCallback onDismiss;
+
+  const _ForegroundNotificationPill({
+    required this.event,
+    required this.onTap,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = AppColors.primaryOf(context);
+    final isDark = AppColors.isDark(context);
+    return Material(
+      elevation: 10,
+      borderRadius: BorderRadius.circular(18.r),
+      color: isDark ? AppColors.surfaceDark : Colors.white,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18.r),
+        onTap: onTap,
+        child: Container(
+          padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18.r),
+            border: Border.all(color: primary.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 17.r,
+                backgroundColor: primary.withValues(alpha: 0.14),
+                child: Icon(
+                  Icons.notifications_active_rounded,
+                  color: primary,
+                  size: 19.sp,
+                ),
+              ),
+              SizedBox(width: 10.w),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      event.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5.sp,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimaryOf(context),
+                      ),
+                    ),
+                    if (event.body.trim().isNotEmpty)
+                      Text(
+                        event.body,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.sp,
+                          color: AppColors.textSecondaryOf(context),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: onDismiss,
+                icon: Icon(
+                  Icons.close_rounded,
+                  size: 18.sp,
+                  color: AppColors.textSecondaryOf(context),
+                ),
+              ),
+            ],
           ),
         ),
       ),

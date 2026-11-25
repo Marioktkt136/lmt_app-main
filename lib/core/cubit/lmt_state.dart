@@ -79,7 +79,7 @@ class LmtState extends Equatable {
       notifications.where((n) => n.isVisibleTo(currentUser.id)).toList();
 
   int get unreadNotificationsCount =>
-      visibleNotifications.where((n) => !n.isRead).length;
+      visibleNotifications.where((n) => !n.isReadFor(currentUser.id)).length;
 
   /// Returns chat groups sorted with Pinned groups at the top, then by latest message.
   List<ChatGroupModel> get sortedChatGroups {
@@ -234,8 +234,12 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
   final Set<String> knownNotificationIds = <String>{};
   final Map<String, ChatMessageModel> pendingOutgoingMessages =
       <String, ChatMessageModel>{};
+  final Map<String, PostModel> pendingOutgoingPosts = <String, PostModel>{};
+  final Map<String, AppNotificationModel> pendingOutgoingNotifications =
+      <String, AppNotificationModel>{};
   DateTime? _suppressRemoteNotifUntil;
   DateTime? _lastPendingChatRetryAt;
+  DateTime? _lastPendingPostRetryAt;
 
   /// Whether remote notification snapshot syncing is paused right after a
   /// local write to prevent stale delete/read bounces without spawning Timers.
@@ -267,6 +271,9 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     final viewerId = state.currentUser.id;
     final remoteMsgIds = remoteMessages.map((m) => m.id).toSet();
     pendingOutgoingMessages.removeWhere((id, _) => remoteMsgIds.contains(id));
+    pendingOutgoingNotifications.removeWhere(
+      (id, _) => remoteMsgIds.contains(id),
+    );
     final now = DateTime.now();
     pendingOutgoingMessages.removeWhere(
       (_, msg) => now.difference(msg.sentAt).inMinutes >= 5,
@@ -333,6 +340,60 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     );
   }
 
+  /// Merges [remotePosts] with any freshly created [pendingOutgoingPosts]
+  /// still awaiting Firestore confirmation so new posts/polls never flicker away.
+  List<PostModel> mergeRemotePosts(List<PostModel> remotePosts) {
+    final remotePostIds = remotePosts.map((p) => p.id).toSet();
+    pendingOutgoingPosts.removeWhere((id, _) => remotePostIds.contains(id));
+    pendingOutgoingNotifications.removeWhere(
+      (id, _) => remotePostIds.contains(id),
+    );
+    final now = DateTime.now();
+    pendingOutgoingPosts.removeWhere(
+      (_, post) => now.difference(post.publishTime).inMinutes >= 5,
+    );
+
+    if (pendingOutgoingPosts.isEmpty) {
+      pendingOutgoingNotifications.removeWhere(
+        (id, _) => !pendingOutgoingMessages.containsKey(id),
+      );
+      return remotePosts;
+    }
+
+    final merged = List<PostModel>.from(remotePosts);
+    var added = false;
+    for (final pending in pendingOutgoingPosts.values) {
+      if (!remotePostIds.contains(pending.id)) {
+        merged.add(pending);
+        added = true;
+      }
+    }
+    if (added) {
+      merged.sort((a, b) => b.publishTime.compareTo(a.publishTime));
+    }
+    return merged;
+  }
+
+  /// Retries any unconfirmed outgoing posts still missing from cloud storage.
+  void retryPendingPostWrites({bool force = false}) {
+    if (!state.isOnline || pendingOutgoingPosts.isEmpty) return;
+    final now = DateTime.now();
+    final cooldownExpired = force ||
+        _lastPendingPostRetryAt == null ||
+        now.difference(_lastPendingPostRetryAt!).inSeconds >= 3;
+    if (!cooldownExpired) return;
+    _lastPendingPostRetryAt = now;
+
+    for (final pending in pendingOutgoingPosts.values) {
+      unawaited(
+        repository.savePostToCloud(
+          post: pending,
+          notification: pendingOutgoingNotifications[pending.id],
+        ),
+      );
+    }
+  }
+
   /// Retries any unconfirmed outgoing chat messages or locally recorded seen
   /// receipts that have not yet appeared in the cloud snapshot.
   void retryPendingChatWrites(
@@ -346,12 +407,17 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     final now = DateTime.now();
     final cooldownExpired = force ||
         _lastPendingChatRetryAt == null ||
-        now.difference(_lastPendingChatRetryAt!).inSeconds >= 4;
+        now.difference(_lastPendingChatRetryAt!).inSeconds >= 3;
     if (!cooldownExpired) return;
     _lastPendingChatRetryAt = now;
 
     for (final pending in pendingOutgoingMessages.values) {
-      unawaited(repository.sendChatMessageToCloud(message: pending));
+      unawaited(
+        repository.sendChatMessageToCloud(
+          message: pending,
+          notification: pendingOutgoingNotifications[pending.id],
+        ),
+      );
     }
     if (merged.unsyncedSeenMessages.isNotEmpty) {
       final v = state.currentUser;
@@ -403,7 +469,7 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     final now = DateTime.now();
     for (final n in notifications) {
       final isOld = now.difference(n.dateTime).abs() > const Duration(hours: 24);
-      if (n.isRead ||
+      if (n.isReadFor(userId) ||
           !n.isVisibleTo(userId) ||
           isOld ||
           markRecentUnreadAsKnown) {
@@ -423,7 +489,7 @@ abstract class LmtBaseCubit extends Cubit<LmtState> {
     final newlyAlerted = <String>[];
 
     for (final n in notifications) {
-      if (n.isRead || !n.isVisibleTo(userId)) continue;
+      if (n.isReadFor(userId) || !n.isVisibleTo(userId)) continue;
       if (now.difference(n.dateTime).abs() > const Duration(hours: 24)) {
         continue;
       }

@@ -142,22 +142,29 @@ class CloudMediaStorage {
               .clamp(1, 50);
       final createdAt = DateTime.now().toIso8601String();
 
+      final futures = <Future<void>>[];
       for (var i = 0; i < totalChunks; i++) {
         final start = i * _rawChunkSize;
         final end = ((i + 1) * _rawChunkSize).clamp(0, prepared.lengthInBytes);
         final slice = Uint8List.sublistView(prepared, start, end);
         final docId = '${blobGroupId}_c$i';
-        await db.collection(_collection).doc(docId).set({
-          'id': docId,
-          'blobGroupId': blobGroupId,
-          'chunkIndex': i,
-          'totalChunks': totalChunks,
-          'fileName': shortName.isEmpty ? 'file' : shortName,
-          'mimeType': mimeType.isEmpty ? 'application/octet-stream' : mimeType,
-          'dataBase64': base64Encode(slice),
-          'createdAt': createdAt,
-          'updatedByUid': uid,
-        }).timeout(_timeout);
+        futures.add(
+          db.collection(_collection).doc(docId).set({
+            'id': docId,
+            'blobGroupId': blobGroupId,
+            'chunkIndex': i,
+            'totalChunks': totalChunks,
+            'fileName': shortName.isEmpty ? 'file' : shortName,
+            'mimeType': mimeType.isEmpty ? 'application/octet-stream' : mimeType,
+            'dataBase64': base64Encode(slice),
+            'createdAt': createdAt,
+            'updatedByUid': uid,
+          }).timeout(_timeout),
+        );
+        if (futures.length >= 4 || i == totalChunks - 1) {
+          await Future.wait(futures);
+          futures.clear();
+        }
       }
 
       final uri = Uri(

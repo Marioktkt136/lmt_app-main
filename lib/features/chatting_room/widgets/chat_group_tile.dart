@@ -333,7 +333,31 @@ class ChatGroupTile extends StatelessWidget {
       return isArabic ? 'أمس' : 'Yesterday';
     }
     if (diffDays < 7) {
-      return DateFormat('EEEE', isArabic ? 'ar' : 'en').format(dt);
+      final locale = isArabic ? 'ar' : 'en';
+      try {
+        return DateFormat('EEEE', locale).format(dt);
+      } catch (_) {
+        const arDays = [
+          'الإثنين',
+          'الثلاثاء',
+          'الأربعاء',
+          'الخميس',
+          'الجمعة',
+          'السبت',
+          'الأحد',
+        ];
+        const enDays = [
+          'Monday',
+          'Tuesday',
+          'Wednesday',
+          'Thursday',
+          'Friday',
+          'Saturday',
+          'Sunday',
+        ];
+        final idx = (dt.weekday - 1).clamp(0, 6);
+        return isArabic ? arDays[idx] : enDays[idx];
+      }
     }
     return DateFormat('dd/MM/yyyy').format(dt);
   }

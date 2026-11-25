@@ -554,23 +554,26 @@ class _GroupConversationRoomState extends State<GroupConversationRoom>
       return;
     }
 
-    _isTyping = false;
-    _lastTypingHeartbeatAt = null;
-    await cubit.setTypingInGroup(groupId: widget.group.id, isTyping: false);
-
-    await cubit.sendChatMessage(
-      groupId: widget.group.id,
-      type: MessageType.text,
-      content: text,
-      replyTo: _replyingTo,
-    );
-
+    final replyTarget = _replyingTo;
     setState(() {
       _isTyping = false;
+      _lastTypingHeartbeatAt = null;
       _replyingTo = null;
       _messageController.clear();
     });
     _scrollToLatest();
+
+    unawaited(
+      cubit.setTypingInGroup(groupId: widget.group.id, isTyping: false),
+    );
+    unawaited(
+      cubit.sendChatMessage(
+        groupId: widget.group.id,
+        type: MessageType.text,
+        content: text,
+        replyTo: replyTarget,
+      ),
+    );
   }
 
   Future<void> _startVoiceNoteRecording() async {
@@ -634,32 +637,32 @@ class _GroupConversationRoomState extends State<GroupConversationRoom>
   Future<void> _sendVoiceNote() async {
     _recordingTimer?.cancel();
     final duration = _recordingSeconds > 0 ? _recordingSeconds : 1;
-    final recordedFilePath = await NativeMediaService.stopVoiceRecording();
-    if (!mounted) return;
-
-    final syncedVoicePath = (recordedFilePath != null &&
-            recordedFilePath.trim().isNotEmpty)
-        ? await DeviceFileHelper.persistPickedFile(
-            recordedFilePath,
-            'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
-          )
-        : null;
-    if (!mounted) return;
-
-    await context.read<LmtCubit>().sendChatMessage(
-          groupId: widget.group.id,
-          type: MessageType.voiceNote,
-          content: 'رسالة صوتية مسجلة 🎤',
-          attachmentPath: syncedVoicePath ?? recordedFilePath,
-          voiceDurationSeconds: duration,
-          replyTo: _replyingTo,
-        );
+    final replyTarget = _replyingTo;
+    final cubit = context.read<LmtCubit>();
     setState(() {
       _isRecordingVoice = false;
       _recordingSeconds = 0;
       _replyingTo = null;
     });
+    final recordedFilePath = await NativeMediaService.stopVoiceRecording();
+    if (recordedFilePath == null || recordedFilePath.trim().isEmpty) return;
+
+    final syncedVoicePath = await DeviceFileHelper.persistPickedFile(
+      recordedFilePath,
+      'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+    );
+    if (!mounted) return;
     _scrollToLatest();
+    unawaited(
+      cubit.sendChatMessage(
+        groupId: widget.group.id,
+        type: MessageType.voiceNote,
+        content: 'رسالة صوتية مسجلة 🎤',
+        attachmentPath: syncedVoicePath,
+        voiceDurationSeconds: duration,
+        replyTo: replyTarget,
+      ),
+    );
   }
 
   void _togglePlayVoiceNote(ChatMessageModel msg) {

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
@@ -45,6 +47,14 @@ class TimelinePostCard extends StatefulWidget {
 class _TimelinePostCardState extends State<TimelinePostCard> {
   static const int _collapsedPollOptionsLimit = 3;
   bool _isPollExpanded = false;
+  PageController? _mediaPageCtrl;
+  int _currentMediaIndex = 0;
+
+  @override
+  void dispose() {
+    _mediaPageCtrl?.dispose();
+    super.dispose();
+  }
 
   Future<void> _confirmDeletePost(BuildContext context, bool isArabic) async {
     final confirmed = await showDialog<bool>(
@@ -131,18 +141,327 @@ class _TimelinePostCardState extends State<TimelinePostCard> {
         id;
   }
 
-  Future<void> _handleOpenVideo(BuildContext context, bool isArabic) async {
+  Future<void> _handleOpenVideo(
+    BuildContext context,
+    bool isArabic, {
+    PostMediaItem? item,
+  }) async {
     final post = widget.post;
-    if (post.mediaPath != null &&
-        post.mediaPath!.isNotEmpty &&
-        !DeviceFileHelper.isAssetPath(post.mediaPath!)) {
-      final err = await DeviceFileHelper.openPath(post.mediaPath!);
+    final path = item?.path ?? post.mediaPath;
+    final videoUrl = item?.videoUrl ?? post.videoUrl;
+    if (path != null &&
+        path.isNotEmpty &&
+        !DeviceFileHelper.isAssetPath(path)) {
+      final err = await DeviceFileHelper.openPath(path);
       if (err == null) return;
     }
-    if (post.videoUrl != null && post.videoUrl!.isNotEmpty) {
-      final uri = Uri.parse(post.videoUrl!);
+    if (videoUrl != null && videoUrl.isNotEmpty) {
+      final uri = Uri.parse(videoUrl);
       await launchUrl(uri);
     }
+  }
+
+  Widget _buildPostMediaSection(
+    BuildContext context,
+    PostModel post,
+    Color primary,
+    bool isArabic,
+  ) {
+    final items = post.resolvedMediaItems;
+    final resolved = items.isNotEmpty
+        ? items
+        : [
+            PostMediaItem(
+              path: AppAssets.actIcon,
+              isVideo: post.isVideo,
+              videoUrl: post.videoUrl,
+            ),
+          ];
+
+    if (resolved.length == 1) {
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16.r),
+          boxShadow: AppColors.cardShadows(
+            context,
+            accent: primary,
+            intensity: 0.7,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16.r),
+          child: _buildSingleMediaSlide(
+            context: context,
+            post: post,
+            item: resolved.first,
+            index: 0,
+            primary: primary,
+            isArabic: isArabic,
+          ),
+        ),
+      );
+    }
+
+    final safeIndex = _currentMediaIndex.clamp(0, resolved.length - 1);
+    _mediaPageCtrl ??= PageController(initialPage: safeIndex);
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16.r),
+        boxShadow: AppColors.cardShadows(
+          context,
+          accent: primary,
+          intensity: 0.7,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16.r),
+        child: Directionality(
+          textDirection: ui.TextDirection.ltr,
+          child: Stack(
+            children: [
+              SizedBox(
+                height: 210.h,
+                width: double.infinity,
+                child: PageView.builder(
+                  controller: _mediaPageCtrl,
+                  itemCount: resolved.length,
+                  onPageChanged: (idx) {
+                    if (mounted) {
+                      setState(() => _currentMediaIndex = idx);
+                    }
+                  },
+                  itemBuilder: (ctx, idx) => _buildSingleMediaSlide(
+                    context: ctx,
+                    post: post,
+                    item: resolved[idx],
+                    index: idx,
+                    primary: primary,
+                    isArabic: isArabic,
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 10.h,
+                right: 10.w,
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 9.w,
+                    vertical: 4.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.68),
+                    borderRadius: BorderRadius.circular(12.r),
+                  ),
+                  child: Text(
+                    '${safeIndex + 1} / ${resolved.length}',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.sp,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              if (safeIndex > 0)
+                Positioned(
+                  left: 8.w,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: InkWell(
+                      onTap: () => _mediaPageCtrl?.previousPage(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                      ),
+                      customBorder: const CircleBorder(),
+                      child: Container(
+                        padding: EdgeInsets.all(6.r),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.56),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.chevron_left_rounded,
+                          color: Colors.white,
+                          size: 22.r,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (safeIndex < resolved.length - 1)
+                Positioned(
+                  right: 8.w,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: InkWell(
+                      onTap: () => _mediaPageCtrl?.nextPage(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                      ),
+                      customBorder: const CircleBorder(),
+                      child: Container(
+                        padding: EdgeInsets.all(6.r),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.56),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          color: Colors.white,
+                          size: 22.r,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                bottom: 10.h,
+                left: 0,
+                right: 0,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    resolved.length > 10 ? 10 : resolved.length,
+                    (idx) {
+                      final active = idx == (safeIndex % 10);
+                      return Container(
+                        margin: EdgeInsets.symmetric(horizontal: 2.5.w),
+                        width: active ? 16.w : 6.w,
+                        height: 6.h,
+                        decoration: BoxDecoration(
+                          color: active
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.45),
+                          borderRadius: BorderRadius.circular(4.r),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSingleMediaSlide({
+    required BuildContext context,
+    required PostModel post,
+    required PostMediaItem item,
+    required int index,
+    required Color primary,
+    required bool isArabic,
+  }) {
+    if (item.isVideo) {
+      return InkWell(
+        onTap: () => _handleOpenVideo(context, isArabic, item: item),
+        child: Container(
+          height: 210.h,
+          width: double.infinity,
+          color: Colors.black87,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: EdgeInsets.all(14.w),
+                decoration: BoxDecoration(
+                  color: primary.withValues(alpha: 0.85),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 36.sp,
+                ),
+              ),
+              SizedBox(height: 8.h),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14.w),
+                child: Text(
+                  DeviceFileHelper.displayFileName(
+                    item.fileName ?? item.path,
+                    fallback: isArabic
+                        ? 'تشغيل الفيديو المرفق 🎬'
+                        : 'Play Attached Video 🎬',
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => PostImageViewerPage(
+              post: post,
+              initialIndex: index,
+            ),
+          ),
+        );
+      },
+      child: Stack(
+        children: [
+          Container(
+            height: 210.h,
+            width: double.infinity,
+            color: primary.withValues(alpha: 0.08),
+            child: DeviceFileHelper.buildImage(
+              item.path,
+              fit: BoxFit.contain,
+            ),
+          ),
+          Positioned(
+            bottom: 8.h,
+            right: 8.w,
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: 8.w,
+                vertical: 4.h,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.62),
+                borderRadius: BorderRadius.circular(10.r),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.fullscreen_rounded,
+                    size: 15.sp,
+                    color: Colors.white,
+                  ),
+                  SizedBox(width: 3.w),
+                  Text(
+                    isArabic ? 'تكبير' : 'Fullscreen',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.sp,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildPollOptionCard({
@@ -592,120 +911,10 @@ class _TimelinePostCardState extends State<TimelinePostCard> {
             ),
           ],
 
-          // Image / Video Section (Supports real gallery images and videos)
+          // Image / Video Section (Supports single and multi-media carousel)
           if (post.type == PostCategoryType.media) ...[
             SizedBox(height: 12.h),
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16.r),
-                boxShadow: AppColors.cardShadows(
-                  context,
-                  accent: primary,
-                  intensity: 0.7,
-                ),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16.r),
-                child: post.isVideo
-                    ? InkWell(
-                        onTap: () => _handleOpenVideo(context, isArabic),
-                        child: Container(
-                          height: 175.h,
-                          width: double.infinity,
-                          color: Colors.black87,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                padding: EdgeInsets.all(14.w),
-                                decoration: BoxDecoration(
-                                  color: primary.withValues(alpha: 0.85),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.play_arrow_rounded,
-                                  color: Colors.white,
-                                  size: 36.sp,
-                                ),
-                              ),
-                              SizedBox(height: 8.h),
-                              Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 14.w),
-                                child: Text(
-                                  post.mediaPath?.split('/').last ??
-                                      (isArabic
-                                          ? 'تشغيل الفيديو المرفق 🎬'
-                                          : 'Play Attached Video 🎬'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12.sp,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : InkWell(
-                        onTap: () {
-                          Navigator.of(context).push<void>(
-                            MaterialPageRoute<void>(
-                              builder: (_) => PostImageViewerPage(post: post),
-                            ),
-                          );
-                        },
-                        child: Stack(
-                          children: [
-                            Container(
-                              height: 185.h,
-                              width: double.infinity,
-                              color: primary.withValues(alpha: 0.08),
-                              child: DeviceFileHelper.buildImage(
-                                post.mediaPath ?? AppAssets.actIcon,
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                            Positioned(
-                              bottom: 8.h,
-                              right: 8.w,
-                              child: Container(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 8.w,
-                                  vertical: 4.h,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.62),
-                                  borderRadius: BorderRadius.circular(10.r),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.fullscreen_rounded,
-                                      size: 15.sp,
-                                      color: Colors.white,
-                                    ),
-                                    SizedBox(width: 3.w),
-                                    Text(
-                                      isArabic ? 'تكبير' : 'Fullscreen',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10.sp,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-              ),
-            ),
+            _buildPostMediaSection(context, post, primary, isArabic),
           ],
 
           // Who Liked Summary Strip (Tappable to open full Likers Sheet)

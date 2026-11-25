@@ -19,6 +19,7 @@ import UserNotifications
   private var currentRecordingPath: String?
   private var currentPlayingPath: String?
   private var pendingFilePickerResult: FlutterResult?
+  private var pendingPickerAllowsMultiple: Bool = false
   private var pickerType: String = "any"
 
   override func application(
@@ -91,7 +92,24 @@ import UserNotifications
       let type = (args?["type"] as? String) ?? "any"
       let allowedExtensions = args?["allowedExtensions"] as? [String]
       DispatchQueue.main.async {
-        self.launchSystemPicker(type: type, allowedExtensions: allowedExtensions, result: result)
+        self.launchSystemPicker(
+          type: type,
+          allowedExtensions: allowedExtensions,
+          allowMultiple: false,
+          result: result
+        )
+      }
+
+    case "pickMultipleDeviceFiles":
+      let type = (args?["type"] as? String) ?? "media"
+      let allowedExtensions = args?["allowedExtensions"] as? [String]
+      DispatchQueue.main.async {
+        self.launchSystemPicker(
+          type: type,
+          allowedExtensions: allowedExtensions,
+          allowMultiple: true,
+          result: result
+        )
       }
 
     case "captureCameraPhoto":
@@ -337,6 +355,7 @@ import UserNotifications
     DispatchQueue.main.async {
       let callback = self.pendingFilePickerResult
       self.pendingFilePickerResult = nil
+      self.pendingPickerAllowsMultiple = false
       callback?(value)
     }
   }
@@ -344,6 +363,7 @@ import UserNotifications
   private func launchSystemPicker(
     type: String,
     allowedExtensions: [String]?,
+    allowMultiple: Bool,
     result: @escaping FlutterResult
   ) {
     if pendingFilePickerResult != nil {
@@ -355,6 +375,7 @@ import UserNotifications
     }
 
     pendingFilePickerResult = result
+    pendingPickerAllowsMultiple = allowMultiple
     pickerType = type
 
     // Open Photo Gallery directly for images, videos, or combined media picks
@@ -374,6 +395,7 @@ import UserNotifications
       return
     }
     pendingFilePickerResult = result
+    pendingPickerAllowsMultiple = false
     pickerType = "image"
     requestCameraThenOpen(mediaKind: "image")
   }
@@ -426,7 +448,7 @@ import UserNotifications
 
     if #available(iOS 14.0, *) {
       var config = PHPickerConfiguration(photoLibrary: .shared())
-      config.selectionLimit = 1
+      config.selectionLimit = pendingPickerAllowsMultiple ? 20 : 1
       switch mediaKind {
       case "image":
         config.filter = .images
@@ -541,7 +563,7 @@ import UserNotifications
 
     let docPicker = UIDocumentPickerViewController(documentTypes: docTypes, in: .import)
     docPicker.delegate = self
-    docPicker.allowsMultipleSelection = false
+    docPicker.allowsMultipleSelection = pendingPickerAllowsMultiple
     docPicker.presentationController?.delegate = self
     presenter.present(docPicker, animated: true)
   }
@@ -684,6 +706,11 @@ extension AppDelegate: UIAdaptivePresentationControllerDelegate {
 
 extension AppDelegate: UIDocumentPickerDelegate {
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    if pendingPickerAllowsMultiple {
+      let mapped = urls.compactMap { copyUrlToLocalCache(sourceUrl: $0) }
+      completePicker(with: mapped)
+      return
+    }
     guard let picked = urls.first else {
       completePicker(with: nil)
       return
@@ -998,7 +1025,8 @@ private final class LmtIosBackgroundSync {
       let fallbackId = ((doc["name"] as? String) ?? "").components(separatedBy: "/").last ?? ""
       let id = (fsString(fields, "id").isEmpty ? fallbackId : fsString(fields, "id"))
       if id.isEmpty || alerted.contains(id) { continue }
-      if fsBool(fields, "isRead") { continue }
+      let readByIds = fsStringArray(fields, "readByIds")
+      if readByIds.contains(userId) || (fsBool(fields, "isRead") && readByIds.isEmpty) { continue }
       let excluded = fsStringArray(fields, "excludedMemberIds")
       if excluded.contains(userId) { continue }
       let targeted = fsStringArray(fields, "targetMemberIds")
@@ -1121,55 +1149,91 @@ private final class LmtIosBackgroundSync {
 @available(iOS 14.0, *)
 extension AppDelegate: PHPickerViewControllerDelegate {
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    let isMultiple = self.pendingPickerAllowsMultiple
     picker.dismiss(animated: true) {
-      guard let item = results.first else {
+      if results.isEmpty {
+        self.completePicker(with: isMultiple ? [[String: Any]]() : nil)
+        return
+      }
+
+      if isMultiple {
+        let group = DispatchGroup()
+        let collectLock = NSLock()
+        var ordered = Array<[String: Any]?>(repeating: nil, count: results.count)
+
+        for (idx, item) in results.enumerated() {
+          group.enter()
+          self.loadPickerItem(item) { mapped in
+            collectLock.lock()
+            ordered[idx] = mapped
+            collectLock.unlock()
+            group.leave()
+          }
+        }
+
+        group.notify(queue: .main) {
+          self.completePicker(with: ordered.compactMap { $0 })
+        }
+        return
+      }
+
+      guard let first = results.first else {
         self.completePicker(with: nil)
         return
       }
-      let provider = item.itemProvider
-      let suggestedName = provider.suggestedName
-
-      if provider.hasItemConformingToTypeIdentifier(kUTTypeMovie as String) {
-        provider.loadFileRepresentation(forTypeIdentifier: kUTTypeMovie as String) { url, _ in
-          if let url = url {
-            let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
-            let name = (suggestedName?.isEmpty == false) ? "\(suggestedName!).\(ext)" : url.lastPathComponent
-            self.completePicker(with: self.copyUrlToLocalCache(sourceUrl: url, preferredName: name))
-          } else {
-            self.completePicker(with: nil)
-          }
-        }
-        return
+      self.loadPickerItem(first) { mapped in
+        self.completePicker(with: mapped)
       }
-
-      if provider.hasItemConformingToTypeIdentifier(kUTTypeImage as String) {
-        provider.loadFileRepresentation(forTypeIdentifier: kUTTypeImage as String) { url, _ in
-          if let url = url {
-            let ext = url.pathExtension.isEmpty ? "jpg" : url.pathExtension
-            let name = (suggestedName?.isEmpty == false) ? "\(suggestedName!).\(ext)" : url.lastPathComponent
-            if let mapped = self.copyUrlToLocalCache(sourceUrl: url, preferredName: name) {
-              self.completePicker(with: mapped)
-              return
-            }
-          }
-          if provider.canLoadObject(ofClass: UIImage.self) {
-            provider.loadObject(ofClass: UIImage.self) { obj, _ in
-              if let img = obj as? UIImage {
-                let name = (suggestedName?.isEmpty == false) ? "\(suggestedName!).jpg" : "lmt_gallery.jpg"
-                self.completePicker(with: self.writeImageToLocalCache(image: img, name: name))
-              } else {
-                self.completePicker(with: nil)
-              }
-            }
-          } else {
-            self.completePicker(with: nil)
-          }
-        }
-        return
-      }
-
-      self.completePicker(with: nil)
     }
+  }
+
+  private func loadPickerItem(
+    _ item: PHPickerResult,
+    completion: @escaping ([String: Any]?) -> Void
+  ) {
+    let provider = item.itemProvider
+    let suggestedName = provider.suggestedName
+
+    if provider.hasItemConformingToTypeIdentifier(kUTTypeMovie as String) {
+      provider.loadFileRepresentation(forTypeIdentifier: kUTTypeMovie as String) { url, _ in
+        if let url = url {
+          let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+          let name = (suggestedName?.isEmpty == false) ? "\(suggestedName!).\(ext)" : url.lastPathComponent
+          completion(self.copyUrlToLocalCache(sourceUrl: url, preferredName: name))
+        } else {
+          completion(nil)
+        }
+      }
+      return
+    }
+
+    if provider.hasItemConformingToTypeIdentifier(kUTTypeImage as String) {
+      provider.loadFileRepresentation(forTypeIdentifier: kUTTypeImage as String) { url, _ in
+        if let url = url {
+          let ext = url.pathExtension.isEmpty ? "jpg" : url.pathExtension
+          let name = (suggestedName?.isEmpty == false) ? "\(suggestedName!).\(ext)" : url.lastPathComponent
+          if let mapped = self.copyUrlToLocalCache(sourceUrl: url, preferredName: name) {
+            completion(mapped)
+            return
+          }
+        }
+        if provider.canLoadObject(ofClass: UIImage.self) {
+          provider.loadObject(ofClass: UIImage.self) { obj, _ in
+            if let img = obj as? UIImage {
+              let name = (suggestedName?.isEmpty == false) ? "\(suggestedName!).jpg" : "lmt_gallery.jpg"
+              completion(self.writeImageToLocalCache(image: img, name: name))
+            } else {
+              completion(nil)
+            }
+          }
+        } else {
+          completion(nil)
+        }
+      }
+      return
+    }
+
+    completion(nil)
   }
 }
 
@@ -1446,7 +1510,8 @@ private final class LmtIosBackgroundSync {
       let fallbackId = ((doc["name"] as? String) ?? "").components(separatedBy: "/").last ?? ""
       let id = (fsString(fields, "id").isEmpty ? fallbackId : fsString(fields, "id"))
       if id.isEmpty || alerted.contains(id) { continue }
-      if fsBool(fields, "isRead") { continue }
+      let readByIds = fsStringArray(fields, "readByIds")
+      if readByIds.contains(userId) || (fsBool(fields, "isRead") && readByIds.isEmpty) { continue }
       let excluded = fsStringArray(fields, "excludedMemberIds")
       if excluded.contains(userId) { continue }
       let targeted = fsStringArray(fields, "targetMemberIds")

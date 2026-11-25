@@ -249,6 +249,65 @@ class DeviceFileHelper {
     }
   }
 
+  /// Picks multiple files/images/videos at once across Android, iOS, and Web
+  /// (falling back gracefully to single-item picking on older native APKs).
+  static Future<List<PlatformFile>> pickMultipleFilesSafely(
+    BuildContext context, {
+    FileType type = FileType.media,
+    List<String>? allowedExtensions,
+  }) async {
+    if (kIsWeb) {
+      return pickMultipleFallbackOrWebFiles(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
+    }
+    BiometricSessionLockController.instance.suppressNextResumeLock();
+    try {
+      final rawList = await NativeMediaService.pickMultipleDeviceFiles(
+        type: type.name,
+        allowedExtensions: allowedExtensions,
+      );
+      final files = <PlatformFile>[];
+      for (final map in rawList) {
+        final path = map['path'] as String?;
+        if (path != null && path.isNotEmpty) {
+          files.add(
+            PlatformFile(
+              name: (map['name'] as String?) ?? 'file',
+              path: path,
+              size: (map['size'] as int?) ?? 0,
+            ),
+          );
+        }
+      }
+      return files;
+    } on MissingPluginException {
+      if (!context.mounted) return const [];
+      final single = await pickFileSafely(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
+      return single == null ? const [] : [single];
+    } on PlatformException {
+      if (!context.mounted) return const [];
+      return pickMultipleFallbackOrWebFiles(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
+    } catch (_) {
+      if (!context.mounted) return const [];
+      return pickMultipleFallbackOrWebFiles(
+        context,
+        type: type,
+        allowedExtensions: allowedExtensions,
+      );
+    }
+  }
+
   /// Persists and uploads a picked file to [CloudMediaStorage] (`cloud://blob/...`)
   /// when online, falling back to persistent local app storage when offline.
   static Future<String> persistPickedFile(

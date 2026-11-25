@@ -115,6 +115,7 @@ rules_version = '2';
 //   - mediaPath: string | null (nullable, immutable, if string: 1..1000)
 //   - isVideo: bool (required, immutable)
 //   - videoUrl: string | null (nullable, immutable, if string: http/https URL, 1..1000)
+//   - mediaItems: list<map> (optional for legacy compatibility, immutable, 0..20 PostMediaItem maps; 0 items when type != 'media')
 //   - pollOptions: list<map> (required, 2..25 for 'poll', 0 for non-poll)
 //   - allowMultiplePollChoices: bool (required, immutable)
 //   - likedByIds: list<string> (required, 0..500 items, item 1..64)
@@ -173,6 +174,7 @@ rules_version = '2';
 //   - targetMemberIds: list<string> (required, 0..500 items, item 1..64)
 //   - excludedMemberIds: list<string> (optional for legacy compatibility, 0..500 items, item 1..64)
 //   - tone: string (optional for legacy compatibility, enum: 'normal' | 'calendar' | 'chatMessage' | 'postInteractions' | 'messageReacts')
+//   - readByIds: list<string> (optional for legacy compatibility, 0..500 items, item 1..64)
 //   - updatedByUid: string (required, == request.auth.uid)
 //
 // ---------------------------------------------------------------
@@ -245,20 +247,16 @@ service cloud.firestore {
 
     // Validate a nullable string field (absent, null, or valid string within bounds).
     function isNullableString(data, field, minLen, maxLen) {
-      return !(field in data) ||
-             data[field] == null ||
-             (data[field] is string &&
-              data[field].size() >= minLen &&
-              data[field].size() <= maxLen);
+      let v = data.get(field, null);
+      return v == null ||
+             (v is string && v.size() >= minLen && v.size() <= maxLen);
     }
 
     // Validate a nullable integer field within inclusive range.
     function isNullableInt(data, field, minVal, maxVal) {
-      return !(field in data) ||
-             data[field] == null ||
-             (data[field] is int &&
-              data[field] >= minVal &&
-              data[field] <= maxVal);
+      let v = data.get(field, null);
+      return v == null ||
+             (v is int && v >= minVal && v <= maxVal);
     }
 
     // Validate HTTP/HTTPS URL format with bounded length.
@@ -266,24 +264,20 @@ service cloud.firestore {
       return url is string &&
              url.size() >= 10 &&
              url.size() <= 1000 &&
-             (url.matches("^https://.*") || url.matches("^http://.*"));
+             url.matches("^https?://.*");
     }
 
     // Validate a nullable URL field.
     function isNullableUrl(data, field) {
-      return !(field in data) ||
-             data[field] == null ||
-             isValidUrl(data[field]);
+      let v = data.get(field, null);
+      return v == null || isValidUrl(v);
     }
 
     // Validate a nullable internal app route path (must start with '/').
     function isNullableRoute(data, field) {
-      return !(field in data) ||
-             data[field] == null ||
-             (data[field] is string &&
-              data[field].size() >= 1 &&
-              data[field].size() <= 100 &&
-              data[field].matches("^/.*"));
+      let v = data.get(field, null);
+      return v == null ||
+             (v is string && v.size() >= 1 && v.size() <= 100 && v.matches("^/.*"));
     }
 
     // Validate Dart ISO-8601 date strings (e.g., 2026-11-23T11:44:05.123456Z).
@@ -296,27 +290,19 @@ service cloud.firestore {
 
     // Validate a nullable ISO-8601 date string field.
     function isNullableDateString(data, field) {
-      return !(field in data) ||
-             data[field] == null ||
-             isValidDateString(data[field]);
+      let v = data.get(field, null);
+      return v == null || isValidDateString(v);
     }
 
-    // Validate a single list element at idx if present.
-    function isValidStringElement(lst, idx, minLen, maxLen) {
-      return lst.size() <= idx || isValidString(lst[idx], minLen, maxLen);
-    }
-
-    // Validate a list of strings with bounded list size and sampled item checks (head + tail).
+    // Validate a list of strings with bounded list size and head + tail item checks.
     function isValidStringList(lst, minItems, maxItems, minLen, maxLen) {
       return lst is list &&
              lst.size() >= minItems &&
              lst.size() <= maxItems &&
-             isValidStringElement(lst, 0, minLen, maxLen) &&
-             isValidStringElement(lst, 1, minLen, maxLen) &&
-             isValidStringElement(lst, 2, minLen, maxLen) &&
-             isValidStringElement(lst, 3, minLen, maxLen) &&
-             isValidStringElement(lst, 4, minLen, maxLen) &&
-             (lst.size() == 0 || isValidString(lst[lst.size() - 1], minLen, maxLen));
+             (lst.size() == 0 ||
+              (isValidString(lst[0], minLen, maxLen) &&
+               (lst.size() == 1 ||
+                isValidString(lst[lst.size() - 1], minLen, maxLen))));
     }
 
     // Validate UserRole enum strings.
@@ -421,10 +407,11 @@ service cloud.firestore {
 
     // Validate a single SeenStatusModel map inside ChatMessageModel.seenBy.
     function isValidSeenStatus(item) {
-      let allowed = ['memberId', 'memberName', 'avatarPath', 'timestamp', 'hasListened'];
       return item is map &&
-             item.keys().hasAll(allowed) &&
-             item.keys().hasOnly(allowed) &&
+             item.size() == 5 &&
+             item.keys().hasAll([
+               'memberId', 'memberName', 'avatarPath', 'timestamp', 'hasListened'
+             ]) &&
              isValidString(item.memberId, 1, 64) &&
              isValidString(item.memberName, 1, 120) &&
              isValidString(item.avatarPath, 1, 500) &&
@@ -432,28 +419,34 @@ service cloud.firestore {
              item.hasListened is bool;
     }
 
-    // Validate seenBy list bounds and sampled receipt items.
+    // Validate seenBy list bounds and head + tail receipt items.
     function isValidSeenByList(lst) {
       return lst is list &&
              lst.size() <= 500 &&
-             (lst.size() <= 0 || isValidSeenStatus(lst[0])) &&
-             (lst.size() <= 1 || isValidSeenStatus(lst[1])) &&
-             (lst.size() <= 2 || isValidSeenStatus(lst[2])) &&
-             (lst.size() <= 3 || isValidSeenStatus(lst[lst.size() - 1]));
+             (lst.size() == 0 ||
+              (isValidSeenStatus(lst[0]) &&
+               (lst.size() == 1 || isValidSeenStatus(lst[lst.size() - 1]))));
     }
 
-    // Validate emoji reactions map bounds and sampled key/value entries.
+    // Validate head + tail entries inside an already-verified reactions map.
+    function isValidReactionsEntries(reactions) {
+      let ks = reactions.keys();
+      let vs = reactions.values();
+      return isValidString(ks[0], 1, 16) &&
+             isValidStringList(vs[0], 0, 200, 1, 120) &&
+             (reactions.size() == 1 ||
+              (isValidString(ks[reactions.size() - 1], 1, 16) &&
+               isValidStringList(vs[reactions.size() - 1], 0, 200, 1, 120)));
+    }
+
+    // Validate emoji reactions map bounds and head + tail key/value entries.
     function isValidReactionsMap(reactions) {
       return reactions is map &&
              reactions.size() <= 50 &&
-             (reactions.size() == 0 ||
-               (isValidString(reactions.keys()[0], 1, 16) &&
-                isValidString(reactions.keys()[reactions.size() - 1], 1, 16) &&
-                isValidStringList(reactions.values()[0], 0, 200, 1, 120) &&
-                isValidStringList(reactions.values()[reactions.size() - 1], 0, 200, 1, 120)));
+             (reactions.size() == 0 || isValidReactionsEntries(reactions));
     }
 
-    // Validate ChatMessageModel document.
+    // Validate ChatMessageModel document on create.
     function isValidChatMessage(data, messageId) {
       let required = [
         'id', 'groupId', 'senderId', 'senderName', 'senderAvatar',
@@ -494,6 +487,36 @@ service cloud.firestore {
              hasValidAuditUid(data);
     }
 
+    // Validate ChatMessageModel document on update (paired with areImmutableFieldsUnchanged).
+    function isValidChatMessageUpdate(data, prev, messageId) {
+      let required = [
+        'id', 'groupId', 'senderId', 'senderName', 'senderAvatar',
+        'senderRole', 'type', 'content', 'isEdited', 'reactions',
+        'seenBy', 'sentAt', 'updatedByUid'
+      ];
+      let allowed = [
+        'id', 'groupId', 'senderId', 'senderName', 'senderAvatar',
+        'senderRole', 'type', 'content', 'attachmentPath', 'fileSize',
+        'voiceDurationSeconds', 'replyToMessageId', 'replyToSenderName',
+        'replyToPreview', 'forwardedFromGroup', 'isEdited', 'reactions',
+        'seenBy', 'sentAt', 'updatedByUid'
+      ];
+      let changed = data.diff(prev).affectedKeys();
+      return hasRequiredFields(required) &&
+             hasOnlyAllowedFields(allowed) &&
+             data.id == messageId &&
+             isValidString(data.senderName, 1, 120) &&
+             isValidString(data.senderAvatar, 1, 500) &&
+             isValidRole(data.senderRole) &&
+             ((data.type == 'text' && isValidString(data.content, 1, 5000)) ||
+              (data.type != 'text' && isValidString(data.content, 0, 5000))) &&
+             data.isEdited is bool &&
+             (!changed.hasAny(['reactions']) || isValidReactionsMap(data.reactions)) &&
+             (!changed.hasAny(['seenBy']) || isValidSeenByList(data.seenBy)) &&
+             isValidDateString(data.sentAt) &&
+             hasValidAuditUid(data);
+    }
+
     // Validate TypingMemberStatus heartbeat document in chat_typing.
     function isValidChatTyping(data, typingId) {
       let allowed = [
@@ -514,36 +537,32 @@ service cloud.firestore {
 
     // Validate a single PollOptionModel map inside PostModel.pollOptions.
     function isValidPollOption(opt) {
-      let allowed = ['id', 'text', 'voterIds'];
       return opt is map &&
-             opt.keys().hasAll(allowed) &&
-             opt.keys().hasOnly(allowed) &&
+             opt.size() == 3 &&
+             opt.keys().hasAll(['id', 'text', 'voterIds']) &&
              isValidString(opt.id, 1, 64) &&
              isValidString(opt.text, 1, 500) &&
              isValidStringList(opt.voterIds, 0, 500, 1, 64);
     }
 
-    // Validate pollOptions list bounds and sampled poll option items.
+    // Validate pollOptions list bounds and head + tail poll option items.
     function isValidPollOptionsList(lst, postType) {
       return lst is list &&
              ((postType == 'poll' && lst.size() >= 2 && lst.size() <= 25) ||
               (postType != 'poll' && lst.size() == 0)) &&
-             (lst.size() <= 0 || isValidPollOption(lst[0])) &&
-             (lst.size() <= 1 || isValidPollOption(lst[1])) &&
-             (lst.size() <= 2 || isValidPollOption(lst[2])) &&
-             (lst.size() <= 3 || isValidPollOption(lst[3])) &&
-             (lst.size() <= 4 || isValidPollOption(lst[lst.size() - 1]));
+             (lst.size() == 0 ||
+              (isValidPollOption(lst[0]) &&
+               isValidPollOption(lst[lst.size() - 1])));
     }
 
     // Validate a single PostCommentModel map inside PostModel.comments.
     function isValidPostComment(cmt) {
-      let allowed = [
-        'id', 'authorId', 'authorName', 'authorAvatar',
-        'authorRole', 'content', 'createdAt'
-      ];
       return cmt is map &&
-             cmt.keys().hasAll(allowed) &&
-             cmt.keys().hasOnly(allowed) &&
+             cmt.size() == 7 &&
+             cmt.keys().hasAll([
+               'id', 'authorId', 'authorName', 'authorAvatar',
+               'authorRole', 'content', 'createdAt'
+             ]) &&
              isValidString(cmt.id, 1, 64) &&
              isValidString(cmt.authorId, 1, 64) &&
              isValidString(cmt.authorName, 1, 120) &&
@@ -553,16 +572,37 @@ service cloud.firestore {
              isValidDateString(cmt.createdAt);
     }
 
-    // Validate comments list bounds and sampled comment items.
+    // Validate comments list bounds and head + tail comment items.
     function isValidCommentsList(lst) {
       return lst is list &&
              lst.size() <= 500 &&
-             (lst.size() <= 0 || isValidPostComment(lst[0])) &&
-             (lst.size() <= 1 || isValidPostComment(lst[1])) &&
-             (lst.size() <= 2 || isValidPostComment(lst[lst.size() - 1]));
+             (lst.size() == 0 ||
+              (isValidPostComment(lst[0]) &&
+               (lst.size() == 1 || isValidPostComment(lst[lst.size() - 1]))));
     }
 
-    // Validate PostModel document.
+    // Validate a single PostMediaItem map inside PostModel.mediaItems.
+    function isValidPostMediaItem(item) {
+      return item is map &&
+             item.keys().hasAll(['path', 'isVideo']) &&
+             item.keys().hasOnly(['path', 'isVideo', 'fileName', 'videoUrl']) &&
+             isValidString(item.path, 1, 1000) &&
+             item.isVideo is bool &&
+             isNullableString(item, 'fileName', 1, 260) &&
+             isNullableUrl(item, 'videoUrl');
+    }
+
+    // Validate mediaItems list bounds and head + tail PostMediaItem maps.
+    function isValidMediaItemsList(lst, postType) {
+      return lst is list &&
+             lst.size() <= 20 &&
+             (postType == 'media' || lst.size() == 0) &&
+             (lst.size() == 0 ||
+              (isValidPostMediaItem(lst[0]) &&
+               (lst.size() == 1 || isValidPostMediaItem(lst[lst.size() - 1]))));
+    }
+
+    // Validate PostModel document on create.
     function isValidPost(data, postId) {
       let required = [
         'id', 'creatorId', 'creatorName', 'creatorAvatar', 'creatorRole',
@@ -573,8 +613,8 @@ service cloud.firestore {
       let allowed = [
         'id', 'creatorId', 'creatorName', 'creatorAvatar', 'creatorRole',
         'creatorCommittee', 'publishTime', 'type', 'content', 'mediaPath',
-        'isVideo', 'videoUrl', 'pollOptions', 'allowMultiplePollChoices',
-        'likedByIds', 'comments', 'updatedByUid'
+        'isVideo', 'videoUrl', 'mediaItems', 'pollOptions',
+        'allowMultiplePollChoices', 'likedByIds', 'comments', 'updatedByUid'
       ];
       let validTypes = ['simple', 'poll', 'media'];
       return hasRequiredFields(required) &&
@@ -592,10 +632,45 @@ service cloud.firestore {
              isNullableString(data, 'mediaPath', 1, 1000) &&
              data.isVideo is bool &&
              isNullableUrl(data, 'videoUrl') &&
+             (!('mediaItems' in data) ||
+              isValidMediaItemsList(data.mediaItems, data.type)) &&
              isValidPollOptionsList(data.pollOptions, data.type) &&
              data.allowMultiplePollChoices is bool &&
              isValidStringList(data.likedByIds, 0, 500, 1, 64) &&
              isValidCommentsList(data.comments) &&
+             hasValidAuditUid(data);
+    }
+
+    // Validate PostModel document on update (paired with areImmutableFieldsUnchanged).
+    function isValidPostUpdate(data, prev, postId) {
+      let required = [
+        'id', 'creatorId', 'creatorName', 'creatorAvatar', 'creatorRole',
+        'creatorCommittee', 'publishTime', 'type', 'content', 'isVideo',
+        'pollOptions', 'allowMultiplePollChoices', 'likedByIds', 'comments',
+        'updatedByUid'
+      ];
+      let allowed = [
+        'id', 'creatorId', 'creatorName', 'creatorAvatar', 'creatorRole',
+        'creatorCommittee', 'publishTime', 'type', 'content', 'mediaPath',
+        'isVideo', 'videoUrl', 'mediaItems', 'pollOptions',
+        'allowMultiplePollChoices', 'likedByIds', 'comments', 'updatedByUid'
+      ];
+      let changed = data.diff(prev).affectedKeys();
+      return hasRequiredFields(required) &&
+             hasOnlyAllowedFields(allowed) &&
+             data.id == postId &&
+             isValidString(data.creatorName, 1, 120) &&
+             isValidString(data.creatorAvatar, 1, 500) &&
+             isValidRole(data.creatorRole) &&
+             isValidString(data.creatorCommittee, 1, 300) &&
+             isValidDateString(data.publishTime) &&
+             isValidString(data.content, 1, 5000) &&
+             (!changed.hasAny(['pollOptions']) ||
+              isValidPollOptionsList(data.pollOptions, data.type)) &&
+             (!changed.hasAny(['likedByIds']) ||
+              isValidStringList(data.likedByIds, 0, 500, 1, 64)) &&
+             (!changed.hasAny(['comments']) ||
+              isValidCommentsList(data.comments)) &&
              hasValidAuditUid(data);
     }
 
@@ -667,7 +742,8 @@ service cloud.firestore {
       let allowed = [
         'id', 'title', 'description', 'dateTime', 'category', 'isRead',
         'targetTabIndex', 'targetGroupId', 'targetEventId', 'targetRoute',
-        'targetMemberIds', 'excludedMemberIds', 'tone', 'updatedByUid'
+        'targetMemberIds', 'excludedMemberIds', 'tone', 'readByIds',
+        'updatedByUid'
       ];
       let validCategories = ['chat', 'calendar', 'files', 'posts', 'system'];
       let validTones = [
@@ -691,6 +767,8 @@ service cloud.firestore {
               isValidStringList(data.excludedMemberIds, 0, 500, 1, 64)) &&
              (!('tone' in data) ||
               (data.tone is string && data.tone in validTones)) &&
+             (!('readByIds' in data) ||
+              isValidStringList(data.readByIds, 0, 500, 1, 64)) &&
              hasValidAuditUid(data);
     }
 
@@ -782,7 +860,7 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidChatMessage(request.resource.data, messageId);
       allow update: if isAuthenticated() &&
-                       isValidChatMessage(request.resource.data, messageId) &&
+                       isValidChatMessageUpdate(request.resource.data, resource.data, messageId) &&
                        areImmutableFieldsUnchanged([
                          'id', 'groupId', 'senderId', 'type',
                          'attachmentPath', 'fileSize', 'voiceDurationSeconds',
@@ -802,10 +880,11 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidPost(request.resource.data, postId);
       allow update: if isAuthenticated() &&
-                       isValidPost(request.resource.data, postId) &&
+                       isValidPostUpdate(request.resource.data, resource.data, postId) &&
                        areImmutableFieldsUnchanged([
                          'id', 'creatorId', 'type', 'mediaPath',
-                         'isVideo', 'videoUrl', 'allowMultiplePollChoices'
+                         'isVideo', 'videoUrl', 'mediaItems',
+                         'allowMultiplePollChoices'
                        ]);
       allow delete: if isAuthenticated();
     }

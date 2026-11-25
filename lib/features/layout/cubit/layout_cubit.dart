@@ -74,7 +74,9 @@ mixin LayoutCubitMixin on LmtBaseCubit {
     try {
       final remote = await repository.loadSnapshot();
       final mergedChat = mergeRemoteChatMessages(remote.chatMessages);
+      final mergedPosts = mergeRemotePosts(remote.posts);
       retryPendingChatWrites(mergedChat, force: true);
+      retryPendingPostWrites(force: true);
 
       await seedKnownNotificationsForUser(
         state.currentUser.id,
@@ -89,7 +91,7 @@ mixin LayoutCubitMixin on LmtBaseCubit {
           members: remote.members,
           chatGroups: remote.chatGroups,
           chatMessages: mergedChat.messages,
-          posts: remote.posts,
+          posts: mergedPosts,
           sharedFiles: remote.sharedFiles,
           calendarEvents: remote.calendarEvents,
           notifications: remote.notifications,

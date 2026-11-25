@@ -446,7 +446,7 @@ object LmtBackgroundNotificationManager {
         for (doc in docs) {
             val id = doc.id.trim()
             if (id.isEmpty() || knownIds.contains(id)) continue
-            if (doc.isRead) continue
+            if (doc.readByIds.contains(userId) || (doc.isRead && doc.readByIds.isEmpty())) continue
             if (doc.excludedMemberIds.contains(userId)) continue
             if (doc.targetMemberIds.isNotEmpty() && !doc.targetMemberIds.contains(userId)) continue
             if (doc.dateTimeMs <= 0L || abs(nowMs - doc.dateTimeMs) > MAX_ALERT_AGE_MS) continue
@@ -616,6 +616,7 @@ object LmtBackgroundNotificationManager {
             targetRoute = fsStringOrNull(fields, "targetRoute"),
             targetMemberIds = fsStringArray(fields, "targetMemberIds"),
             excludedMemberIds = fsStringArray(fields, "excludedMemberIds"),
+            readByIds = fsStringArray(fields, "readByIds"),
             tone = tone
         )
     }
@@ -826,6 +827,7 @@ object LmtBackgroundNotificationManager {
         val targetRoute: String?,
         val targetMemberIds: List<String>,
         val excludedMemberIds: List<String>,
+        val readByIds: List<String>,
         val tone: String
     )
 }

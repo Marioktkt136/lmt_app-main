@@ -23,6 +23,22 @@ class NativeMediaService {
     );
   }
 
+  /// Opens the native Android/iOS multi-select Gallery (or multi-file browser)
+  /// returning a list of `{name, path, size}` maps.
+  static Future<List<Map<dynamic, dynamic>>> pickMultipleDeviceFiles({
+    String type = 'media',
+    List<String>? allowedExtensions,
+  }) async {
+    final raw = await _channel.invokeListMethod<Map<dynamic, dynamic>>(
+      'pickMultipleDeviceFiles',
+      {
+        'type': type,
+        'allowedExtensions': allowedExtensions,
+      },
+    );
+    return raw ?? const [];
+  }
+
   /// Launches the device Camera immediately to capture a photo and returns
   /// `{name, path, size}`, or `null` if cancelled.
   static Future<Map<dynamic, dynamic>?> captureCameraPhoto() async {

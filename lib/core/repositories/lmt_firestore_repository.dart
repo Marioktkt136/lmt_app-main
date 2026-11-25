@@ -56,6 +56,9 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
   ({Map<String, dynamic> stateJson, String currentUserId})? _queuedPersist;
   Completer<void>? _persistIdleCompleter;
   Timer? _liveSyncDebounce;
+  VoidCallback? _onPersistSettledScheduleEmit;
+  bool _needsPostPersistEmit = false;
+  LmtRepositorySnapshot? _cachedLocalFallback;
 
   FirebaseFirestore? get _db =>
       Firebase.apps.isNotEmpty ? FirebaseFirestore.instance : null;
@@ -159,6 +162,47 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           (copy['mediaPath'] as String).length > 1000) {
         copy['mediaPath'] = null;
       }
+      if (copy['mediaItems'] is List) {
+        final cleanedMedia = <Map<String, dynamic>>[];
+        for (final entry in (copy['mediaItems'] as List).whereType<Map>()) {
+          final item = Map<String, dynamic>.from(entry);
+          final rawPath = item['path'];
+          if (rawPath is! String ||
+              rawPath.trim().isEmpty ||
+              rawPath.trim().length > 1000) {
+            continue;
+          }
+          final cleanItem = <String, dynamic>{
+            'path': rawPath.trim(),
+            'isVideo': item['isVideo'] == true,
+          };
+          final fname = _clampNullableText(item['fileName'], 1, 260);
+          if (fname != null) cleanItem['fileName'] = fname;
+          final vUrl = _clampNullableText(item['videoUrl'], 1, 1000);
+          if (vUrl != null) cleanItem['videoUrl'] = vUrl;
+          cleanedMedia.add(cleanItem);
+          if (cleanedMedia.length >= 20) break;
+        }
+        if (cleanedMedia.isNotEmpty) {
+          copy['mediaItems'] = cleanedMedia;
+        } else {
+          copy.remove('mediaItems');
+        }
+      }
+      if (copy['readByIds'] is List) {
+        final cleanedReads = <String>{
+          for (final rawId in (copy['readByIds'] as List))
+            if (rawId != null && rawId.toString().trim().isNotEmpty)
+              rawId.toString().trim().length <= 64
+                  ? rawId.toString().trim()
+                  : rawId.toString().trim().substring(0, 64),
+        }.take(500).toList();
+        if (cleanedReads.isNotEmpty) {
+          copy['readByIds'] = cleanedReads;
+        } else {
+          copy.remove('readByIds');
+        }
+      }
       if (copy['localFilePath'] is String &&
           (copy['localFilePath'] as String).length > 1000) {
         copy['localFilePath'] = null;
@@ -258,6 +302,37 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
           if (cleanedComments.length >= 500) break;
         }
         copy['comments'] = cleanedComments;
+      }
+      if (copy.containsKey('description') && copy['description'] is String) {
+        final desc = (copy['description'] as String).trim();
+        copy['description'] =
+            desc.length <= 2000 ? desc : desc.substring(0, 2000);
+      }
+      if (copy['pollOptions'] is List) {
+        final cleanedOpts = <Map<String, dynamic>>[];
+        for (final entry in (copy['pollOptions'] as List).whereType<Map>()) {
+          final opt = Map<String, dynamic>.from(entry);
+          final text = _clampRequiredText(opt['text'], 500, '');
+          if (text.isEmpty) continue;
+          final voterIds = <String>{
+            for (final v in (opt['voterIds'] as List<dynamic>? ?? const []))
+              if (v != null && v.toString().trim().isNotEmpty)
+                v.toString().trim().length <= 64
+                    ? v.toString().trim()
+                    : v.toString().trim().substring(0, 64),
+          }.take(500).toList();
+          cleanedOpts.add({
+            'id': _clampRequiredText(
+              opt['id'],
+              64,
+              'opt_${cleanedOpts.length}',
+            ),
+            'text': text,
+            'voterIds': voterIds,
+          });
+          if (cleanedOpts.length >= 25) break;
+        }
+        copy['pollOptions'] = cleanedOpts;
       }
     }
     copy['updatedByUid'] = uid;
@@ -877,7 +952,10 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       }
 
       final assembled = await _assembleSnapshot(fallback: local);
-      return await _recoverUnsyncedLocalSeenReceipts(assembled, local: local);
+      final recovered =
+          await _recoverUnsyncedLocalSeenReceipts(assembled, local: local);
+      _cachedLocalFallback = recovered;
+      return recovered;
     } catch (_) {
       return local;
     }
@@ -1002,6 +1080,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         stateJson: stateJson,
         currentUserId: currentUserId,
       );
+      _cachedLocalFallback = null;
       var nextWrite = (stateJson: stateJson, currentUserId: currentUserId);
       while (true) {
         await _flushSinglePersist(db, nextWrite.stateJson);
@@ -1014,6 +1093,10 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       _persistInFlight = false;
       _persistIdleCompleter?.complete();
       _persistIdleCompleter = null;
+      if (_needsPostPersistEmit) {
+        _needsPostPersistEmit = false;
+        _onPersistSettledScheduleEmit?.call();
+      }
     }
   }
 
@@ -1123,6 +1206,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       if (controller.isClosed) return;
       if (_persistInFlight) {
         dirty = true;
+        _needsPostPersistEmit = true;
         return;
       }
       if (emitting) {
@@ -1133,11 +1217,21 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       try {
         do {
           dirty = false;
-          if (_persistInFlight) break;
-          final local = await localCache.loadSnapshot();
-          if (_persistInFlight || controller.isClosed) break;
+          if (_persistInFlight) {
+            _needsPostPersistEmit = true;
+            break;
+          }
+          final local =
+              _cachedLocalFallback ?? await localCache.loadSnapshot();
+          _cachedLocalFallback = local;
+          if (_persistInFlight || controller.isClosed) {
+            if (_persistInFlight) _needsPostPersistEmit = true;
+            break;
+          }
           final assembled = await _assembleSnapshot(fallback: local);
-          if (!_persistInFlight && !controller.isClosed) {
+          if (_persistInFlight) {
+            _needsPostPersistEmit = true;
+          } else if (!controller.isClosed) {
             controller.add(assembled);
           }
         } while (dirty && !controller.isClosed);
@@ -1150,7 +1244,8 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
 
     void scheduleEmit() {
       _liveSyncDebounce?.cancel();
-      _liveSyncDebounce = Timer(const Duration(milliseconds: 60), emitCombined);
+      _liveSyncDebounce =
+          Timer(const Duration(milliseconds: 15), emitCombined);
     }
 
     void watchCollection(String collectionName) {
@@ -1170,6 +1265,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
 
     controller = StreamController<LmtRepositorySnapshot>.broadcast(
       onListen: () {
+        _onPersistSettledScheduleEmit = scheduleEmit;
         _ensureAuthenticated().then((authed) {
           if (!authed || controller.isClosed) return;
           watchCollection(_membersCol);
@@ -1209,6 +1305,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
         });
       },
       onCancel: () {
+        _onPersistSettledScheduleEmit = null;
         _liveSyncDebounce?.cancel();
         for (final sub in subs) {
           sub.cancel();
@@ -1366,6 +1463,58 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     });
   }
 
+  void _recordDocLocalSync(
+    String collectionName,
+    String docId,
+    Map<String, dynamic> payload, {
+    bool syncedRemote = false,
+  }) {
+    _liveDocs[collectionName] ??= {};
+    _deliveredDocIds[collectionName] ??= {};
+    _liveDocs[collectionName]![docId] = payload;
+    _deliveredDocIds[collectionName]!.add(docId);
+    if (syncedRemote) {
+      _lastSyncedDocs[collectionName] ??= {};
+      _lastSyncedDocs[collectionName]![docId] = _canonicalDocJson(payload);
+    }
+  }
+
+  Future<void> _writeDocAndCompanionNotification({
+    required FirebaseFirestore db,
+    required String collectionName,
+    required String docId,
+    required Map<String, dynamic> rawDoc,
+    required String uid,
+    AppNotificationModel? notification,
+  }) async {
+    final payload = _prepareDocForCloud(rawDoc, uid);
+    _recordDocLocalSync(collectionName, docId, payload);
+
+    final batch = db.batch();
+    batch.set(db.collection(collectionName).doc(docId), payload);
+
+    Map<String, dynamic>? notifPayload;
+    if (notification != null) {
+      notifPayload = _prepareDocForCloud(notification.toJson(), uid);
+      _recordDocLocalSync(_notificationsCol, notification.id, notifPayload);
+      batch.set(
+        db.collection(_notificationsCol).doc(notification.id),
+        notifPayload,
+      );
+    }
+
+    await batch.commit().timeout(_remoteTimeout);
+    _recordDocLocalSync(collectionName, docId, payload, syncedRemote: true);
+    if (notification != null && notifPayload != null) {
+      _recordDocLocalSync(
+        _notificationsCol,
+        notification.id,
+        notifPayload,
+        syncedRemote: true,
+      );
+    }
+  }
+
   @override
   Future<void> sendChatMessageToCloud({
     required ChatMessageModel message,
@@ -1377,47 +1526,14 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
       final authed = await _ensureAuthenticated();
       if (!authed) return;
       final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
-
-      final msgPayload = _prepareDocForCloud(message.toJson(), uid);
-      _liveDocs[_chatMessagesCol] ??= {};
-      _deliveredDocIds[_chatMessagesCol] ??= {};
-      _liveDocs[_chatMessagesCol]![message.id] = msgPayload;
-      _deliveredDocIds[_chatMessagesCol]!.add(message.id);
-
-      final writes = <Future<void>>[
-        db
-            .collection(_chatMessagesCol)
-            .doc(message.id)
-            .set(msgPayload)
-            .timeout(_remoteTimeout)
-            .then((_) {
-          _lastSyncedDocs[_chatMessagesCol] ??= {};
-          _lastSyncedDocs[_chatMessagesCol]![message.id] =
-              _canonicalDocJson(msgPayload);
-        }),
-      ];
-
-      if (notification != null) {
-        final notifPayload = _prepareDocForCloud(notification.toJson(), uid);
-        _liveDocs[_notificationsCol] ??= {};
-        _deliveredDocIds[_notificationsCol] ??= {};
-        _liveDocs[_notificationsCol]![notification.id] = notifPayload;
-        _deliveredDocIds[_notificationsCol]!.add(notification.id);
-        writes.add(
-          db
-              .collection(_notificationsCol)
-              .doc(notification.id)
-              .set(notifPayload)
-              .timeout(_remoteTimeout)
-              .then((_) {
-            _lastSyncedDocs[_notificationsCol] ??= {};
-            _lastSyncedDocs[_notificationsCol]![notification.id] =
-                _canonicalDocJson(notifPayload);
-          }),
-        );
-      }
-
-      await Future.wait(writes);
+      await _writeDocAndCompanionNotification(
+        db: db,
+        collectionName: _chatMessagesCol,
+        docId: message.id,
+        rawDoc: message.toJson(),
+        uid: uid,
+        notification: notification,
+      );
     } catch (e) {
       debugPrint('Firestore sendChatMessageToCloud error: $e');
     }
@@ -1505,11 +1621,308 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
     }
   }
 
+  Future<void> _runPostFieldTransaction({
+    required String postId,
+    required Map<String, dynamic> Function(Map<String, dynamic> current) mutate,
+    AppNotificationModel? notification,
+  }) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      final docRef = db.collection(_postsCol).doc(postId);
+
+      Map<String, dynamic>? committedPost;
+      await db.runTransaction((tx) async {
+        final snap = await tx.get(docRef);
+        if (!snap.exists) return;
+        final current = Map<String, dynamic>.from(snap.data() ?? const {});
+        final updated = mutate(current);
+        final sanitized = _prepareDocForCloud(updated, uid);
+        tx.set(docRef, sanitized);
+        committedPost = sanitized;
+      }).timeout(_remoteTimeout);
+
+      final savedPost = committedPost;
+      if (savedPost != null) {
+        _recordDocLocalSync(_postsCol, postId, savedPost, syncedRemote: true);
+      }
+
+      if (notification != null) {
+        final notifPayload = _prepareDocForCloud(notification.toJson(), uid);
+        _recordDocLocalSync(_notificationsCol, notification.id, notifPayload);
+        await db
+            .collection(_notificationsCol)
+            .doc(notification.id)
+            .set(notifPayload)
+            .timeout(_remoteTimeout);
+        _recordDocLocalSync(
+          _notificationsCol,
+          notification.id,
+          notifPayload,
+          syncedRemote: true,
+        );
+      }
+    } catch (e) {
+      debugPrint('Firestore post transaction error [$postId]: $e');
+    }
+  }
+
+  @override
+  Future<void> savePostToCloud({
+    required PostModel post,
+    AppNotificationModel? notification,
+  }) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      await _writeDocAndCompanionNotification(
+        db: db,
+        collectionName: _postsCol,
+        docId: post.id,
+        rawDoc: post.toJson(),
+        uid: uid,
+        notification: notification,
+      );
+    } catch (e) {
+      debugPrint('Firestore savePostToCloud error: $e');
+    }
+  }
+
+  @override
+  Future<void> updatePostContentInCloud({
+    required String postId,
+    required String content,
+  }) {
+    return _runPostFieldTransaction(
+      postId: postId,
+      mutate: (current) => {...current, 'content': content},
+    );
+  }
+
+  @override
+  Future<void> deletePostFromCloud({required String postId}) async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      await db.collection(_postsCol).doc(postId).delete().timeout(_remoteTimeout);
+      _lastSyncedDocs[_postsCol]?.remove(postId);
+      _liveDocs[_postsCol]?.remove(postId);
+      _deliveredDocIds[_postsCol]?.remove(postId);
+    } catch (e) {
+      debugPrint('Firestore deletePostFromCloud error: $e');
+    }
+  }
+
+  @override
+  Future<void> togglePostLikeInCloud({
+    required String postId,
+    required String memberId,
+    AppNotificationModel? notification,
+  }) {
+    return _runPostFieldTransaction(
+      postId: postId,
+      notification: notification,
+      mutate: (current) {
+        final liked = List<String>.from(
+          (current['likedByIds'] as List<dynamic>? ?? const [])
+              .map((e) => e.toString()),
+        );
+        if (liked.contains(memberId)) {
+          liked.remove(memberId);
+        } else {
+          liked.add(memberId);
+        }
+        return {...current, 'likedByIds': liked};
+      },
+    );
+  }
+
+  @override
+  Future<void> voteOnPollInCloud({
+    required String postId,
+    required String optionId,
+    required String memberId,
+    required bool allowMultiple,
+  }) {
+    return _runPostFieldTransaction(
+      postId: postId,
+      mutate: (current) {
+        final options = (current['pollOptions'] as List<dynamic>? ?? const [])
+            .whereType<Map>()
+            .map((raw) => PollOptionModel.fromJson(Map<String, dynamic>.from(raw)))
+            .toList();
+        if (options.isEmpty) return current;
+
+        final List<PollOptionModel> updated;
+        if (allowMultiple) {
+          updated = options.map((opt) {
+            if (opt.id != optionId) return opt;
+            final voters = List<String>.from(opt.voterIds);
+            if (voters.contains(memberId)) {
+              voters.remove(memberId);
+            } else {
+              voters.add(memberId);
+            }
+            return opt.copyWith(voterIds: voters);
+          }).toList();
+        } else {
+          final target = options.where((o) => o.id == optionId).firstOrNull;
+          final alreadyVoted =
+              target != null && target.voterIds.contains(memberId);
+          updated = options.map((opt) {
+            final voters = List<String>.from(opt.voterIds)..remove(memberId);
+            if (opt.id == optionId && !alreadyVoted) {
+              voters.add(memberId);
+            }
+            return opt.copyWith(voterIds: voters);
+          }).toList();
+        }
+
+        return {
+          ...current,
+          'pollOptions': updated.map((o) => o.toJson()).toList(),
+        };
+      },
+    );
+  }
+
+  @override
+  Future<void> addPostCommentInCloud({
+    required String postId,
+    required PostCommentModel comment,
+    AppNotificationModel? notification,
+  }) {
+    return _runPostFieldTransaction(
+      postId: postId,
+      notification: notification,
+      mutate: (current) {
+        final comments = (current['comments'] as List<dynamic>? ?? const [])
+            .whereType<Map>()
+            .map((raw) => Map<String, dynamic>.from(raw))
+            .toList();
+        final alreadyExists = comments.any((c) => c['id'] == comment.id);
+        if (!alreadyExists) {
+          comments.add(comment.toJson());
+        }
+        return {...current, 'comments': comments};
+      },
+    );
+  }
+
+  @override
+  Future<void> markNotificationsReadInCloud({
+    required List<String> notificationIds,
+    required String readerId,
+  }) async {
+    final db = _db;
+    final cleanReader = readerId.trim();
+    if (db == null || notificationIds.isEmpty || cleanReader.isEmpty) return;
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      final colRef = db.collection(_notificationsCol);
+      final ids = notificationIds.toSet().toList();
+
+      for (var i = 0; i < ids.length; i += _maxBatchOps) {
+        final slice = ids.sublist(i, (i + _maxBatchOps).clamp(0, ids.length));
+        try {
+          final batch = db.batch();
+          for (final id in slice) {
+            batch.update(colRef.doc(id), {
+              'readByIds': FieldValue.arrayUnion([cleanReader]),
+              'updatedByUid': uid,
+            });
+          }
+          await batch.commit().timeout(_remoteTimeout);
+        } catch (_) {
+          await Future.wait(
+            slice.map((id) async {
+              try {
+                await colRef.doc(id).update({
+                  'readByIds': FieldValue.arrayUnion([cleanReader]),
+                  'updatedByUid': uid,
+                }).timeout(_remoteTimeout);
+              } catch (_) {}
+            }),
+          );
+        }
+      }
+
+      final liveNotifs = _liveDocs[_notificationsCol];
+      if (liveNotifs != null) {
+        for (final id in ids) {
+          final existing = liveNotifs[id];
+          if (existing == null) continue;
+          final reads = <String>{
+            ...(existing['readByIds'] as List<dynamic>? ?? const [])
+                .map((e) => e.toString()),
+            cleanReader,
+          }.toList();
+          final updated = Map<String, dynamic>.from(existing)
+            ..['readByIds'] = reads;
+          _recordDocLocalSync(_notificationsCol, id, updated, syncedRemote: true);
+        }
+      }
+    } catch (e) {
+      debugPrint('Firestore markNotificationsReadInCloud error: $e');
+    }
+  }
+
+  @override
+  Future<void> dismissNotificationsInCloud({
+    required List<AppNotificationModel> updatedNotifications,
+    required List<String> deletedNotificationIds,
+  }) async {
+    final db = _db;
+    if (db == null ||
+        (updatedNotifications.isEmpty && deletedNotificationIds.isEmpty)) {
+      return;
+    }
+    try {
+      final authed = await _ensureAuthenticated();
+      if (!authed) return;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+      final colRef = db.collection(_notificationsCol);
+      final batch = db.batch();
+
+      for (final notif in updatedNotifications) {
+        final payload = _prepareDocForCloud(notif.toJson(), uid);
+        batch.set(colRef.doc(notif.id), payload);
+        _recordDocLocalSync(
+          _notificationsCol,
+          notif.id,
+          payload,
+          syncedRemote: true,
+        );
+      }
+      for (final delId in deletedNotificationIds) {
+        batch.delete(colRef.doc(delId));
+        _lastSyncedDocs[_notificationsCol]?.remove(delId);
+        _liveDocs[_notificationsCol]?.remove(delId);
+        _deliveredDocIds[_notificationsCol]?.remove(delId);
+      }
+
+      await batch.commit().timeout(_remoteTimeout);
+    } catch (e) {
+      debugPrint('Firestore dismissNotificationsInCloud error: $e');
+    }
+  }
+
   @override
   Future<void> persistLocalSnapshot({
     required Map<String, dynamic> stateJson,
     required String currentUserId,
   }) async {
+    _cachedLocalFallback = null;
     await localCache.persistSnapshot(
       stateJson: stateJson,
       currentUserId: currentUserId,
@@ -1518,6 +1931,7 @@ class LmtFirestoreRepositoryImpl implements LmtRepository {
 
   @override
   Future<void> clearCachedState() async {
+    _cachedLocalFallback = null;
     await localCache.clearCachedState();
   }
 }

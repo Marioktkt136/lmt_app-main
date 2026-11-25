@@ -18,7 +18,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shorebird_code_push/shorebird_code_push.dart';
 
-class _InMemoryTestRepo implements LmtRepository {
+class _InMemoryTestRepo extends LmtRepository {
   @override
   Future<LmtRepositorySnapshot> loadSnapshot() async {
     return LmtRepositorySnapshot(

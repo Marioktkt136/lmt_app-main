@@ -63,6 +63,10 @@ class AppNotificationModel extends Equatable {
   /// Custom audio tone key (`LmtNotificationTone.name`) used for OS banners.
   final String tone;
 
+  /// Member IDs who have individually marked this notification as read so one
+  /// user marking a shared notification read never silences it for teammates.
+  final List<String> readByIds;
+
   /// Creates an [AppNotificationModel].
   const AppNotificationModel({
     required this.id,
@@ -78,12 +82,27 @@ class AppNotificationModel extends Equatable {
     this.targetMemberIds = const [],
     this.excludedMemberIds = const [],
     this.tone = 'normal',
+    this.readByIds = const [],
   });
 
   /// Returns `true` if [memberId] is authorized to see this notification.
   bool isVisibleTo(String memberId) {
     if (excludedMemberIds.contains(memberId)) return false;
     return targetMemberIds.isEmpty || targetMemberIds.contains(memberId);
+  }
+
+  /// Returns whether [memberId] has read this notification (falling back to
+  /// legacy global [isRead] only when [readByIds] is empty).
+  bool isReadFor(String memberId) {
+    if (readByIds.contains(memberId)) return true;
+    return isRead && readByIds.isEmpty;
+  }
+
+  /// Returns a copy marked read specifically for [memberId] without silencing
+  /// the notification for other recipients.
+  AppNotificationModel markReadBy(String memberId) {
+    if (memberId.trim().isEmpty || readByIds.contains(memberId)) return this;
+    return copyWith(readByIds: [...readByIds, memberId]);
   }
 
   /// Creates a copy of this notification with updated fields.
@@ -101,6 +120,7 @@ class AppNotificationModel extends Equatable {
     List<String>? targetMemberIds,
     List<String>? excludedMemberIds,
     String? tone,
+    List<String>? readByIds,
   }) {
     return AppNotificationModel(
       id: id ?? this.id,
@@ -116,6 +136,7 @@ class AppNotificationModel extends Equatable {
       targetMemberIds: targetMemberIds ?? this.targetMemberIds,
       excludedMemberIds: excludedMemberIds ?? this.excludedMemberIds,
       tone: tone ?? this.tone,
+      readByIds: readByIds ?? this.readByIds,
     );
   }
 
@@ -134,6 +155,7 @@ class AppNotificationModel extends Equatable {
         'targetMemberIds': targetMemberIds,
         'excludedMemberIds': excludedMemberIds,
         'tone': tone,
+        if (readByIds.isNotEmpty) 'readByIds': readByIds,
       };
 
   /// Deserializes an [AppNotificationModel] from a JSON map.
@@ -170,6 +192,10 @@ class AppNotificationModel extends Equatable {
               .toList() ??
           const [],
       tone: resolvedTone,
+      readByIds: (json['readByIds'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
     );
   }
 
@@ -188,5 +214,6 @@ class AppNotificationModel extends Equatable {
         targetMemberIds,
         excludedMemberIds,
         tone,
+        readByIds,
       ];
 }

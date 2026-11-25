@@ -156,6 +156,63 @@ class PostCommentModel extends Equatable {
       [id, authorId, authorName, authorRole, content, createdAt];
 }
 
+/// Represents an individual photo or video attachment inside a [PostModel].
+class PostMediaItem extends Equatable {
+  /// Cloud URI (`cloud://blob/...`), local cached path, URL, or asset path.
+  final String path;
+
+  /// Whether this attachment is a video (`true`) or an image (`false`).
+  final bool isVideo;
+
+  /// Optional human-readable original filename.
+  final String? fileName;
+
+  /// Optional external video URL.
+  final String? videoUrl;
+
+  /// Creates a [PostMediaItem].
+  const PostMediaItem({
+    required this.path,
+    this.isVideo = false,
+    this.fileName,
+    this.videoUrl,
+  });
+
+  /// Creates a copy of this media item with updated fields.
+  PostMediaItem copyWith({
+    String? path,
+    bool? isVideo,
+    String? fileName,
+    String? videoUrl,
+  }) {
+    return PostMediaItem(
+      path: path ?? this.path,
+      isVideo: isVideo ?? this.isVideo,
+      fileName: fileName ?? this.fileName,
+      videoUrl: videoUrl ?? this.videoUrl,
+    );
+  }
+
+  /// Serializes this media item to JSON.
+  Map<String, dynamic> toJson() => {
+        'path': path,
+        'isVideo': isVideo,
+        if (fileName != null && fileName!.trim().isNotEmpty) 'fileName': fileName,
+        if (videoUrl != null && videoUrl!.trim().isNotEmpty) 'videoUrl': videoUrl,
+      };
+
+  /// Deserializes a [PostMediaItem] from JSON.
+  factory PostMediaItem.fromJson(Map<String, dynamic> json) => PostMediaItem(
+        path: json['path'] as String? ?? '',
+        isVideo: json['isVideo'] as bool? ?? false,
+        fileName: json['fileName'] as String?,
+        videoUrl: json['videoUrl'] as String?,
+      );
+
+  @override
+  List<Object?> get props => [path, isVideo, fileName, videoUrl];
+}
+
 /// Represents a timeline announcement post (Simple, Poll, or Image/Video).
 class PostModel extends Equatable {
   /// The unique identifier of the post.
@@ -185,14 +242,18 @@ class PostModel extends Equatable {
   /// The main text content of the post.
   final String content;
 
-  /// Optional image or media thumbnail path.
+  /// Optional primary image or media thumbnail path (kept for single-media
+  /// & legacy client compatibility).
   final String? mediaPath;
 
-  /// Whether the attached media is a video.
+  /// Whether the primary attached media is a video.
   final bool isVideo;
 
   /// Optional external video URL.
   final String? videoUrl;
+
+  /// Ordered list of attached images/videos for multi-media posts.
+  final List<PostMediaItem> mediaItems;
 
   /// List of poll options if [type] is [PostCategoryType.poll].
   final List<PollOptionModel> pollOptions;
@@ -221,11 +282,37 @@ class PostModel extends Equatable {
     this.mediaPath,
     this.isVideo = false,
     this.videoUrl,
+    this.mediaItems = const [],
     this.pollOptions = const [],
     this.allowMultiplePollChoices = false,
     this.likedByIds = const [],
     this.comments = const [],
   });
+
+  /// Effective list of media attachments, falling back cleanly to [mediaPath]
+  /// or [videoUrl] for legacy single-media posts.
+  List<PostMediaItem> get resolvedMediaItems {
+    if (mediaItems.isNotEmpty) return mediaItems;
+    if (mediaPath != null && mediaPath!.trim().isNotEmpty) {
+      return [
+        PostMediaItem(
+          path: mediaPath!,
+          isVideo: isVideo,
+          videoUrl: videoUrl,
+        ),
+      ];
+    }
+    if (videoUrl != null && videoUrl!.trim().isNotEmpty) {
+      return [
+        PostMediaItem(
+          path: videoUrl!,
+          isVideo: true,
+          videoUrl: videoUrl,
+        ),
+      ];
+    }
+    return const [];
+  }
 
   /// Total number of votes cast across all options in this poll.
   int get totalPollVotes =>
@@ -245,6 +332,7 @@ class PostModel extends Equatable {
     String? mediaPath,
     bool? isVideo,
     String? videoUrl,
+    List<PostMediaItem>? mediaItems,
     List<PollOptionModel>? pollOptions,
     bool? allowMultiplePollChoices,
     List<String>? likedByIds,
@@ -263,6 +351,7 @@ class PostModel extends Equatable {
       mediaPath: mediaPath ?? this.mediaPath,
       isVideo: isVideo ?? this.isVideo,
       videoUrl: videoUrl ?? this.videoUrl,
+      mediaItems: mediaItems ?? this.mediaItems,
       pollOptions: pollOptions ?? this.pollOptions,
       allowMultiplePollChoices:
           allowMultiplePollChoices ?? this.allowMultiplePollChoices,
@@ -285,6 +374,8 @@ class PostModel extends Equatable {
         'mediaPath': mediaPath,
         'isVideo': isVideo,
         'videoUrl': videoUrl,
+        if (mediaItems.isNotEmpty)
+          'mediaItems': mediaItems.map((e) => e.toJson()).toList(),
         'pollOptions': pollOptions.map((e) => e.toJson()).toList(),
         'allowMultiplePollChoices': allowMultiplePollChoices,
         'likedByIds': likedByIds,
@@ -309,6 +400,12 @@ class PostModel extends Equatable {
         mediaPath: json['mediaPath'] as String?,
         isVideo: json['isVideo'] as bool? ?? false,
         videoUrl: json['videoUrl'] as String?,
+        mediaItems: (json['mediaItems'] as List<dynamic>?)
+                ?.whereType<Map>()
+                .map((e) => PostMediaItem.fromJson(Map<String, dynamic>.from(e)))
+                .where((m) => m.path.trim().isNotEmpty)
+                .toList() ??
+            const [],
         pollOptions: (json['pollOptions'] as List<dynamic>?)
                 ?.map(
                     (e) => PollOptionModel.fromJson(e as Map<String, dynamic>))
@@ -338,6 +435,7 @@ class PostModel extends Equatable {
         mediaPath,
         isVideo,
         videoUrl,
+        mediaItems,
         pollOptions,
         allowMultiplePollChoices,
         likedByIds,

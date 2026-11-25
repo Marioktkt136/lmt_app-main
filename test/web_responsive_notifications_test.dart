@@ -18,11 +18,13 @@ import 'package:lmt/features/chatting_room/views/chatting_room.dart';
 import 'package:lmt/features/chatting_room/widgets/chat_group_tile.dart';
 import 'package:lmt/features/chatting_room/widgets/conversation_header_bar.dart';
 import 'package:lmt/features/chatting_room/widgets/group_conversation_room.dart';
+import 'package:lmt/features/home/widgets/media_picker_strip.dart';
+import 'package:lmt/features/home/widgets/timeline_post_card.dart';
 import 'package:lmt/features/layout/cubit/layout_cubit.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _StreamableRepo implements LmtRepository {
+class _StreamableRepo extends LmtRepository {
   final StreamController<List<AppNotificationModel>> notifController =
       StreamController<List<AppNotificationModel>>.broadcast();
   final StreamController<LmtRepositorySnapshot> liveSnapshotController =
@@ -815,6 +817,214 @@ void main() {
         find.byIcon(Icons.keyboard_double_arrow_down_rounded),
         findsNothing,
       );
+    });
+
+    test('Per-user readByIds keeps teammates unread and multi-media posts survive sync snapshots', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final repo = _StreamableRepo();
+      final cubit = LmtCubit(repository: repo);
+      addTearDown(() async {
+        await cubit.close();
+        await repo.dispose();
+      });
+      while (!cubit.state.isInitialized) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      final readerId = cubit.state.currentUser.id;
+      final teammateId = cubit.state.members.firstWhere((m) => m.id != readerId).id;
+
+      // Push a notification readable independently per member.
+      final incomingNotif = AppNotificationModel(
+        id: 'notif_per_user_1',
+        title: 'New Post',
+        description: 'Check gallery',
+        dateTime: DateTime(2026, 11, 25, 10, 0),
+        category: NotificationCategory.posts,
+      );
+      repo.notifController.add([incomingNotif]);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(cubit.state.unreadNotificationsCount, 1);
+
+      // Reader marks read -> reader sees 0 unread, teammate still sees unread.
+      await cubit.markNotificationRead(incomingNotif.id);
+      expect(cubit.state.unreadNotificationsCount, 0);
+      final afterMark =
+          cubit.state.notifications.firstWhere((n) => n.id == incomingNotif.id);
+      expect(afterMark.isReadFor(readerId), isTrue);
+      expect(afterMark.isReadFor(teammateId), isFalse);
+
+      // Simulate another member marking read remotely -> state updates via readByIds diff.
+      repo.notifController.add([afterMark.markReadBy(teammateId)]);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final updatedFromRemote =
+          cubit.state.notifications.firstWhere((n) => n.id == incomingNotif.id);
+      expect(updatedFromRemote.isReadFor(teammateId), isTrue);
+
+      // Multi-media post creation & serialization round-trip + pendingOutgoingPosts protection.
+      await cubit.createPost(
+        type: PostCategoryType.media,
+        content: 'Gallery upload test',
+        mediaItems: const [
+          PostMediaItem(
+            path: AppAssets.actIcon,
+            isVideo: false,
+            fileName: 'photo_1.png',
+          ),
+          PostMediaItem(
+            path: 'https://example.com/clip.mp4',
+            isVideo: true,
+            fileName: 'rehearsal.mp4',
+          ),
+        ],
+      );
+      expect(cubit.state.posts.length, 1);
+      final created = cubit.state.posts.first;
+      expect(created.resolvedMediaItems.length, 2);
+      final roundTrip = PostModel.fromJson(created.toJson());
+      expect(roundTrip.mediaItems.length, 2);
+      expect(roundTrip.mediaItems[1].isVideo, isTrue);
+
+      // Stale remote snapshot with 0 posts must NOT wipe the pending outgoing post.
+      final currentSnapshot = await repo.loadSnapshot();
+      repo.liveSnapshotController.add(currentSnapshot);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(cubit.state.posts.any((p) => p.id == created.id), isTrue);
+    });
+
+    testWidgets('MediaPickerStrip & TimelinePostCard support multiple mixed media items', (tester) async {
+      tester.view.physicalSize = const Size(420, 860);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      var removedIndex = -1;
+      final cubit = _DesktopFakeCubit();
+      addTearDown(cubit.close);
+
+      final multiPost = PostModel(
+        id: 'post_carousel_1',
+        creatorId: _admin.id,
+        creatorName: _admin.name,
+        creatorAvatar: _admin.avatarPath,
+        creatorRole: _admin.role,
+        publishTime: DateTime(2026, 11, 25, 10, 5),
+        type: PostCategoryType.media,
+        content: 'Multiple media test',
+        mediaPath: AppAssets.actIcon,
+        mediaItems: const [
+          PostMediaItem(
+            path: AppAssets.actIcon,
+            isVideo: false,
+            fileName: 'stage_1.png',
+          ),
+          PostMediaItem(
+            path: 'https://example.com/demo.mp4',
+            isVideo: true,
+            fileName: 'clip_one.mp4',
+          ),
+          PostMediaItem(
+            path: AppAssets.actIcon,
+            isVideo: false,
+            fileName: 'stage_2.png',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ScreenUtilInit(
+          designSize: const Size(420, 860),
+          minTextAdapt: true,
+          builder: (_, _) => BlocProvider<LmtCubit>.value(
+            value: cubit,
+            child: MaterialApp(
+              locale: const Locale('en'),
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      MediaPickerStrip(
+                        items: const [
+                          MediaPickerItem(
+                            previewPath: AppAssets.actIcon,
+                            fileName: 'a.png',
+                            isVideo: false,
+                          ),
+                          MediaPickerItem(
+                            previewPath: 'clip.mp4',
+                            fileName: 'clip.mp4',
+                            isVideo: true,
+                          ),
+                        ],
+                        isArabic: false,
+                        onPickMore: () {},
+                        onRemoveAt: (idx) => removedIndex = idx,
+                        onClearAll: () {},
+                      ),
+                      TimelinePostCard(
+                        post: multiPost,
+                        currentUser: _admin,
+                        onShowComments: () {},
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 selected'), findsOneWidget);
+      expect(find.text('1 / 3'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.chevron_right_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 3'), findsOneWidget);
+      expect(find.text('clip_one.mp4'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.close_rounded).first);
+      await tester.pump();
+      expect(removedIndex, 0);
+    });
+
+    test('Poll post with 5 options survives serialization and concurrent live snapshots', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final repo = _StreamableRepo();
+      final cubit = LmtCubit(repository: repo);
+      addTearDown(() async {
+        await cubit.close();
+        await repo.dispose();
+      });
+      while (!cubit.state.isInitialized) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      await cubit.createPost(
+        type: PostCategoryType.poll,
+        content: 'موعد المعسكر السنوي للفريق',
+        pollOptionsText: const [
+          'الأسبوع الأول',
+          'الأسبوع الثاني',
+          'الأسبوع الثالث',
+          'الأسبوع الرابع',
+          'بعد الامتحانات',
+        ],
+        allowMultiplePollChoices: true,
+      );
+
+      expect(cubit.state.posts, hasLength(1));
+      final created = cubit.state.posts.first;
+      expect(created.pollOptions, hasLength(5));
+      expect(created.allowMultiplePollChoices, isTrue);
+
+      final roundTrip = PostModel.fromJson(created.toJson());
+      expect(roundTrip.pollOptions, hasLength(5));
+
+      final emptyRemote = await repo.loadSnapshot();
+      repo.liveSnapshotController.add(emptyRemote);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(cubit.state.posts.any((p) => p.id == created.id), isTrue);
     });
   });
 }

@@ -38,35 +38,59 @@ mixin NotificationsCubitMixin on LmtBaseCubit {
     );
   }
 
-  /// Marks a single notification as read.
+  /// Marks a single notification as read strictly for the active user.
   Future<void> markNotificationRead(String notificationId) async {
+    final currentId = state.currentUser.id;
+    var changed = false;
     final updated = state.notifications.map((n) {
-      if (n.id == notificationId) {
-        return n.copyWith(isRead: true);
+      if (n.id == notificationId && !n.isReadFor(currentId)) {
+        changed = true;
+        return n.markReadBy(currentId);
       }
       return n;
     }).toList();
+    if (!changed) return;
     emit(state.copyWith(notifications: updated));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: currentId,
+    );
+    await repository.markNotificationsReadInCloud(
+      notificationIds: [notificationId],
+      readerId: currentId,
+    );
   }
 
-  /// Marks all visible notifications in the feed as read.
+  /// Marks all visible notifications in the feed as read strictly for the
+  /// active user (without silencing alerts for teammates).
   Future<void> markAllNotificationsRead() async {
     final currentId = state.currentUser.id;
+    final markedIds = <String>[];
     final updated = state.notifications.map((n) {
-      if (n.isVisibleTo(currentId)) {
-        return n.copyWith(isRead: true);
+      if (n.isVisibleTo(currentId) && !n.isReadFor(currentId)) {
+        markedIds.add(n.id);
+        return n.markReadBy(currentId);
       }
       return n;
     }).toList();
+    if (markedIds.isEmpty) return;
     emit(state.copyWith(notifications: updated));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: currentId,
+    );
+    await repository.markNotificationsReadInCloud(
+      notificationIds: markedIds,
+      readerId: currentId,
+    );
   }
 
   /// Deletes/dismisses a single notification for the active user.
   Future<void> deleteNotification(String notificationId) async {
     final currentId = state.currentUser.id;
     final updated = <AppNotificationModel>[];
+    final updatedDocs = <AppNotificationModel>[];
+    final deletedIds = <String>[];
     var changed = false;
 
     for (final n in state.notifications) {
@@ -78,18 +102,30 @@ mixin NotificationsCubitMixin on LmtBaseCubit {
       final remaining = _dismissForCurrentUser(n, currentId);
       if (remaining != null) {
         updated.add(remaining);
+        updatedDocs.add(remaining);
+      } else {
+        deletedIds.add(n.id);
       }
     }
 
     if (!changed) return;
     emit(state.copyWith(notifications: updated));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: currentId,
+    );
+    await repository.dismissNotificationsInCloud(
+      updatedNotifications: updatedDocs,
+      deletedNotificationIds: deletedIds,
+    );
   }
 
   /// Cleans/removes all notifications currently visible to the active user.
   Future<void> clearAllNotifications() async {
     final currentId = state.currentUser.id;
     final updated = <AppNotificationModel>[];
+    final updatedDocs = <AppNotificationModel>[];
+    final deletedIds = <String>[];
     var changed = false;
 
     for (final n in state.notifications) {
@@ -101,11 +137,21 @@ mixin NotificationsCubitMixin on LmtBaseCubit {
       final remaining = _dismissForCurrentUser(n, currentId);
       if (remaining != null) {
         updated.add(remaining);
+        updatedDocs.add(remaining);
+      } else {
+        deletedIds.add(n.id);
       }
     }
 
     if (!changed) return;
     emit(state.copyWith(notifications: updated));
-    await persistState();
+    await repository.persistLocalSnapshot(
+      stateJson: state.toJson(),
+      currentUserId: currentId,
+    );
+    await repository.dismissNotificationsInCloud(
+      updatedNotifications: updatedDocs,
+      deletedNotificationIds: deletedIds,
+    );
   }
 }

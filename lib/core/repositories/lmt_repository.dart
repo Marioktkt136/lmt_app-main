@@ -127,6 +127,61 @@ abstract class LmtRepository {
     required List<ChatMessageModel> updatedMessages,
     required SeenStatusModel viewerReceipt,
   }) async {}
+
+  /// Atomically writes [post] (and optional companion [notification]) to cloud
+  /// storage without overwriting unrelated collections.
+  Future<void> savePostToCloud({
+    required PostModel post,
+    AppNotificationModel? notification,
+  }) async {}
+
+  /// Atomically updates ONLY the text [content] of [postId] in cloud storage.
+  Future<void> updatePostContentInCloud({
+    required String postId,
+    required String content,
+  }) async {}
+
+  /// Deletes [postId] from cloud storage without rewriting unrelated collections.
+  Future<void> deletePostFromCloud({required String postId}) async {}
+
+  /// Atomically toggles [memberId]'s like on [postId] via transaction and
+  /// optionally writes a companion [notification].
+  Future<void> togglePostLikeInCloud({
+    required String postId,
+    required String memberId,
+    AppNotificationModel? notification,
+  }) async {}
+
+  /// Atomically records/toggles [memberId]'s poll vote on [optionId] inside
+  /// [postId] without clobbering concurrent votes from other members.
+  Future<void> voteOnPollInCloud({
+    required String postId,
+    required String optionId,
+    required String memberId,
+    required bool allowMultiple,
+  }) async {}
+
+  /// Atomically appends [comment] to [postId] via transaction and optionally
+  /// writes a companion [notification].
+  Future<void> addPostCommentInCloud({
+    required String postId,
+    required PostCommentModel comment,
+    AppNotificationModel? notification,
+  }) async {}
+
+  /// Records [readerId] inside per-user `readByIds` for [notificationIds] so
+  /// marking read on one device never silences alerts for other team members.
+  Future<void> markNotificationsReadInCloud({
+    required List<String> notificationIds,
+    required String readerId,
+  }) async {}
+
+  /// Persists per-user notification dismissals or global deletions directly
+  /// without re-writing other collections.
+  Future<void> dismissNotificationsInCloud({
+    required List<AppNotificationModel> updatedNotifications,
+    required List<String> deletedNotificationIds,
+  }) async {}
 }
 
 /// Concrete local-first implementation of [LmtRepository].
@@ -299,5 +354,54 @@ class LmtLocalRepositoryImpl implements LmtRepository {
   Future<void> markMessagesSeenInCloud({
     required List<ChatMessageModel> updatedMessages,
     required SeenStatusModel viewerReceipt,
+  }) async {}
+
+  @override
+  Future<void> savePostToCloud({
+    required PostModel post,
+    AppNotificationModel? notification,
+  }) async {}
+
+  @override
+  Future<void> updatePostContentInCloud({
+    required String postId,
+    required String content,
+  }) async {}
+
+  @override
+  Future<void> deletePostFromCloud({required String postId}) async {}
+
+  @override
+  Future<void> togglePostLikeInCloud({
+    required String postId,
+    required String memberId,
+    AppNotificationModel? notification,
+  }) async {}
+
+  @override
+  Future<void> voteOnPollInCloud({
+    required String postId,
+    required String optionId,
+    required String memberId,
+    required bool allowMultiple,
+  }) async {}
+
+  @override
+  Future<void> addPostCommentInCloud({
+    required String postId,
+    required PostCommentModel comment,
+    AppNotificationModel? notification,
+  }) async {}
+
+  @override
+  Future<void> markNotificationsReadInCloud({
+    required List<String> notificationIds,
+    required String readerId,
+  }) async {}
+
+  @override
+  Future<void> dismissNotificationsInCloud({
+    required List<AppNotificationModel> updatedNotifications,
+    required List<String> deletedNotificationIds,
   }) async {}
 }

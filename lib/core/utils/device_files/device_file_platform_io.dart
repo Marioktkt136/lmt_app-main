@@ -65,6 +65,20 @@ Future<PlatformFile?> pickFallbackOrWebFile(
   );
 }
 
+/// Picks multiple files on fallback IO platforms (returns 0 or 1 item safely).
+Future<List<PlatformFile>> pickMultipleFallbackOrWebFiles(
+  BuildContext context, {
+  required FileType type,
+  List<String>? allowedExtensions,
+}) async {
+  final single = await pickFallbackOrWebFile(
+    context,
+    type: type,
+    allowedExtensions: allowedExtensions,
+  );
+  return single == null ? const [] : [single];
+}
+
 Future<Directory?> _resolveCloudCacheDir() async {
   try {
     final dir = await getApplicationDocumentsDirectory();

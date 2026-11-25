@@ -477,6 +477,9 @@ mixin ChatCubitMixin on LmtBaseCubit {
           excludedMemberIds: [senderId],
         );
         sentNotification = state.notifications.firstOrNull;
+        if (sentNotification != null) {
+          pendingOutgoingNotifications[message.id] = sentNotification;
+        }
       }
     }
 
@@ -758,6 +761,9 @@ mixin ChatCubitMixin on LmtBaseCubit {
           excludedMemberIds: [senderId],
         );
         sentNotification = state.notifications.firstOrNull;
+        if (sentNotification != null) {
+          pendingOutgoingNotifications[forwarded.id] = sentNotification;
+        }
       }
     }
 

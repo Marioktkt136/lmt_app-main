@@ -16,7 +16,7 @@ import 'package:lmt/features/profile/cubit/profile_cubit.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _InMemoryLmtRepo implements LmtRepository {
+class _InMemoryLmtRepo extends LmtRepository {
   final List<({String dateKey, String memberId, String memberName})>
       recordedKhelwaCheckIns = [];
   final List<String> resetKhelwaCalls = [];

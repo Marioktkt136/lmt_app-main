@@ -261,6 +261,7 @@ class LmtCubit extends LmtBaseCubit
     // snapshot arrives before their Firestore write lands, and confirm any
     // pending message that now appears in the remote snapshot.
     final mergedChat = mergeRemoteChatMessages(remote.chatMessages);
+    final mergedPosts = mergeRemotePosts(remote.posts);
 
     emit(
       state.copyWith(
@@ -272,7 +273,7 @@ class LmtCubit extends LmtBaseCubit
         chatGroups:
             remote.chatGroups.isNotEmpty ? remote.chatGroups : state.chatGroups,
         chatMessages: mergedChat.messages,
-        posts: remote.posts,
+        posts: mergedPosts,
         sharedFiles: remote.sharedFiles,
         calendarEvents: remote.calendarEvents,
         notifications: nextNotifications,
@@ -281,6 +282,7 @@ class LmtCubit extends LmtBaseCubit
     );
 
     retryPendingChatWrites(mergedChat);
+    retryPendingPostWrites();
 
     if (eventsChanged) {
       await scheduleAllCalendarNotifications();
@@ -309,7 +311,7 @@ class LmtCubit extends LmtBaseCubit
     }
 
     if (hasNewIncomingAlert ||
-        remoteList.length != state.notifications.length) {
+        !listEquals(remoteList, state.notifications)) {
       emit(state.copyWith(notifications: remoteList));
     }
   }
